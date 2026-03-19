@@ -208,6 +208,8 @@ class StdioConnector:
             MCPServerNotInstalledError: If the MCP server package is not installed
             MCPConnectionError: If connection fails
         """
+        import asyncio
+        
         # Validate command exists and MCP server is installed (no auto-download)
         self._validate_command()
         
@@ -230,8 +232,14 @@ class StdioConnector:
             # Create session
             self._session = ClientSession(read_stream, write_stream)
             
-            # Initialize the session (perform MCP handshake)
-            await self._session.initialize()
+            # Initialize the session (perform MCP handshake) with 10 second timeout
+            try:
+                await asyncio.wait_for(self._session.initialize(), timeout=10.0)
+            except asyncio.TimeoutError:
+                raise MCPConnectionError(
+                    f"MCP server '{self.config.name}' initialization timeout (10s). "
+                    f"The server may be hanging or not responding."
+                )
             
             return self._session
             

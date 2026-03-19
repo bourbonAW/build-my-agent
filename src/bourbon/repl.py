@@ -356,21 +356,31 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
         if not self.config.mcp.enabled:
             return
         
+        async def init_with_timeout():
+            """Initialize with timeout."""
+            try:
+                # Wait for MCP initialization with 30 second timeout
+                return await asyncio.wait_for(
+                    self.agent.initialize_mcp(),
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                raise Exception("MCP initialization timeout (30s)")
+        
         try:
-            # Run async initialization
-            results = asyncio.run(self.agent.initialize_mcp())
+            # Run async initialization with timeout
+            results = asyncio.run(init_with_timeout())
             
-            if results:
-                summary = self.agent.mcp.get_connection_summary()
-                if summary["connected"] > 0:
-                    self.console.print(
-                        f"[dim]MCP: Connected to {summary['connected']} server(s), "
-                        f"{summary['total_tools']} tool(s) available[/dim]"
-                    )
-                if summary["failed"] > 0:
-                    self.console.print(
-                        f"[yellow]MCP: {summary['failed']} server(s) failed to connect[/yellow]"
-                    )
+            summary = self.agent.mcp.get_connection_summary()
+            if summary["connected"] > 0:
+                self.console.print(
+                    f"[dim]MCP: Connected to {summary['connected']} server(s), "
+                    f"{summary['total_tools']} tool(s) available[/dim]"
+                )
+            if summary["failed"] > 0:
+                self.console.print(
+                    f"[yellow]MCP: {summary['failed']} server(s) failed to connect[/yellow]"
+                )
         except MCPServerNotInstalledError as e:
             # Fatal error: MCP server not installed, exit immediately
             self.console.print(f"[bold red]MCP Error: {e}[/bold red]")
@@ -379,7 +389,8 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
             self.console.print("2. Disable the MCP server in ~/.bourbon/config.toml")
             sys.exit(1)
         except Exception as e:
-            self.console.print(f"[yellow]MCP initialization warning: {e}[/yellow]")
+            self.console.print(f"[yellow]MCP initialization failed: {e}[/yellow]")
+            self.console.print("[dim]Continuing without MCP tools...[/dim]")
     
     def _print_mcp_status(self) -> None:
         """Print MCP connection status."""
