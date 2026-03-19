@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from bourbon.tools import register_tool
+from bourbon.tools import RiskLevel, register_tool
 
 
 def rg_search(
@@ -211,6 +211,7 @@ def ast_grep_search(
         },
         "required": ["pattern"],
     },
+    risk_level=RiskLevel.LOW,
 )
 def rg_search_tool(
     pattern: str,
@@ -243,6 +244,7 @@ def rg_search_tool(
         },
         "required": ["pattern"],
     },
+    risk_level=RiskLevel.LOW,
 )
 def ast_grep_search_tool(
     pattern: str,

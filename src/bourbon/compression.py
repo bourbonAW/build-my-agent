@@ -3,6 +3,8 @@
 Implements two-tier compression:
 1. Micro-compact: Clear old tool results (keep last N)
 2. Auto-compact: Summarize and archive when token threshold exceeded
+
+Includes protection for skill content per Agent Skills specification.
 """
 
 import json
@@ -82,37 +84,70 @@ class ContextCompressor:
 
         return transcript_path
 
+    def _extract_skill_content(self, messages: list[dict]) -> list[dict]:
+        """Extract skill content that should be preserved during compression.
+        
+        Per Agent Skills specification, skill instructions are durable 
+        behavioral guidance and should not be compressed mid-conversation.
+        
+        Returns:
+            List of skill content messages to preserve
+        """
+        skill_messages = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                # Check for skill content markers
+                if "<skill_content" in content or "[User activated skill:" in content:
+                    skill_messages.append(msg)
+        return skill_messages
+
     def compact(self, messages: list[dict]) -> list[dict]:
         """Perform full context compression.
 
         1. Archive current conversation
-        2. Generate summary (placeholder - would call LLM in real impl)
-        3. Replace with summary + acknowledgement
+        2. Extract and preserve skill content
+        3. Generate summary
+        4. Replace with summary + preserved content + acknowledgement
 
         Args:
             messages: Full conversation history
 
         Returns:
-            Compressed conversation (summary + recent context)
+            Compressed conversation (summary + preserved content + recent context)
         """
         # Archive full conversation
         transcript_path = self.archive_transcript(messages)
+
+        # Extract skill content to preserve (per Agent Skills spec)
+        skill_messages = self._extract_skill_content(messages)
 
         # In real implementation, this would call LLM to summarize
         # For now, create a simple summary
         summary = self._generate_summary(messages)
 
-        # Return compressed context
-        return [
+        # Build compressed context
+        compressed: list[dict] = [
             {
                 "role": "user",
                 "content": f"[Context compressed. Transcript: {transcript_path}]\n\nConversation summary:\n{summary}",
             },
-            {
-                "role": "assistant",
-                "content": "Understood. Continuing with summary context.",
-            },
         ]
+        
+        # Preserve skill content (per Agent Skills specification)
+        if skill_messages:
+            compressed.append({
+                "role": "user",
+                "content": "[Preserved skill instructions:]\n\n" + 
+                          "\n\n".join(m.get("content", "") for m in skill_messages)
+            })
+        
+        compressed.append({
+            "role": "assistant",
+            "content": "Understood. Continuing with summary context.",
+        })
+        
+        return compressed
 
     def _generate_summary(self, messages: list[dict]) -> str:
         """Generate summary of conversation.

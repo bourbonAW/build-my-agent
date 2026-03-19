@@ -3,7 +3,7 @@
 import subprocess
 from pathlib import Path
 
-from bourbon.tools import register_tool
+from bourbon.tools import RiskLevel, register_tool
 
 
 def safe_path(path: str, workdir: Path) -> Path:
@@ -218,6 +218,7 @@ def edit_file(
         },
         "required": ["command"],
     },
+    risk_level=RiskLevel.HIGH,
 )
 def bash_tool(command: str) -> str:
     """Tool handler for bash."""
@@ -241,6 +242,7 @@ def bash_tool(command: str) -> str:
         },
         "required": ["path"],
     },
+    risk_level=RiskLevel.LOW,
 )
 def read_file_tool(path: str, limit: int | None = None) -> str:
     """Tool handler for read_file."""
@@ -264,6 +266,7 @@ def read_file_tool(path: str, limit: int | None = None) -> str:
         },
         "required": ["path", "content"],
     },
+    risk_level=RiskLevel.MEDIUM,
 )
 def write_file_tool(path: str, content: str) -> str:
     """Tool handler for write_file."""
@@ -291,6 +294,7 @@ def write_file_tool(path: str, content: str) -> str:
         },
         "required": ["path", "old_text", "new_text"],
     },
+    risk_level=RiskLevel.MEDIUM,
 )
 def edit_file_tool(path: str, old_text: str, new_text: str) -> str:
     """Tool handler for edit_file."""

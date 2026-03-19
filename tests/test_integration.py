@@ -7,7 +7,7 @@ import pytest
 
 from bourbon.agent import Agent
 from bourbon.config import Config
-from bourbon.skills import SkillLoader
+from bourbon.skills import SkillManager
 from bourbon.todos import TodoManager
 
 
@@ -17,8 +17,11 @@ class TestIntegration:
     def test_skill_loading(self):
         """Test skill loading from directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a test skill
-            skill_dir = Path(tmpdir) / "test-skill"
+            # Create test skill structure
+            agents_skills = Path(tmpdir) / ".agents/skills"
+            agents_skills.mkdir(parents=True)
+            
+            skill_dir = agents_skills / "test-skill"
             skill_dir.mkdir()
             (skill_dir / "SKILL.md").write_text("""---
 name: test-skill
@@ -30,11 +33,11 @@ description: A test skill
 This is a test.
 """)
 
-            loader = SkillLoader(Path(tmpdir))
-            assert "test-skill" in loader.get_names()
+            manager = SkillManager(workdir=Path(tmpdir))
+            assert "test-skill" in manager.available_skills
 
-            content = loader.load("test-skill")
-            assert "<skill name=\"test-skill\">" in content
+            content = manager.activate("test-skill")
+            assert "<skill_content" in content
             assert "This is a test." in content
 
     def test_todo_workflow(self):
