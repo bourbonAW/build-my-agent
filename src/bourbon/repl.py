@@ -43,9 +43,14 @@ class REPL:
         # Initialize Rich console
         self.console = Console()
 
-        # Initialize agent
+        # Initialize agent with tool execution callbacks
         try:
-            self.agent = Agent(config, workdir)
+            self.agent = Agent(
+                config,
+                workdir,
+                on_tool_start=self._on_tool_start,
+                on_tool_end=self._on_tool_end,
+            )
         except AgentError as e:
             self.console.print(f"[red]Error initializing agent: {e}[/red]")
             sys.exit(1)
@@ -64,6 +69,37 @@ class REPL:
         self.style = Style.from_dict({
             "prompt": "#5F9EA0 bold",  # Cadet blue
         })
+
+    def _on_tool_start(self, tool_name: str, tool_input: dict) -> None:
+        """Callback when a tool starts executing.
+
+        Args:
+            tool_name: Name of the tool
+            tool_input: Tool input parameters
+        """
+        # Format tool input for display
+        params = ", ".join(f"{k}={repr(v)[:50]}" for k, v in tool_input.items())
+        self.console.print(f"[dim]▶ {tool_name}({params})[/dim]")
+
+    def _on_tool_end(self, tool_name: str, output: str) -> None:
+        """Callback when a tool finishes executing.
+
+        Args:
+            tool_name: Name of the tool
+            output: Tool output
+        """
+        # Show output preview (first line, truncated)
+        output_preview = output.split("\n")[0][:100]
+        if len(output) > 100:
+            output_preview += "..."
+        if len(output.split("\n")) > 1:
+            output_preview += f" ({len(output.split(chr(10)))} lines)"
+
+        # Use different color based on success/error
+        if output.startswith("Error"):
+            self.console.print(f"[red]✗ {tool_name}: {output_preview}[/red]")
+        else:
+            self.console.print(f"[green]✓ {tool_name}: {output_preview}[/green]")
 
     def run(self) -> None:
         """Run the REPL loop."""

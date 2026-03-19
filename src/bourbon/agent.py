@@ -1,6 +1,7 @@
 """Core agent loop for Bourbon."""
 
 from pathlib import Path
+from typing import Callable
 
 from bourbon.compression import ContextCompressor
 from bourbon.config import Config
@@ -23,15 +24,21 @@ class Agent:
         self,
         config: Config,
         workdir: Path | None = None,
+        on_tool_start: Callable[[str, dict], None] | None = None,
+        on_tool_end: Callable[[str, str], None] | None = None,
     ):
         """Initialize agent.
 
         Args:
             config: Bourbon configuration
             workdir: Working directory (default: current directory)
+            on_tool_start: Callback when tool starts executing (tool_name, tool_input)
+            on_tool_end: Callback when tool finishes executing (tool_name, output)
         """
         self.config = config
         self.workdir = workdir or Path.cwd()
+        self.on_tool_start = on_tool_start
+        self.on_tool_end = on_tool_end
 
         # Initialize components
         self.todos = TodoManager()
@@ -129,6 +136,7 @@ class Agent:
         """
         if depth >= self._max_tool_rounds:
             return "[Reached maximum tool execution rounds. Stopping to prevent infinite loop.]"
+
         results = []
         used_todo = False
         manual_compact = False
@@ -140,6 +148,10 @@ class Agent:
             tool_name = block.get("name", "")
             tool_input = block.get("input", {})
             tool_id = block.get("id", "")
+
+            # Notify start of tool execution
+            if self.on_tool_start:
+                self.on_tool_start(tool_name, tool_input)
 
             # Handle special tools
             if tool_name == "compress":
@@ -166,6 +178,10 @@ class Agent:
                         output = f"Error executing {tool_name}: {e}"
                 else:
                     output = f"Unknown tool: {tool_name}"
+
+            # Notify end of tool execution
+            if self.on_tool_end:
+                self.on_tool_end(tool_name, output)
 
             results.append({
                 "type": "tool_result",
