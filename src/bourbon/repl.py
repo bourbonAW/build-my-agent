@@ -162,13 +162,36 @@ class REPL:
         Args:
             response: Response text
         """
+        if not response:
+            return
+            
         # Check if response contains code blocks
         if "```" in response:
             # Print as markdown
             self.console.print(Markdown(response))
         else:
-            # Print plain text
-            self.console.print(response)
+            # Print plain text with word-by-word effect for short responses
+            if len(response) < 500 and "\n" not in response:
+                self._print_streaming(response)
+            else:
+                self.console.print(response)
+    
+    def _print_streaming(self, text: str, delay: float = 0.01) -> None:
+        """Print text with streaming effect.
+        
+        Args:
+            text: Text to print
+            delay: Delay between words in seconds
+        """
+        import time
+        
+        words = text.split(" ")
+        for i, word in enumerate(words):
+            self.console.print(word, end="")
+            if i < len(words) - 1:
+                self.console.print(" ", end="")
+            time.sleep(delay)
+        self.console.print()  # Final newline
 
     def _handle_command(self, command: str) -> bool:
         """Handle REPL command.
