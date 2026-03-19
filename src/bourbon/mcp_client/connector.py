@@ -5,6 +5,7 @@ Provides connectors for different MCP transport mechanisms.
 
 import shutil
 import subprocess
+from contextlib import AsyncExitStack
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -41,7 +42,7 @@ class StdioConnector:
         """
         self.config = config
         self._session: ClientSession | None = None
-        self._exit_stack: Any = None
+        self._exit_stack: AsyncExitStack | None = None
     
     def _validate_command(self) -> None:
         """Validate that the command exists and MCP server is installed.
@@ -207,8 +208,6 @@ class StdioConnector:
             MCPServerNotInstalledError: If the MCP server package is not installed
             MCPConnectionError: If connection fails
         """
-        import asyncio
-        
         # Validate command exists and MCP server is installed (no auto-download)
         self._validate_command()
         
@@ -219,38 +218,27 @@ class StdioConnector:
             env=self.config.env if self.config.env else None,
         )
         
-        # Use configured timeout or default to 60 seconds (chrome-devtools needs more time)
-        timeout = self.config.timeout or 60.0
-        
         try:
-            # Create stdio client with timeout
-            self._exit_stack = stdio_client(server_params)
-            read_stream, write_stream = await self._exit_stack.__aenter__()
+            # Use AsyncExitStack to properly manage async context managers
+            self._exit_stack = AsyncExitStack()
             
-            # Create and initialize session with timeout
+            # Enter stdio_client context - this starts the subprocess
+            read_stream, write_stream = await self._exit_stack.enter_async_context(
+                stdio_client(server_params)
+            )
+            
+            # Create session
             self._session = ClientSession(read_stream, write_stream)
             
-            # Initialize with timeout - some servers like chrome-devtools take longer
-            await asyncio.wait_for(
-                self._session.initialize(),
-                timeout=timeout
-            )
+            # Initialize the session (perform MCP handshake)
+            await self._session.initialize()
             
             return self._session
             
-        except asyncio.TimeoutError:
-            # Clean up on timeout
-            if self._exit_stack:
-                await self._exit_stack.__aexit__(None, None, None)
-                self._exit_stack = None
-            raise MCPConnectionError(
-                f"Timeout connecting to MCP server '{self.config.name}' ({timeout}s). "
-                f"The server may be taking too long to start."
-            )
         except Exception as e:
             # Clean up on failure
             if self._exit_stack:
-                await self._exit_stack.__aexit__(type(e), e, None)
+                await self._exit_stack.aclose()
                 self._exit_stack = None
             raise MCPConnectionError(
                 f"Failed to connect to MCP server '{self.config.name}': {e}"
@@ -263,7 +251,7 @@ class StdioConnector:
             self._session = None
         
         if self._exit_stack:
-            await self._exit_stack.__aexit__(None, None, None)
+            await self._exit_stack.aclose()
             self._exit_stack = None
     
     @property
@@ -291,7 +279,7 @@ class HttpConnector:
         """
         self.config = config
         self._session: ClientSession | None = None
-        self._exit_stack: Any = None
+        self._exit_stack: AsyncExitStack | None = None
     
     async def connect(self) -> ClientSession:
         """Connect to the MCP server via HTTP.
@@ -314,9 +302,13 @@ class HttpConnector:
             ) from e
         
         try:
-            # Create HTTP client context manager
-            self._exit_stack = streamable_http_client(self.config.url)
-            read_stream, write_stream = await self._exit_stack.__aenter__()
+            # Use AsyncExitStack to properly manage async context managers
+            self._exit_stack = AsyncExitStack()
+            
+            # Enter streamable_http_client context
+            read_stream, write_stream = await self._exit_stack.enter_async_context(
+                streamable_http_client(self.config.url)
+            )
             
             # Create and initialize session
             self._session = ClientSession(read_stream, write_stream)
@@ -327,7 +319,7 @@ class HttpConnector:
         except Exception as e:
             # Clean up on failure
             if self._exit_stack:
-                await self._exit_stack.__aexit__(type(e), e, None)
+                await self._exit_stack.aclose()
                 self._exit_stack = None
             raise MCPConnectionError(
                 f"Failed to connect to MCP server '{self.config.name}' at {self.config.url}: {e}"
@@ -340,7 +332,7 @@ class HttpConnector:
             self._session = None
         
         if self._exit_stack:
-            await self._exit_stack.__aexit__(None, None, None)
+            await self._exit_stack.aclose()
             self._exit_stack = None
     
     @property
