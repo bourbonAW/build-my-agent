@@ -26,6 +26,7 @@ class MCPServerConfig:
     command: str | None = None
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    stdin: str | None = None  # Input to send to process on startup (for non-interactive servers)
     
     # http transport settings
     url: str | None = None
@@ -75,6 +76,7 @@ class MCPServerConfig:
             command=data.get("command"),
             args=data.get("args", []),
             env=data.get("env", {}),
+            stdin=data.get("stdin"),
             url=data.get("url"),
             headers=data.get("headers", {}),
             timeout=data.get("timeout"),
@@ -96,6 +98,8 @@ class MCPServerConfig:
                 result["args"] = self.args
             if self.env:
                 result["env"] = self.env
+            if self.stdin:
+                result["stdin"] = self.stdin
         elif self.transport == "http":
             result["url"] = self.url
             if self.headers:
