@@ -1,9 +1,21 @@
 """LLM client for multiple providers (Anthropic, OpenAI, and compatible APIs)."""
 
+import json
 from abc import ABC, abstractmethod
 from typing import Any
 
 from bourbon.config import Config
+
+# Optional imports - fail gracefully if not installed
+try:
+    from anthropic import Anthropic
+except ImportError:
+    Anthropic = None
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 
 class LLMError(Exception):
@@ -31,9 +43,7 @@ class AnthropicLLMClient(LLMClient):
     """Anthropic Claude client using official SDK."""
 
     def __init__(self, api_key: str, model: str, base_url: str | None = None):
-        try:
-            from anthropic import Anthropic
-        except ImportError:
+        if Anthropic is None:
             raise LLMError("anthropic package not installed. Run: uv pip install anthropic")
 
         self.client = Anthropic(api_key=api_key, base_url=base_url)
@@ -89,9 +99,7 @@ class OpenAILLMClient(LLMClient):
     """OpenAI-compatible client (works with OpenAI, Kimi, and others)."""
 
     def __init__(self, api_key: str, model: str, base_url: str | None = None):
-        try:
-            from openai import OpenAI
-        except ImportError:
+        if OpenAI is None:
             raise LLMError("openai package not installed. Run: uv pip install openai")
 
         self.client = OpenAI(api_key=api_key, base_url=base_url)
@@ -160,7 +168,6 @@ class OpenAILLMClient(LLMClient):
 
             if message.tool_calls:
                 for tc in message.tool_calls:
-                    import json
                     try:
                         args = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
@@ -189,7 +196,6 @@ def create_client(config: Config) -> LLMClient:
     provider = config.llm.default_provider
 
     if provider == "anthropic":
-        from anthropic import Anthropic
         api_key = config.llm.anthropic.api_key
         if not api_key:
             raise LLMError("Anthropic API key not configured")

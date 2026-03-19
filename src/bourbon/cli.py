@@ -7,6 +7,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Prompt
 
+from bourbon import __version__
 from bourbon.config import ConfigManager
 from bourbon.repl import REPL
 
@@ -93,8 +94,6 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.version:
-        from bourbon import __version__
-
         print(f"Bourbon {__version__}")
         return 0
 
