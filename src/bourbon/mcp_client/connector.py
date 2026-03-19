@@ -64,6 +64,39 @@ class StdioConnector:
         # Special handling for npx - check if package is installed
         if base_cmd == "npx":
             self._validate_npx_package()
+
+    def _extract_npx_package_spec(self, args: list[str]) -> tuple[int | None, str | None]:
+        """Return the npx package argument index and raw package spec."""
+        for index, arg in enumerate(args):
+            if arg.startswith("-"):
+                continue
+            return index, arg
+        return None, None
+
+    def _normalize_npx_package_name(self, package_name: str) -> str:
+        """Remove version suffix from an npm package name if present."""
+        clean_name = package_name
+        if "@" in package_name and not package_name.startswith("@"):
+            clean_name = package_name.split("@")[0]
+        elif package_name.startswith("@"):
+            # Scoped package like @org/package@version
+            parts = package_name.rsplit("@", 1)
+            if len(parts) == 2 and "/" not in parts[1]:
+                clean_name = parts[0]
+        return clean_name
+
+    def _resolve_direct_npx_binary(self, args: list[str]) -> tuple[str, list[str]] | None:
+        """Prefer an installed package binary over an npx wrapper when possible."""
+        package_index, package_spec = self._extract_npx_package_spec(args)
+        if package_index is None or package_spec is None:
+            return None
+
+        clean_name = self._normalize_npx_package_name(package_spec)
+        binary_name = clean_name.split("/")[-1]
+        if not shutil.which(binary_name):
+            return None
+
+        return binary_name, args[package_index + 1 :]
     
     def _validate_npx_package(self) -> None:
         """Check if the npm package for npx is already installed.
@@ -77,27 +110,13 @@ class StdioConnector:
             return
         
         # Extract package name from args (e.g., "-y", "@upstash/context7-mcp@latest" -> "@upstash/context7-mcp")
-        package_name = None
-        for arg in self.config.args:
-            # Skip flags
-            if arg.startswith("-"):
-                continue
-            # First non-flag arg is typically the package name
-            package_name = arg
-            break
+        _, package_name = self._extract_npx_package_spec(self.config.args)
         
         if not package_name:
             return
         
         # Remove version suffix if present (@latest, @1.0.0, etc.)
-        clean_name = package_name
-        if "@" in package_name and not package_name.startswith("@"):
-            clean_name = package_name.split("@")[0]
-        elif package_name.startswith("@"):
-            # Scoped package like @org/package@version
-            parts = package_name.rsplit("@", 1)
-            if len(parts) == 2 and "/" not in parts[1]:
-                clean_name = parts[0]
+        clean_name = self._normalize_npx_package_name(package_name)
         
         # Check npm global
         if self._check_npm_global(clean_name):
@@ -213,10 +232,17 @@ class StdioConnector:
         # Validate command exists and MCP server is installed (no auto-download)
         self._validate_command()
         
+        command = self.config.command
+        args = list(self.config.args)
+        if command == "npx":
+            resolved_command = self._resolve_direct_npx_binary(args)
+            if resolved_command is not None:
+                command, args = resolved_command
+
         # Prepare server parameters
         server_params = StdioServerParameters(
-            command=self.config.command,
-            args=self.config.args,
+            command=command,
+            args=args,
             env=self.config.env if self.config.env else None,
         )
         
@@ -229,8 +255,11 @@ class StdioConnector:
                 stdio_client(server_params)
             )
             
-            # Create session
-            self._session = ClientSession(read_stream, write_stream)
+            # ClientSession must be entered as an async context manager so its
+            # internal receive loop starts before initialize().
+            self._session = await self._exit_stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
             
             # Initialize the session (perform MCP handshake) with 30 second timeout
             # Some servers like Context7 need more time for initial setup
@@ -260,13 +289,11 @@ class StdioConnector:
     
     async def disconnect(self) -> None:
         """Disconnect from the MCP server."""
-        if self._session:
-            await self._session.aclose()
-            self._session = None
-        
         if self._exit_stack:
             await self._exit_stack.aclose()
             self._exit_stack = None
+        
+        self._session = None
     
     @property
     def session(self) -> ClientSession | None:
@@ -324,8 +351,11 @@ class HttpConnector:
                 streamable_http_client(self.config.url)
             )
             
-            # Create and initialize session
-            self._session = ClientSession(read_stream, write_stream)
+            # ClientSession must be entered as an async context manager so its
+            # internal receive loop starts before initialize().
+            self._session = await self._exit_stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
             await self._session.initialize()
             
             return self._session
@@ -346,13 +376,11 @@ class HttpConnector:
     
     async def disconnect(self) -> None:
         """Disconnect from the MCP server."""
-        if self._session:
-            await self._session.aclose()
-            self._session = None
-        
         if self._exit_stack:
             await self._exit_stack.aclose()
             self._exit_stack = None
+        
+        self._session = None
     
     @property
     def session(self) -> ClientSession | None:

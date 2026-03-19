@@ -158,25 +158,28 @@ class TestMCPManager:
         mock_session.call_tool = AsyncMock(return_value=MagicMock(
             content=[MagicMock(type="text", text="Result")],
         ))
+        manager._runtime = MagicMock()
+        manager._runtime.run.return_value = MagicMock(
+            content=[MagicMock(type="text", text="Result")],
+        )
         
         handler = manager._create_tool_handler(mock_session, "test_tool", "test_server")
-        
-        # Handler should be async
-        import asyncio
-        result = asyncio.run(handler(arg1="value1"))
+
+        result = handler(arg1="value1")
         
         assert "Result" in result
-        mock_session.call_tool.assert_called_once_with("test_tool", arguments={"arg1": "value1"})
+        manager._runtime.run.assert_called_once()
 
     def test_create_tool_handler_error(self, manager):
         """Test tool handler with error."""
         mock_session = MagicMock()
         mock_session.call_tool = AsyncMock(side_effect=Exception("Tool error"))
+        manager._runtime = MagicMock()
+        manager._runtime.run.side_effect = Exception("Tool error")
         
         handler = manager._create_tool_handler(mock_session, "test_tool", "test_server")
-        
-        import asyncio
-        result = asyncio.run_handler(arg1="value1")
+
+        result = handler(arg1="value1")
         
         assert "Error" in result
         assert "test_server:test_tool" in result

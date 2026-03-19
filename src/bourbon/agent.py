@@ -90,14 +90,23 @@ class Agent:
             Dictionary with connection results
         """
         results = await self.mcp.connect_all()
-        
-        # Rebuild system prompt to include MCP tools info
+        return self._finalize_mcp_initialization(results)
+
+    def initialize_mcp_sync(self, timeout: float | None = None) -> dict:
+        """Initialize MCP connections from sync code."""
+        results = self.mcp.connect_all_sync(timeout=timeout)
+        return self._finalize_mcp_initialization(results)
+
+    def shutdown_mcp_sync(self, timeout: float | None = None) -> None:
+        """Disconnect MCP connections from sync code."""
+        self.mcp.disconnect_all_sync(timeout=timeout)
+
+    def _finalize_mcp_initialization(self, results: dict) -> dict:
+        """Update prompt state after MCP initialization."""
         if results:
             summary = self.mcp.get_connection_summary()
             if summary["total_tools"] > 0:
-                # Add MCP info to system prompt
                 self.system_prompt = self._build_system_prompt()
-        
         return results
 
     def _build_system_prompt(self) -> str:

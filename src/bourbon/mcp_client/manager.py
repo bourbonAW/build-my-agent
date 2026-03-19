@@ -17,6 +17,7 @@ from bourbon.mcp_client.connector import (
     MCPServerNotInstalledError,
     StdioConnector,
 )
+from bourbon.mcp_client.runtime import AsyncRuntime
 from bourbon.tools import RiskLevel, Tool, ToolRegistry
 
 
@@ -60,6 +61,30 @@ class MCPManager:
         self._connectors: dict[str, StdioConnector | HttpConnector] = {}
         # Map of server name to connection result
         self._connection_results: dict[str, ConnectionResult] = {}
+        self._runtime: AsyncRuntime | None = None
+
+    def _ensure_runtime(self) -> AsyncRuntime:
+        """Get or create the background runtime used by sync callers."""
+        if self._runtime is None:
+            self._runtime = AsyncRuntime()
+        return self._runtime
+
+    def connect_all_sync(self, timeout: float | None = None) -> dict[str, ConnectionResult]:
+        """Connect to MCP servers from sync code."""
+        runtime = self._ensure_runtime()
+        return runtime.run(self.connect_all(), timeout=timeout)
+
+    def disconnect_all_sync(self, timeout: float | None = None) -> None:
+        """Disconnect MCP servers and stop the background runtime."""
+        runtime = self._runtime
+        if runtime is None:
+            return
+
+        try:
+            runtime.run(self.disconnect_all(), timeout=timeout)
+        finally:
+            runtime.stop()
+            self._runtime = None
     
     async def connect_all(self) -> dict[str, ConnectionResult]:
         """Connect to all enabled MCP servers.
@@ -220,13 +245,14 @@ class MCPManager:
             Handler function
         """
         timeout = self.config.default_timeout
-        
-        async def handler(**kwargs) -> str:
+
+        def handler(**kwargs) -> str:
             """Execute the MCP tool."""
             try:
-                result: CallToolResult = await session.call_tool(
-                    tool_name,
-                    arguments=kwargs,
+                runtime = self._ensure_runtime()
+                result: CallToolResult = runtime.run(
+                    session.call_tool(tool_name, arguments=kwargs),
+                    timeout=timeout,
                 )
                 return self._format_tool_result(result)
             except Exception as e:

@@ -113,37 +113,40 @@ class REPL:
 
     def run(self) -> None:
         """Run the REPL loop."""
-        self._print_banner()
+        try:
+            self._print_banner()
 
-        while True:
-            try:
-                # Get user input
-                user_input = self.session.prompt(
-                    "🥃 bourbon >> ",
-                    style=self.style,
-                )
+            while True:
+                try:
+                    # Get user input
+                    user_input = self.session.prompt(
+                        "🥃 bourbon >> ",
+                        style=self.style,
+                    )
 
-                # Handle empty input
-                if not user_input.strip():
+                    # Handle empty input
+                    if not user_input.strip():
+                        continue
+
+                    # Handle commands
+                    if user_input.strip().startswith("/"):
+                        if self._handle_command(user_input.strip()):
+                            break
+                        continue
+
+                    # Process user input through agent
+                    self._process_input(user_input)
+
+                except KeyboardInterrupt:
+                    # Ctrl+C - continue loop
+                    self.console.print("\n[yellow]Use /exit or Ctrl+D to quit[/yellow]")
                     continue
-
-                # Handle commands
-                if user_input.strip().startswith("/"):
-                    if self._handle_command(user_input.strip()):
-                        break
-                    continue
-
-                # Process user input through agent
-                self._process_input(user_input)
-
-            except KeyboardInterrupt:
-                # Ctrl+C - continue loop
-                self.console.print("\n[yellow]Use /exit or Ctrl+D to quit[/yellow]")
-                continue
-            except EOFError:
-                # Ctrl+D - exit
-                self.console.print("\n[dim]Goodbye![/dim]")
-                break
+                except EOFError:
+                    # Ctrl+D - exit
+                    self.console.print("\n[dim]Goodbye![/dim]")
+                    break
+        finally:
+            self._shutdown_mcp()
 
     def _process_input(self, user_input: str) -> None:
         """Process user input through agent.
@@ -351,27 +354,12 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
     
     def _init_mcp(self) -> None:
         """Initialize MCP connections."""
-        import asyncio
-        
         if not self.config.mcp.enabled:
             return
-        
-        async def init_with_timeout():
-            """Initialize with timeout."""
-            try:
-                # Wait for MCP initialization with 60 second timeout
-                # Each server gets 30s, so multiple servers need more total time
-                return await asyncio.wait_for(
-                    self.agent.initialize_mcp(),
-                    timeout=60.0
-                )
-            except asyncio.TimeoutError:
-                raise Exception("MCP initialization timeout (60s)")
-        
+
         try:
-            # Run async initialization with timeout
-            results = asyncio.run(init_with_timeout())
-            
+            self.agent.initialize_mcp_sync(timeout=60.0)
+
             summary = self.agent.mcp.get_connection_summary()
             if summary["connected"] > 0:
                 self.console.print(
@@ -396,6 +384,16 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
             for line in traceback.format_exc().split('\n'):
                 self.console.print(f"[dim red]{line}[/dim red]")
             self.console.print("[dim]Continuing without MCP tools...[/dim]")
+
+    def _shutdown_mcp(self) -> None:
+        """Disconnect MCP connections before process exit."""
+        if not self.config.mcp.enabled:
+            return
+
+        try:
+            self.agent.shutdown_mcp_sync(timeout=10.0)
+        except Exception as e:
+            self.console.print(f"[yellow]MCP shutdown warning: {e}[/yellow]")
     
     def _print_mcp_status(self) -> None:
         """Print MCP connection status."""
