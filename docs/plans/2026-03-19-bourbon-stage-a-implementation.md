@@ -2,9 +2,15 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a personal programming assistant CLI with REPL, tools (bash/read/write/edit/rg/ast-grep), todos, skills, and context compression.
+**Goal:** Build a code-specialist agent CLI with REPL, code-centric tools (bash/read/write/edit/rg/ast-grep), todos, skills, and context compression.
 
-**Architecture:** Single-agent architecture with tool dispatch pattern. REPL drives an async agent loop that calls LLM with tools. Tools are registered in a central registry. Configuration stored in `~/.bourbon/`.
+**Context:** This is Stage A of a general-purpose agent platform. While Bourbon's long-term vision is a versatile agent for any domain, we intentionally start with **exceptional code capabilities**. This provides:
+1. A well-defined domain to perfect the agent architecture
+2. Immediate value for developers (the initial users)
+3. Tools (search, analysis) that establish patterns for other domains
+4. A foundation that generalizes naturally in Stage B
+
+**Architecture:** Single-agent architecture with tool dispatch pattern. REPL drives an async agent loop that calls LLM with code-optimized tools. Configuration stored in `~/.bourbon/`.
 
 **Tech Stack:** Python 3.14, uv, ruff, anthropic/openai SDK, rich, prompt-toolkit, pydantic-settings
 
@@ -146,16 +152,23 @@ warn_unused_ignores = true
 ```markdown
 # 🥃 Bourbon
 
-A personal programming assistant agent built with Python.
+A general-purpose agent platform starting with exceptional code capabilities.
 
-## Features
+## Overview
 
-- **Interactive REPL**: Rich terminal interface with syntax highlighting
-- **Smart Tools**: bash, file operations, ripgrep, ast-grep integration
-- **Todo Management**: Track tasks and progress
-- **Skills System**: Load specialized knowledge on demand
-- **Context Compression**: Automatic conversation summarization
-- **Multi-Provider**: Supports Anthropic Claude and OpenAI
+Bourbon is designed as a **general agent** that can handle diverse tasks, but Stage A focuses on being an **exceptional coding assistant**. This code-first approach lets us perfect the core architecture with a well-defined domain before expanding to general knowledge work.
+
+## Stage A Features (Code Specialist)
+
+- **Code-Optimized REPL**: Terminal interface with syntax highlighting, designed for coding workflows
+- **Advanced Code Search**: ripgrep for text search + ast-grep for structural/AST search
+- **Safe File Operations**: Read, write, edit with path sandboxing and security checks
+- **Task Management**: Track coding tasks and subtasks
+- **Skill System**: Load coding patterns, refactoring recipes, language-specific guides
+- **Context Compression**: Handle long coding sessions without losing context
+- **Multi-Provider LLM**: Anthropic Claude and OpenAI support
+
+**Future stages** will expand Bourbon into general knowledge work (documents, web, data analysis) and autonomous workflows.
 
 ## Quick Start
 
@@ -204,16 +217,32 @@ MIT
 
 Development guide for AI agents working on Bourbon.
 
+## Project Vision
+
+**Bourbon is a general-purpose agent platform** with a code-first evolution:
+- **Stage A (Current)**: Perfect code capabilities - search, refactoring, analysis
+- **Stage B**: Expand to general knowledge work - documents, web, data
+- **Stage C**: Autonomous workflows across all domains
+
+## Stage A Focus: Code Specialist
+
+This stage builds exceptional software engineering assistance:
+- Advanced code search (rg + ast-grep)
+- Safe file operations with sandboxing
+- Code-aware todo management
+- Skills for coding patterns and best practices
+- Context management for long coding sessions
+
 ## Project Structure
 
 - `src/bourbon/`: Main source code
   - `cli.py`: Entry point
   - `config.py`: Configuration management (~/.bourbon/)
   - `llm.py`: Multi-provider LLM client
-  - `repl.py`: REPL interface
+  - `repl.py`: REPL interface optimized for code
   - `agent.py`: Core agent loop
-  - `tools/`: Tool implementations
-  - `skills.py`: Skill loading
+  - `tools/`: Tool implementations (search is code-focused)
+  - `skills.py`: Skill loading (coding patterns)
   - `todos.py`: Todo management
   - `compression.py`: Context compression
 

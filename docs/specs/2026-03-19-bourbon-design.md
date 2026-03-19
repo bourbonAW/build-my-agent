@@ -8,16 +8,26 @@
 
 ## 1. Overview
 
-Bourbon is a Python-based coding agent designed for developers who want a powerful, extensible CLI assistant. It follows a progressive architecture roadmap: **Personal Assistant → Team Collaboration → Automated Workflows**.
+**Bourbon is a general-purpose agent platform** with a code-first evolution strategy.
+
+While the long-term vision is a versatile agent capable of handling diverse tasks (writing, analysis, automation, research), **Stage A intentionally focuses on building exceptional code capabilities first**. This allows us to:
+
+1. Perfect the core agent architecture with a well-defined domain
+2. Build tools that are useful for code (search, editing, refactoring)
+3. Establish patterns that generalize to other domains later
+4. Deliver immediate value to developers (ourselves included)
+
+The roadmap progresses from **Code Specialist → General Assistant → Autonomous Workflows**.
 
 The name "Bourbon" represents smoothness, depth, and craftsmanship — qualities we aim for in the agent's interaction experience.
 
 ### 1.1 Core Philosophy
 
+- **General agent, specific start**: Architecture supports any domain; implementation starts with code
 - **Model-first**: The LLM is the agent; our job is to provide great tools and get out of the way
-- **Progressive complexity**: Start simple, add capabilities incrementally
+- **Progressive expansion**: Master code, then generalize to other tasks
 - **Unix philosophy**: Do one thing well, compose with other tools
-- **Developer-centric**: Built by developers, for developers
+- **Developer-centric**: Built by developers, for developers (starting point, not endpoint)
 
 ### 1.2 Technology Stack
 
@@ -359,48 +369,70 @@ Features:
 
 ## 7. Roadmap
 
-### Stage A: Personal Programming Assistant (Current)
+**Evolution Strategy: Perfect the specific, then generalize**
 
-**Goal:** A capable, single-user coding assistant
+| Stage | Focus | Domain | Key Expansion |
+|-------|-------|--------|---------------|
+| **A** | Code Specialist | Software engineering | Core agent architecture, code tools (rg, ast-grep) |
+| **B** | General Assistant | Knowledge work | Web, documents, data analysis, writing |
+| **C** | Autonomous Agent | Multi-domain | Self-direction, workflows, multi-agent teams |
 
-**Core Features:**
-- [ ] REPL with rich UI
-- [ ] Tool system (bash, read, write, edit)
-- [ ] Smart search (rg, ast-grep)
-- [ ] Todo management
-- [ ] Skill loading
-- [ ] Context compression
-- [ ] Configuration system
-- [ ] Anthropic + OpenAI support
-- [ ] MCP integration
+### Stage A: Code Specialist (Current)
 
-**Deliverable:** `bourbon` CLI runs, basic coding tasks work
+**Goal:** An exceptional coding assistant that handles complex software engineering tasks
 
-### Stage B: Team Collaboration
+**Why code first?** Code is a well-structured domain with clear patterns, enabling us to perfect the agent architecture before generalizing. The tools built here (search, analysis, refactoring) establish patterns applicable to other domains.
 
-**Goal:** Multiple agents working together
+**Core Features (Code-focused):**
+- [ ] REPL with rich UI optimized for code workflows
+- [ ] File operations (read, write, edit) with path safety
+- [ ] Advanced search (rg for text, ast-grep for structure)
+- [ ] Code-aware todo management
+- [ ] Skill system for loading coding patterns/best practices
+- [ ] Context compression for long coding sessions
+- [ ] Multi-provider LLM support (Anthropic + OpenAI)
+- [ ] MCP integration for extended capabilities
+
+**Deliverable:** `bourbon` CLI handles real coding tasks: refactoring, analysis, bug fixes, code review
+
+### Stage B: General Assistant (Expansion)
+
+**Goal:** Extend beyond code to general knowledge work while retaining code excellence
+
+**Expansion Areas:**
+- **Web capabilities**: Fetch, browse, scrape (via MCP/browser tools)
+- **Document processing**: PDF, Office, Markdown analysis
+- **Data tasks**: CSV/JSON analysis, transformation
+- **Writing assistance**: Documentation, emails, content
+- **Multi-modal**: Image understanding (via vision models)
 
 **New Mechanisms:**
 - Subagent spawning with context isolation
 - File-based task graph system
 - Background task execution with notifications
 - Agent mailbox (JSONL-based messaging)
-- Team configuration and role management
+- Tool discovery and dynamic loading
 
-**Deliverable:** Can spawn specialized agents, delegate tasks
+**Deliverable:** Bourbon handles mixed tasks: "Analyze this CSV, generate a report, and email it"
 
-### Stage C: Automated Workflows
+### Stage C: Autonomous Workflows (Scale)
 
-**Goal:** Self-running, scheduled, autonomous operations
+**Goal:** Self-directed, long-running, multi-step workflows that span domains
 
-**New Mechanisms:**
-- Autonomous agent mode (task board polling)
-- Team protocols (request-response patterns)
+**Autonomy Features:**
+- Task board polling and self-assignment
+- Proactive execution based on triggers (time, file changes, webhooks)
+- Long-running operations with checkpoint/resume
+- Multi-agent teams with specialized roles (code, research, writing)
+- Decision delegation with approval gates
+
+**Infrastructure:**
 - Git worktree isolation for parallel tasks
+- Workflow definition language
 - Cron-like scheduling
-- Webhook triggers
+- Event-driven architecture
 
-**Deliverable:** Full automation platform
+**Deliverable:** "Keep an eye on this GitHub repo, review PRs, and notify me of critical issues"
 
 ---
 
