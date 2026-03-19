@@ -40,7 +40,7 @@ class LLMClient(ABC):
 
 
 class AnthropicLLMClient(LLMClient):
-    """Anthropic Claude client using official SDK."""
+    """Anthropic Claude client using official SDK with streaming."""
 
     def __init__(self, api_key: str, model: str, base_url: str | None = None):
         if Anthropic is None:
@@ -56,7 +56,7 @@ class AnthropicLLMClient(LLMClient):
         system: str | None = None,
         max_tokens: int = 8000,
     ) -> dict:
-        """Send chat request to Anthropic."""
+        """Send chat request to Anthropic using streaming mode."""
         try:
             kwargs = {
                 "model": self.model,
@@ -68,29 +68,32 @@ class AnthropicLLMClient(LLMClient):
             if tools:
                 kwargs["tools"] = tools
 
-            response = self.client.messages.create(**kwargs)
+            # Use streaming mode (required by SDK for long operations)
+            with self.client.messages.stream(**kwargs) as stream:
+                # Collect the final message
+                final_message = stream.get_final_message()
+                
+                # Normalize to our format
+                content = []
+                for block in final_message.content:
+                    if block.type == "text":
+                        content.append({"type": "text", "text": block.text})
+                    elif block.type == "tool_use":
+                        content.append({
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        })
 
-            # Normalize to our format
-            content = []
-            for block in response.content:
-                if block.type == "text":
-                    content.append({"type": "text", "text": block.text})
-                elif block.type == "tool_use":
-                    content.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    })
-
-            return {
-                "content": content,
-                "stop_reason": response.stop_reason,
-                "usage": {
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                },
-            }
+                return {
+                    "content": content,
+                    "stop_reason": final_message.stop_reason,
+                    "usage": {
+                        "input_tokens": final_message.usage.input_tokens,
+                        "output_tokens": final_message.usage.output_tokens,
+                    },
+                }
         except Exception as e:
             raise LLMError(f"Anthropic API error: {e}") from e
 
