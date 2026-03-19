@@ -55,6 +55,9 @@ class Agent:
         # Track rounds without todo update for nagging
         self._rounds_without_todo = 0
 
+        # Maximum tool execution rounds to prevent infinite loops
+        self._max_tool_rounds = 10
+
     def _build_system_prompt(self) -> str:
         """Build system prompt with skills and instructions."""
         lines = [
@@ -114,15 +117,18 @@ class Agent:
         ]
         return "".join(text_parts)
 
-    def _execute_tools(self, content: list[dict]) -> str:
+    def _execute_tools(self, content: list[dict], depth: int = 0) -> str:
         """Execute tool calls from LLM response.
 
         Args:
             content: Response content blocks
+            depth: Current recursion depth
 
         Returns:
             Assistant response after tool execution
         """
+        if depth >= self._max_tool_rounds:
+            return "[Reached maximum tool execution rounds. Stopping to prevent infinite loop.]"
         results = []
         used_todo = False
         manual_compact = False
@@ -183,10 +189,20 @@ class Agent:
             self._manual_compact()
 
         # Continue the loop - get next response
-        return self._continue_after_tools()
+        return self._continue_after_tools(depth=depth)
 
-    def _continue_after_tools(self) -> str:
-        """Continue conversation after tool execution."""
+    def _continue_after_tools(self, depth: int = 0) -> str:
+        """Continue conversation after tool execution.
+
+        Args:
+            depth: Current recursion depth (to prevent infinite loops)
+
+        Returns:
+            Final assistant response
+        """
+        if depth >= self._max_tool_rounds:
+            return "[Reached maximum tool execution rounds. Stopping to prevent infinite loop.]"
+
         try:
             response = self.llm.chat(
                 messages=self.messages,
@@ -202,7 +218,7 @@ class Agent:
         self.messages.append({"role": "assistant", "content": response["content"]})
 
         if response["stop_reason"] == "tool_use":
-            return self._execute_tools(response["content"])
+            return self._execute_tools(response["content"], depth=depth + 1)
 
         text_parts = [
             block["text"] for block in response["content"] if block.get("type") == "text"
