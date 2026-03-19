@@ -9,8 +9,10 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.syntax import Syntax
+from rich.text import Text
 
 from bourbon.agent import Agent, AgentError
 from bourbon.config import Config, ConfigManager
@@ -141,14 +143,17 @@ class REPL:
         Args:
             user_input: User's message
         """
-        with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
-            try:
-                response = self.agent.step(user_input)
-            except Exception as e:
-                self.console.print(f"[red]Error: {e}[/red]")
-                return
+        # Show thinking status
+        self.console.print("[dim]Thinking...[/dim]")
+        
+        try:
+            response = self.agent.step(user_input)
+        except Exception as e:
+            self.console.print(f"[red]Error: {e}[/red]")
+            return
 
         # Print response
+        self.console.print()  # Blank line before response
         self._print_response(response)
 
     def _print_response(self, response: str) -> None:

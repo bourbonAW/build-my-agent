@@ -27,14 +27,7 @@ class Agent:
         on_tool_start: Callable[[str, dict], None] | None = None,
         on_tool_end: Callable[[str, str], None] | None = None,
     ):
-        """Initialize agent.
-
-        Args:
-            config: Bourbon configuration
-            workdir: Working directory (default: current directory)
-            on_tool_start: Callback when tool starts executing (tool_name, tool_input)
-            on_tool_end: Callback when tool finishes executing (tool_name, output)
-        """
+        """Initialize agent."""
         self.config = config
         self.workdir = workdir or Path.cwd()
         self.on_tool_start = on_tool_start
@@ -63,7 +56,7 @@ class Agent:
         self._rounds_without_todo = 0
 
         # Maximum tool execution rounds to prevent infinite loops
-        self._max_tool_rounds = 10
+        self._max_tool_rounds = 5
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with skills and instructions."""
@@ -72,7 +65,9 @@ class Agent:
             "",
             "Use the available tools to help the user with their coding tasks.",
             "When working on multi-step tasks, use TodoWrite to track progress.",
-            "For complex operations, consider using rg_search or ast_grep_search to understand the codebase.",
+            "",
+            "IMPORTANT: Do not repeat the same actions. If you've already explored the codebase,",
+            "analyze what you found and provide a summary. Avoid getting stuck in loops.",
             "",
             "Available skills (load with load_skill):",
             self.skills.descriptions(),
@@ -80,14 +75,7 @@ class Agent:
         return "\n".join(lines)
 
     def step(self, user_input: str) -> str:
-        """Process one user input and return assistant response.
-
-        Args:
-            user_input: User's message
-
-        Returns:
-            Assistant's response text
-        """
+        """Process one user input and return assistant response."""
         # Add user message
         self.messages.append({"role": "user", "content": user_input})
 
@@ -98,45 +86,61 @@ class Agent:
         if self.compressor.should_compact(self.messages):
             self._auto_compact()
 
-        # Call LLM
-        try:
-            response = self.llm.chat(
-                messages=self.messages,
-                tools=definitions(),
-                system=self.system_prompt,
-                max_tokens=8000,
-            )
-        except LLMError as e:
-            error_msg = f"LLM Error: {e}"
-            self.messages.append({"role": "assistant", "content": error_msg})
-            return error_msg
+        # Run the conversation loop
+        return self._run_conversation_loop()
 
-        # Add assistant response to history
-        self.messages.append({"role": "assistant", "content": response["content"]})
+    def _run_conversation_loop(self) -> str:
+        """Run conversation loop until we get a final response."""
+        tool_round = 0
 
-        # Check if we need to execute tools
-        if response["stop_reason"] == "tool_use":
-            return self._execute_tools(response["content"])
+        while tool_round < self._max_tool_rounds:
+            # Call LLM
+            try:
+                response = self.llm.chat(
+                    messages=self.messages,
+                    tools=definitions(),
+                    system=self.system_prompt,
+                    max_tokens=64000,
+                )
+            except LLMError as e:
+                error_msg = f"LLM Error: {e}"
+                self.messages.append({"role": "assistant", "content": error_msg})
+                return error_msg
 
-        # Extract text response
-        text_parts = [
-            block["text"] for block in response["content"] if block.get("type") == "text"
-        ]
-        return "".join(text_parts)
+            # Check if response contains tool calls
+            has_tool_calls = response["stop_reason"] == "tool_use"
 
-    def _execute_tools(self, content: list[dict], depth: int = 0) -> str:
+            # Add assistant response to history
+            self.messages.append({"role": "assistant", "content": response["content"]})
+
+            if not has_tool_calls:
+                # Extract and return text response
+                text_parts = [
+                    block["text"]
+                    for block in response["content"]
+                    if block.get("type") == "text"
+                ]
+                return "".join(text_parts)
+
+            # Execute tools
+            tool_results = self._execute_tools(response["content"])
+            
+            # Add tool results to history
+            self.messages.append({"role": "user", "content": tool_results})
+            
+            tool_round += 1
+
+        return "[Reached maximum tool execution rounds. Providing final response based on what was learned.]"
+
+    def _execute_tools(self, content: list[dict]) -> list[dict]:
         """Execute tool calls from LLM response.
 
         Args:
             content: Response content blocks
-            depth: Current recursion depth
 
         Returns:
-            Assistant response after tool execution
+            List of tool results
         """
-        if depth >= self._max_tool_rounds:
-            return "[Reached maximum tool execution rounds. Stopping to prevent infinite loop.]"
-
         results = []
         used_todo = False
         manual_compact = False
@@ -173,8 +177,6 @@ class Agent:
                     try:
                         output = tool_handler(**tool_input)
                     except Exception as e:
-                        # IMPORTANT: Do not auto-fallback or bypass
-                        # Report error clearly and let the loop handle it
                         output = f"Error executing {tool_name}: {e}"
                 else:
                     output = f"Unknown tool: {tool_name}"
@@ -186,10 +188,10 @@ class Agent:
             results.append({
                 "type": "tool_result",
                 "tool_use_id": tool_id,
-                "content": str(output)[:50000],  # Truncate large outputs
+                "content": str(output)[:50000],
             })
 
-        # Todo nag: remind if todos exist but not being updated
+        # Todo nag
         self._rounds_without_todo = 0 if used_todo else self._rounds_without_todo + 1
         if self.todos.has_open_items() and self._rounds_without_todo >= 3:
             results.insert(0, {
@@ -197,56 +199,17 @@ class Agent:
                 "text": "<reminder>You have open todos. Consider updating them.</reminder>",
             })
 
-        # Add results to history
-        self.messages.append({"role": "user", "content": results})
-
-        # Handle manual compact
         if manual_compact:
             self._manual_compact()
 
-        # Continue the loop - get next response
-        return self._continue_after_tools(depth=depth)
-
-    def _continue_after_tools(self, depth: int = 0) -> str:
-        """Continue conversation after tool execution.
-
-        Args:
-            depth: Current recursion depth (to prevent infinite loops)
-
-        Returns:
-            Final assistant response
-        """
-        if depth >= self._max_tool_rounds:
-            return "[Reached maximum tool execution rounds. Stopping to prevent infinite loop.]"
-
-        try:
-            response = self.llm.chat(
-                messages=self.messages,
-                tools=definitions(),
-                system=self.system_prompt,
-                max_tokens=8000,
-            )
-        except LLMError as e:
-            error_msg = f"LLM Error: {e}"
-            self.messages.append({"role": "assistant", "content": error_msg})
-            return error_msg
-
-        self.messages.append({"role": "assistant", "content": response["content"]})
-
-        if response["stop_reason"] == "tool_use":
-            return self._execute_tools(response["content"], depth=depth + 1)
-
-        text_parts = [
-            block["text"] for block in response["content"] if block.get("type") == "text"
-        ]
-        return "".join(text_parts)
+        return results
 
     def _auto_compact(self) -> None:
         """Perform automatic context compression."""
         self.messages = self.compressor.compact(self.messages)
 
     def _manual_compact(self) -> None:
-        """Perform manual context compression (triggered by tool)."""
+        """Perform manual context compression."""
         self._auto_compact()
 
     def get_todos(self) -> str:
