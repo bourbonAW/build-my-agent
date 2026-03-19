@@ -207,6 +207,8 @@ class StdioConnector:
             MCPServerNotInstalledError: If the MCP server package is not installed
             MCPConnectionError: If connection fails
         """
+        import asyncio
+        
         # Validate command exists and MCP server is installed (no auto-download)
         self._validate_command()
         
@@ -217,17 +219,34 @@ class StdioConnector:
             env=self.config.env if self.config.env else None,
         )
         
+        # Use configured timeout or default to 60 seconds (chrome-devtools needs more time)
+        timeout = self.config.timeout or 60.0
+        
         try:
-            # Create stdio client
+            # Create stdio client with timeout
             self._exit_stack = stdio_client(server_params)
             read_stream, write_stream = await self._exit_stack.__aenter__()
             
-            # Create and initialize session
+            # Create and initialize session with timeout
             self._session = ClientSession(read_stream, write_stream)
-            await self._session.initialize()
+            
+            # Initialize with timeout - some servers like chrome-devtools take longer
+            await asyncio.wait_for(
+                self._session.initialize(),
+                timeout=timeout
+            )
             
             return self._session
             
+        except asyncio.TimeoutError:
+            # Clean up on timeout
+            if self._exit_stack:
+                await self._exit_stack.__aexit__(None, None, None)
+                self._exit_stack = None
+            raise MCPConnectionError(
+                f"Timeout connecting to MCP server '{self.config.name}' ({timeout}s). "
+                f"The server may be taking too long to start."
+            )
         except Exception as e:
             # Clean up on failure
             if self._exit_stack:
