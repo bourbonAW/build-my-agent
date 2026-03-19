@@ -3,7 +3,7 @@ name = "bourbon"
 version = "0.1.0"
 description = "A general-purpose agent platform starting with exceptional code capabilities"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Bourbon Contributors"}
@@ -14,7 +14,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
@@ -52,7 +52,7 @@ build-backend = "hatchling.build"
 packages = ["src/bourbon"]
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
@@ -78,7 +78,7 @@ asyncio_mode = "auto"
 pythonpath = ["src"]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true

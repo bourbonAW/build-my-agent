@@ -1,12 +1,7 @@
-"""LLM client for multiple providers (Anthropic, OpenAI, and OpenAI-compatible)."""
+"""LLM client for multiple providers (Anthropic, OpenAI, and compatible APIs)."""
 
-import json
-import os
-import re
 from abc import ABC, abstractmethod
 from typing import Any
-
-import httpx
 
 from bourbon.config import Config
 
@@ -28,77 +23,79 @@ class LLMClient(ABC):
         system: str | None = None,
         max_tokens: int = 8000,
     ) -> dict:
-        """Send chat completion request.
-
-        Args:
-            messages: Conversation history
-            tools: Available tools
-            system: System prompt
-            max_tokens: Maximum tokens to generate
-
-        Returns:
-            Response dict with content and stop_reason
-        """
+        """Send chat completion request."""
         pass
 
 
-def parse_kimi_tool_calls(content: str) -> list[dict]:
-    """Parse Kimi's XML-style tool call format.
+class AnthropicLLMClient(LLMClient):
+    """Anthropic Claude client using official SDK."""
 
-    Kimi returns tool calls like:
-    <|tool_calls_section_begin|>
-    <|tool_call_begin|> functions.View:0
-    <|tool_call_argument_begin|> {"path": "/path"}
-    <|tool_call_end|>
-    <|tool_calls_section_end|>
-
-    Returns list of tool call dicts.
-    """
-    tool_calls = []
-
-    # Pattern to match tool call blocks
-    pattern = r'<\|tool_call_begin\|>\s*(\w+):(\d+)\s*<\|tool_call_argument_begin\|>\s*(\{[^}]*\})\s*<\|tool_call_end\|>'
-
-    matches = re.findall(pattern, content, re.DOTALL)
-    for func_name, call_id, args_str in matches:
+    def __init__(self, api_key: str, model: str, base_url: str | None = None):
         try:
-            args = json.loads(args_str)
-        except json.JSONDecodeError:
-            args = {}
+            from anthropic import Anthropic
+        except ImportError:
+            raise LLMError("anthropic package not installed. Run: uv pip install anthropic")
 
-        tool_calls.append({
-            "id": f"call_{call_id}",
-            "type": "tool_use",
-            "name": func_name,
-            "input": args,
-        })
-
-    return tool_calls
-
-
-class GenericOpenAIClient(LLMClient):
-    """Generic OpenAI-compatible API client (works with Kimi, OpenAI, etc.)."""
-
-    def __init__(
-        self,
-        api_key: str,
-        model: str,
-        base_url: str = "https://api.openai.com/v1",
-        is_kimi: bool = False,
-    ):
-        """Initialize generic OpenAI-compatible client.
-
-        Args:
-            api_key: API key
-            model: Model identifier
-            base_url: API base URL
-            is_kimi: Whether this is a Kimi API (special handling)
-        """
-        self.api_key = api_key
+        self.client = Anthropic(api_key=api_key, base_url=base_url)
         self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.is_kimi = is_kimi
-        self.client = httpx.Client(timeout=120.0)
+
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        system: str | None = None,
+        max_tokens: int = 8000,
+    ) -> dict:
+        """Send chat request to Anthropic."""
+        try:
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+            }
+            if system:
+                kwargs["system"] = system
+            if tools:
+                kwargs["tools"] = tools
+
+            response = self.client.messages.create(**kwargs)
+
+            # Normalize to our format
+            content = []
+            for block in response.content:
+                if block.type == "text":
+                    content.append({"type": "text", "text": block.text})
+                elif block.type == "tool_use":
+                    content.append({
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    })
+
+            return {
+                "content": content,
+                "stop_reason": response.stop_reason,
+                "usage": {
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                },
+            }
+        except Exception as e:
+            raise LLMError(f"Anthropic API error: {e}") from e
+
+
+class OpenAILLMClient(LLMClient):
+    """OpenAI-compatible client (works with OpenAI, Kimi, and others)."""
+
+    def __init__(self, api_key: str, model: str, base_url: str | None = None):
+        try:
+            from openai import OpenAI
+        except ImportError:
+            raise LLMError("openai package not installed. Run: uv pip install openai")
+
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.model = model
 
     def chat(
         self,
@@ -108,244 +105,110 @@ class GenericOpenAIClient(LLMClient):
         max_tokens: int = 8000,
     ) -> dict:
         """Send chat request to OpenAI-compatible API."""
-        # Build messages
-        request_messages = []
-        if system:
-            request_messages.append({"role": "system", "content": system})
-
-        # Convert our message format to OpenAI format
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if isinstance(content, list):
-                # Handle tool results
-                text_parts = []
-                for part in content:
-                    if part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                    elif part.get("type") == "tool_result":
-                        text_parts.append(f"[Tool result: {part.get('content', '')}]")
-                    elif part.get("type") == "tool_use":
-                        # Skip tool_use blocks in history - they should be handled differently
-                        pass
-                content = "\n".join(text_parts) if text_parts else ""
-
-            request_messages.append({"role": role, "content": content})
-
-        # Build request
-        request_body = {
-            "model": self.model,
-            "messages": request_messages,
-            "max_tokens": max_tokens,
-        }
-
-        # Add tools if provided
-        if tools:
-            openai_tools = []
-            for tool in tools:
-                openai_tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": tool["name"],
-                        "description": tool["description"],
-                        "parameters": tool["input_schema"],
-                    },
-                })
-            request_body["tools"] = openai_tools
-            request_body["tool_choice"] = "auto"
-
-        # Send request
         try:
-            response = self.client.post(
-                f"{self.base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=request_body,
-            )
-            response.raise_for_status()
-            data = response.json()
+            # Build messages (OpenAI uses system message in messages array)
+            openai_messages = []
+            if system:
+                openai_messages.append({"role": "system", "content": system})
 
-            # Parse response
-            choice = data["choices"][0]
-            message = choice["message"]
-            response_content = message.get("content", "") or ""
+            # Convert messages to OpenAI format
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
 
-            # Build content blocks
+                # Handle list content (tool results)
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif part.get("type") == "tool_result":
+                            text_parts.append(str(part.get("content", "")))
+                    content = "\n".join(text_parts)
+
+                openai_messages.append({"role": role, "content": content})
+
+            # Build request
+            kwargs = {
+                "model": self.model,
+                "messages": openai_messages,
+                "max_tokens": max_tokens,
+            }
+
+            if tools:
+                # Convert tools to OpenAI format
+                openai_tools = []
+                for tool in tools:
+                    openai_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool["description"],
+                            "parameters": tool["input_schema"],
+                        },
+                    })
+                kwargs["tools"] = openai_tools
+
+            response = self.client.chat.completions.create(**kwargs)
+
+            # Normalize to our format
+            message = response.choices[0].message
             content = []
 
-            # Check for tool calls in standard format
-            if message.get("tool_calls"):
-                for tool_call in message["tool_calls"]:
-                    try:
-                        args = json.loads(tool_call["function"]["arguments"])
-                    except (json.JSONDecodeError, KeyError):
-                        args = {}
+            if message.content:
+                content.append({"type": "text", "text": message.content})
 
+            if message.tool_calls:
+                for tc in message.tool_calls:
+                    import json
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        args = {}
                     content.append({
                         "type": "tool_use",
-                        "id": tool_call["id"],
-                        "name": tool_call["function"]["name"],
+                        "id": tc.id,
+                        "name": tc.function.name,
                         "input": args,
                     })
 
-                stop_reason = "tool_use"
-
-            # Check for Kimi's special XML format
-            elif self.is_kimi and "<|tool_calls_section_begin|>" in response_content:
-                tool_calls = parse_kimi_tool_calls(response_content)
-                if tool_calls:
-                    content.extend(tool_calls)
-                    stop_reason = "tool_use"
-                else:
-                    # Failed to parse, treat as text
-                    content.append({"type": "text", "text": response_content})
-                    stop_reason = "end_turn"
-
-            else:
-                # Regular text response
-                if response_content:
-                    content.append({"type": "text", "text": response_content})
-                stop_reason = "end_turn"
-
             return {
                 "content": content,
-                "stop_reason": stop_reason,
-                "usage": data.get("usage", {}),
-            }
-
-        except httpx.HTTPError as e:
-            raise LLMError(f"HTTP error: {e}") from e
-        except Exception as e:
-            raise LLMError(f"API error: {e}") from e
-
-
-class AnthropicClient(LLMClient):
-    """Anthropic Claude client using HTTP API."""
-
-    def __init__(
-        self,
-        api_key: str,
-        model: str = "claude-sonnet-4-6",
-        base_url: str = "https://api.anthropic.com",
-    ):
-        """Initialize Anthropic client.
-
-        Args:
-            api_key: Anthropic API key
-            model: Model identifier
-            base_url: API base URL
-        """
-        self.api_key = api_key
-        self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.client = httpx.Client(timeout=120.0)
-
-    def chat(
-        self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
-        system: str | None = None,
-        max_tokens: int = 8000,
-    ) -> dict:
-        """Send chat request to Anthropic API."""
-        # Build request body
-        request_body = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-        }
-
-        if system:
-            request_body["system"] = system
-
-        if tools:
-            request_body["tools"] = tools
-
-        # Send request
-        try:
-            response = self.client.post(
-                f"{self.base_url}/v1/messages",
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "Content-Type": "application/json",
+                "stop_reason": "tool_use" if message.tool_calls else "end_turn",
+                "usage": {
+                    "input_tokens": response.usage.prompt_tokens,
+                    "output_tokens": response.usage.completion_tokens,
                 },
-                json=request_body,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            # Normalize response format
-            content = []
-            for block in data.get("content", []):
-                if block["type"] == "text":
-                    content.append({"type": "text", "text": block["text"]})
-                elif block["type"] == "tool_use":
-                    content.append({
-                        "type": "tool_use",
-                        "id": block["id"],
-                        "name": block["name"],
-                        "input": block["input"],
-                    })
-
-            return {
-                "content": content,
-                "stop_reason": data.get("stop_reason", "end_turn"),
-                "usage": data.get("usage", {}),
             }
-
-        except httpx.HTTPError as e:
-            raise LLMError(f"HTTP error: {e}") from e
         except Exception as e:
-            raise LLMError(f"API error: {e}") from e
+            raise LLMError(f"OpenAI API error: {e}") from e
 
 
 def create_client(config: Config) -> LLMClient:
-    """Create LLM client from configuration.
-
-    Args:
-        config: Bourbon configuration
-
-    Returns:
-        Configured LLM client
-
-    Raises:
-        LLMError: If provider is invalid or API key is missing
-    """
+    """Create LLM client from configuration."""
     provider = config.llm.default_provider
 
     if provider == "anthropic":
+        from anthropic import Anthropic
         api_key = config.llm.anthropic.api_key
         if not api_key:
             raise LLMError("Anthropic API key not configured")
-        return AnthropicClient(
+        return AnthropicLLMClient(
             api_key=api_key,
             model=config.llm.anthropic.model,
-            base_url=config.llm.anthropic.base_url,
+            base_url=config.llm.anthropic.base_url or None,
         )
-    elif provider == "openai":
-        api_key = config.llm.openai.api_key
-        if not api_key:
-            raise LLMError("OpenAI API key not configured")
-        return GenericOpenAIClient(
-            api_key=api_key,
-            model=config.llm.openai.model,
-            base_url=config.llm.openai.base_url,
-            is_kimi=False,
-        )
-    elif provider == "kimi":
+
+    elif provider in ("openai", "kimi"):
         # Kimi uses OpenAI-compatible API
         api_key = config.llm.openai.api_key
         if not api_key:
-            raise LLMError("Kimi API key not configured")
-        return GenericOpenAIClient(
+            raise LLMError(f"{provider} API key not configured")
+        return OpenAILLMClient(
             api_key=api_key,
             model=config.llm.openai.model,
-            base_url=config.llm.openai.base_url,
-            is_kimi=True,
+            base_url=config.llm.openai.base_url or None,
         )
+
     else:
         raise LLMError(f"Unknown provider: {provider}")
