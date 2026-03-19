@@ -69,6 +69,9 @@ class Agent:
             "IMPORTANT: Do not repeat the same actions. If you've already explored the codebase,",
             "analyze what you found and provide a summary. Avoid getting stuck in loops.",
             "",
+            "CRITICAL: When you want to use a tool, you MUST use the tool_calls format.",
+            "Do not just describe what you plan to do - actually invoke the tools.",
+            "",
             "Available skills (load with load_skill):",
             self.skills.descriptions(),
         ]
@@ -107,8 +110,18 @@ class Agent:
                 self.messages.append({"role": "assistant", "content": error_msg})
                 return error_msg
 
+            # Debug: log response
+            print(f"[DEBUG] Response stop_reason: {response.get('stop_reason')}")
+            print(f"[DEBUG] Response content blocks: {[b.get('type') for b in response.get('content', [])]}")
+
             # Check if response contains tool calls
             has_tool_calls = response["stop_reason"] == "tool_use"
+            tool_use_blocks = [b for b in response["content"] if b.get("type") == "tool_use"]
+            
+            if not has_tool_calls and tool_use_blocks:
+                # Sometimes stop_reason is not tool_use but we have tool_use blocks
+                has_tool_calls = True
+                print(f"[DEBUG] Found {len(tool_use_blocks)} tool_use blocks despite stop_reason")
 
             # Add assistant response to history
             self.messages.append({"role": "assistant", "content": response["content"]})
@@ -123,20 +136,30 @@ class Agent:
                 return "".join(text_parts)
 
             # Execute tools
-            tool_results = self._execute_tools(response["content"])
-            
-            # Add tool results to history
-            self.messages.append({"role": "user", "content": tool_results})
+            if tool_use_blocks:
+                tool_results = self._execute_tools(tool_use_blocks)
+                
+                # Add tool results to history
+                self.messages.append({"role": "user", "content": tool_results})
+            else:
+                # No actual tool_use blocks found despite stop_reason
+                print("[DEBUG] stop_reason was tool_use but no tool_use blocks found!")
+                text_parts = [
+                    block["text"]
+                    for block in response["content"]
+                    if block.get("type") == "text"
+                ]
+                return "".join(text_parts)
             
             tool_round += 1
 
         return "[Reached maximum tool execution rounds. Providing final response based on what was learned.]"
 
-    def _execute_tools(self, content: list[dict]) -> list[dict]:
-        """Execute tool calls from LLM response.
+    def _execute_tools(self, tool_use_blocks: list[dict]) -> list[dict]:
+        """Execute tool calls.
 
         Args:
-            content: Response content blocks
+            tool_use_blocks: List of tool_use content blocks
 
         Returns:
             List of tool results
@@ -145,13 +168,12 @@ class Agent:
         used_todo = False
         manual_compact = False
 
-        for block in content:
-            if block.get("type") != "tool_use":
-                continue
-
+        for block in tool_use_blocks:
             tool_name = block.get("name", "")
             tool_input = block.get("input", {})
             tool_id = block.get("id", "")
+
+            print(f"[DEBUG] Executing tool: {tool_name} with input: {tool_input}")
 
             # Notify start of tool execution
             if self.on_tool_start:
