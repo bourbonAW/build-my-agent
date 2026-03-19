@@ -113,12 +113,28 @@ class TestMCPServerConfig:
             name="api",
             transport="http",
             url="http://localhost:3000/mcp",
+            headers={"Authorization": "Bearer token"},
+            timeout=60.0,
         )
         data = config.to_dict()
         assert data["name"] == "api"
         assert data["transport"] == "http"
         assert data["url"] == "http://localhost:3000/mcp"
+        assert data["headers"] == {"Authorization": "Bearer token"}
+        assert data["timeout"] == 60.0
         assert "command" not in data
+
+    def test_retry_settings(self):
+        """Test retry configuration."""
+        config = MCPServerConfig(
+            name="remote",
+            transport="http",
+            url="http://example.com/mcp",
+            max_retries=5,
+            retry_delay=2.0,
+        )
+        assert config.max_retries == 5
+        assert config.retry_delay == 2.0
 
 
 class TestMCPConfig:

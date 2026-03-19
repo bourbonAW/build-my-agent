@@ -18,6 +18,10 @@ class MCPServerConfig:
     transport: str  # "stdio" or "http"
     enabled: bool = True
     
+    # Connection retry settings
+    max_retries: int = 3
+    retry_delay: float = 1.0  # seconds between retries
+    
     # stdio transport settings
     command: str | None = None
     args: list[str] = field(default_factory=list)
@@ -25,6 +29,8 @@ class MCPServerConfig:
     
     # http transport settings
     url: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)  # Custom HTTP headers
+    timeout: float | None = None  # Connection timeout override
     
     def __post_init__(self):
         """Validate configuration after creation."""
@@ -57,15 +63,21 @@ class MCPServerConfig:
         
         transport = data.get("transport", "stdio")
         enabled = data.get("enabled", True)
+        max_retries = data.get("max_retries", 3)
+        retry_delay = data.get("retry_delay", 1.0)
         
         return cls(
             name=name,
             transport=transport,
             enabled=enabled,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
             command=data.get("command"),
             args=data.get("args", []),
             env=data.get("env", {}),
             url=data.get("url"),
+            headers=data.get("headers", {}),
+            timeout=data.get("timeout"),
         )
     
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +86,8 @@ class MCPServerConfig:
             "name": self.name,
             "transport": self.transport,
             "enabled": self.enabled,
+            "max_retries": self.max_retries,
+            "retry_delay": self.retry_delay,
         }
         
         if self.transport == "stdio":
@@ -84,6 +98,10 @@ class MCPServerConfig:
                 result["env"] = self.env
         elif self.transport == "http":
             result["url"] = self.url
+            if self.headers:
+                result["headers"] = self.headers
+            if self.timeout is not None:
+                result["timeout"] = self.timeout
         
         return result
 

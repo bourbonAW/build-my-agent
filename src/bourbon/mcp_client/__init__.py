@@ -5,7 +5,7 @@ Enables Bourbon Agent to connect to and use external MCP servers.
 
 from bourbon.mcp_client.config import MCPConfig, MCPServerConfig
 from bourbon.mcp_client.manager import MCPManager, ConnectionResult
-from bourbon.mcp_client.connector import MCPConnectionError
+from bourbon.mcp_client.connector import HttpConnector, MCPConnectionError, StdioConnector
 
 __all__ = [
     "MCPConfig",
@@ -13,4 +13,6 @@ __all__ = [
     "MCPManager",
     "ConnectionResult",
     "MCPConnectionError",
+    "StdioConnector",
+    "HttpConnector",
 ]

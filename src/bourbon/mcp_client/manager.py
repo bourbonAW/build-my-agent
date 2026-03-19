@@ -11,7 +11,7 @@ from mcp import ClientSession
 from mcp.types import CallToolResult, TextContent
 
 from bourbon.mcp_client.config import MCPConfig, MCPServerConfig
-from bourbon.mcp_client.connector import MCPConnectionError, StdioConnector
+from bourbon.mcp_client.connector import HttpConnector, MCPConnectionError, StdioConnector
 from bourbon.tools import RiskLevel, Tool, ToolRegistry
 
 
@@ -52,7 +52,7 @@ class MCPManager:
         self.workdir = workdir or Path.cwd()
         
         # Map of server name to connector
-        self._connectors: dict[str, StdioConnector] = {}
+        self._connectors: dict[str, StdioConnector | HttpConnector] = {}
         # Map of server name to connection result
         self._connection_results: dict[str, ConnectionResult] = {}
     
@@ -76,7 +76,7 @@ class MCPManager:
         return results
     
     async def _connect_server(self, config: MCPServerConfig) -> ConnectionResult:
-        """Connect to a single MCP server.
+        """Connect to a single MCP server with retry logic.
         
         Args:
             config: Server configuration
@@ -84,43 +84,61 @@ class MCPManager:
         Returns:
             Connection result
         """
-        try:
-            # Create connector based on transport type
-            if config.transport == "stdio":
-                connector = StdioConnector(config)
-            else:
-                # HTTP transport not yet implemented
+        import asyncio
+        
+        last_error: Exception | None = None
+        
+        for attempt in range(config.max_retries):
+            try:
+                # Create connector based on transport type
+                if config.transport == "stdio":
+                    connector = StdioConnector(config)
+                elif config.transport == "http":
+                    connector = HttpConnector(config)
+                else:
+                    return ConnectionResult(
+                        success=False,
+                        server_name=config.name,
+                        error=f"Transport '{config.transport}' not supported",
+                    )
+                
+                # Connect to server
+                session = await connector.connect()
+                self._connectors[config.name] = connector
+                
+                # Discover and register tools
+                tools_count = await self._register_server_tools(config.name, session)
+                
+                return ConnectionResult(
+                    success=True,
+                    server_name=config.name,
+                    tools_count=tools_count,
+                )
+                
+            except MCPConnectionError as e:
+                last_error = e
+                if attempt < config.max_retries - 1:
+                    wait_time = config.retry_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"MCP server '{config.name}' connection failed (attempt {attempt + 1}/{config.max_retries}), retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                continue
+            except Exception as e:
                 return ConnectionResult(
                     success=False,
                     server_name=config.name,
-                    error=f"Transport '{config.transport}' not implemented",
+                    error=f"Unexpected error: {e}",
                 )
-            
-            # Connect to server
-            session = await connector.connect()
-            self._connectors[config.name] = connector
-            
-            # Discover and register tools
-            tools_count = await self._register_server_tools(config.name, session)
-            
-            return ConnectionResult(
-                success=True,
-                server_name=config.name,
-                tools_count=tools_count,
-            )
-            
-        except MCPConnectionError as e:
-            return ConnectionResult(
-                success=False,
-                server_name=config.name,
-                error=str(e),
-            )
-        except Exception as e:
-            return ConnectionResult(
-                success=False,
-                server_name=config.name,
-                error=f"Unexpected error: {e}",
-            )
+        
+        # All retries exhausted
+        error_msg = str(last_error) if last_error else "Unknown error"
+        if config.max_retries > 1:
+            error_msg = f"Failed after {config.max_retries} attempts: {error_msg}"
+        
+        return ConnectionResult(
+            success=False,
+            server_name=config.name,
+            error=error_msg,
+        )
     
     async def _register_server_tools(
         self,

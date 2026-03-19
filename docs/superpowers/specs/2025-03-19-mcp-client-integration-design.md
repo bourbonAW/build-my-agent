@@ -73,9 +73,10 @@
 enabled = true
 default_timeout = 30  # 工具调用超时（秒）
 
+# stdio transport - 本地进程通信
 [[mcp.servers]]
 name = "github"
-transport = "stdio"  # 或 "http"
+transport = "stdio"
 command = "npx"
 args = ["-y", "@github/mcp-server"]
 env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }  # 支持环境变量引用
@@ -88,11 +89,24 @@ command = "uvx"
 args = ["mcp-server-fetch"]
 enabled = true
 
+# HTTP transport - 远程服务器通信（核心功能）
 [[mcp.servers]]
 name = "remote-api"
 transport = "http"
-url = "http://localhost:3000/mcp"
-enabled = false  # 默认不启用
+url = "https://mcp.example.com/mcp"
+headers = { Authorization = "Bearer ${API_TOKEN}" }  # 自定义请求头
+timeout = 60  # 连接超时（秒）
+max_retries = 3  # 连接失败重试次数
+retry_delay = 1.0  # 重试间隔（秒）
+enabled = true
+
+# 公司内部 MCP 服务
+[[mcp.servers]]
+name = "company-tools"
+transport = "http"
+url = "http://internal.company.com:8080/mcp"
+max_retries = 5  # 内网服务可能需要更多重试
+enabled = true
 ```
 
 ### 3.2 代码数据结构
@@ -218,6 +232,8 @@ async def wrap_mcp_handler(
 | 服务器启动失败 | 记录警告，跳过该服务器，继续启动 |
 | 初始化超时 | 记录错误，标记为断开状态 |
 | 协议版本不匹配 | 记录错误，跳过该服务器 |
+| HTTP 连接失败 | 自动重试（指数退避），最多 `max_retries` 次 |
+| HTTP 身份验证失败 | 立即失败，提示检查 headers/token |
 
 ### 5.2 运行时错误
 
@@ -279,6 +295,22 @@ class Agent:
         # 连接 MCP 服务器
         await self.mcp_manager.connect_all()
 ```
+
+### 6.4 传输方式选择指南
+
+| 场景 | 推荐传输 | 原因 |
+|------|---------|------|
+| 本地工具 (`uvx`, `npx`) | stdio | 简单、快速、无需网络配置 |
+| 远程服务 | **HTTP** | **核心功能**，支持跨网络访问 |
+| 公司内部服务 | HTTP | 可配置认证 headers，支持重试 |
+| Docker 容器 | stdio | 本地进程管理 |
+
+**HTTP 传输特有配置**：
+- `url`: MCP 服务端点（必需）
+- `headers`: 自定义 HTTP 头（如认证 token）
+- `timeout`: 连接超时覆盖
+- `max_retries`: 连接失败重试次数
+- `retry_delay`: 基础重试间隔（实际使用指数退避）
 
 ---
 

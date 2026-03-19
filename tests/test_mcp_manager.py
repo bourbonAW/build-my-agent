@@ -93,18 +93,28 @@ class TestMCPManager:
         assert summary["configured"] == 2
 
     @pytest.mark.asyncio
-    async def test_connect_server_http_not_implemented(self, manager):
-        """Test that HTTP transport returns not implemented."""
+    async def test_connect_server_http_success(self, manager):
+        """Test successful HTTP connection (mocked)."""
         config = MCPServerConfig(
             name="http_server",
             transport="http",
-            url="http://localhost:3000",
+            url="http://localhost:3000/mcp",
+            max_retries=1,
         )
         
-        result = await manager._connect_server(config)
-        
-        assert result.success is False
-        assert "not implemented" in result.error
+        # Mock the HTTP connector
+        with patch("bourbon.mcp_client.manager.HttpConnector") as mock_connector_class:
+            mock_connector = MagicMock()
+            mock_session = MagicMock()
+            mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+            mock_connector.connect = AsyncMock(return_value=mock_session)
+            mock_connector_class.return_value = mock_connector
+            
+            result = await manager._connect_server(config)
+            
+            assert result.success is True
+            assert result.server_name == "http_server"
+            mock_connector_class.assert_called_once_with(config)
 
     def test_format_tool_result_text_only(self, manager):
         """Test formatting tool result with text content."""

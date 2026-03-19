@@ -88,18 +88,20 @@ Bourbon supports MCP servers to extend its capabilities with external tools:
 [mcp]
 enabled = true
 
+# stdio transport - 本地工具
 [[mcp.servers]]
 name = "fetch"
 transport = "stdio"
 command = "uvx"
 args = ["mcp-server-fetch"]
 
+# HTTP transport - 远程服务（核心功能）
 [[mcp.servers]]
-name = "github"
-transport = "stdio"
-command = "npx"
-args = ["-y", "@github/mcp-server"]
-env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+name = "remote-api"
+transport = "http"
+url = "https://mcp.example.com/mcp"
+headers = { Authorization = "Bearer ${API_TOKEN}" }
+max_retries = 3
 ```
 
 **Usage**:
