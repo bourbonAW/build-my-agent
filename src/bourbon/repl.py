@@ -359,13 +359,14 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
         async def init_with_timeout():
             """Initialize with timeout."""
             try:
-                # Wait for MCP initialization with 30 second timeout
+                # Wait for MCP initialization with 60 second timeout
+                # Each server gets 30s, so multiple servers need more total time
                 return await asyncio.wait_for(
                     self.agent.initialize_mcp(),
-                    timeout=30.0
+                    timeout=60.0
                 )
             except asyncio.TimeoutError:
-                raise Exception("MCP initialization timeout (30s)")
+                raise Exception("MCP initialization timeout (60s)")
         
         try:
             # Run async initialization with timeout
