@@ -389,7 +389,11 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
             self.console.print("2. Disable the MCP server in ~/.bourbon/config.toml")
             sys.exit(1)
         except Exception as e:
+            import traceback
             self.console.print(f"[yellow]MCP initialization failed: {e}[/yellow]")
+            self.console.print("[dim red]Detailed error:[/dim red]")
+            for line in traceback.format_exc().split('\n'):
+                self.console.print(f"[dim red]{line}[/dim red]")
             self.console.print("[dim]Continuing without MCP tools...[/dim]")
     
     def _print_mcp_status(self) -> None:

@@ -134,10 +134,12 @@ class MCPManager:
                     await asyncio.sleep(wait_time)
                 continue
             except Exception as e:
+                import traceback
+                error_detail = f"{e}\n{traceback.format_exc()}"
                 return ConnectionResult(
                     success=False,
                     server_name=config.name,
-                    error=f"Unexpected error: {e}",
+                    error=f"Unexpected error: {error_detail}",
                 )
         
         # All retries exhausted
@@ -195,7 +197,10 @@ class MCPManager:
             
         except Exception as e:
             # Log error but don't fail the connection
+            import traceback
             print(f"Warning: Failed to register tools from '{server_name}': {e}")
+            print(f"Debug: Exception type: {type(e).__name__}")
+            traceback.print_exc()
             return 0
     
     def _create_tool_handler(

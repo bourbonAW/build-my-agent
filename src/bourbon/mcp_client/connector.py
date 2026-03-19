@@ -244,10 +244,15 @@ class StdioConnector:
             return self._session
             
         except Exception as e:
-            # Clean up on failure
+            # Clean up on failure - ignore cleanup errors
             if self._exit_stack:
-                await self._exit_stack.aclose()
+                try:
+                    await self._exit_stack.aclose()
+                except Exception:
+                    # Ignore cleanup errors (e.g., TaskGroup errors during shutdown)
+                    pass
                 self._exit_stack = None
+            self._session = None
             raise MCPConnectionError(
                 f"Failed to connect to MCP server '{self.config.name}': {e}"
             ) from e
@@ -325,10 +330,15 @@ class HttpConnector:
             return self._session
             
         except Exception as e:
-            # Clean up on failure
+            # Clean up on failure - ignore cleanup errors
             if self._exit_stack:
-                await self._exit_stack.aclose()
+                try:
+                    await self._exit_stack.aclose()
+                except Exception:
+                    # Ignore cleanup errors
+                    pass
                 self._exit_stack = None
+            self._session = None
             raise MCPConnectionError(
                 f"Failed to connect to MCP server '{self.config.name}' at {self.config.url}: {e}"
             ) from e
