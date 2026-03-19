@@ -67,6 +67,8 @@ class StdioConnector:
     def _validate_npx_package(self) -> None:
         """Check if the npm package for npx is already installed.
         
+        Supports npm, pnpm, and yarn global installations.
+        
         Raises:
             MCPServerNotInstalledError: If the package is not installed
         """
@@ -87,18 +89,47 @@ class StdioConnector:
             return
         
         # Remove version suffix if present (@latest, @1.0.0, etc.)
+        clean_name = package_name
         if "@" in package_name and not package_name.startswith("@"):
-            package_name = package_name.split("@")[0]
+            clean_name = package_name.split("@")[0]
         elif package_name.startswith("@"):
             # Scoped package like @org/package@version
             parts = package_name.rsplit("@", 1)
-            if len(parts) == 2 and "/" in parts[1]:
-                # No version suffix, keep as is
-                pass
-            elif len(parts) == 2:
-                package_name = parts[0]
+            if len(parts) == 2 and "/" not in parts[1]:
+                clean_name = parts[0]
         
-        # Check if package is installed globally
+        # Check npm global
+        if self._check_npm_global(clean_name):
+            return
+        
+        # Check pnpm global
+        if self._check_pnpm_global(clean_name):
+            return
+        
+        # Check yarn global
+        if self._check_yarn_global(clean_name):
+            return
+        
+        # Check local node_modules
+        if self._check_local_npm(clean_name):
+            return
+        
+        # Check if package can be resolved without network (npx cache)
+        if self._check_npx_cache(package_name):
+            return
+        
+        # Package is not installed
+        raise MCPServerNotInstalledError(
+            f"MCP server package '{clean_name}' is not installed. "
+            f"Please install it first:\n"
+            f"  npm install -g {clean_name}\n"
+            f"  # or: pnpm install -g {clean_name}\n"
+            f"  # or: yarn global add {clean_name}\n"
+            f"Or disable this MCP server in config."
+        )
+    
+    def _check_npm_global(self, package_name: str) -> bool:
+        """Check if package is installed globally via npm."""
         try:
             result = subprocess.run(
                 ["npm", "list", "-g", package_name],
@@ -106,12 +137,42 @@ class StdioConnector:
                 text=True,
                 timeout=10,
             )
-            if result.returncode == 0:
-                return  # Package is installed globally
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+    
+    def _check_pnpm_global(self, package_name: str) -> bool:
+        """Check if package is installed globally via pnpm."""
+        try:
+            result = subprocess.run(
+                ["pnpm", "list", "-g", package_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and package_name in result.stdout:
+                return True
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
-        
-        # Check if package is in local node_modules
+        return False
+    
+    def _check_yarn_global(self, package_name: str) -> bool:
+        """Check if package is installed globally via yarn."""
+        try:
+            result = subprocess.run(
+                ["yarn", "global", "list", package_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and package_name in result.stdout:
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        return False
+    
+    def _check_local_npm(self, package_name: str) -> bool:
+        """Check if package is in local node_modules."""
         try:
             result = subprocess.run(
                 ["npm", "list", package_name],
@@ -119,12 +180,12 @@ class StdioConnector:
                 text=True,
                 timeout=10,
             )
-            if result.returncode == 0:
-                return  # Package is installed locally
+            return result.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-        
-        # Check if package can be resolved without network (dry-run)
+            return False
+    
+    def _check_npx_cache(self, package_name: str) -> bool:
+        """Check if package is in npx cache."""
         try:
             result = subprocess.run(
                 ["npx", "--dry-run", package_name],
@@ -132,19 +193,9 @@ class StdioConnector:
                 text=True,
                 timeout=10,
             )
-            # If dry-run succeeds, package is cached locally
-            if result.returncode == 0:
-                return
+            return result.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-        
-        # Package is not installed
-        raise MCPServerNotInstalledError(
-            f"MCP server package '{package_name}' is not installed. "
-            f"Please install it first:\n"
-            f"  npm install -g {package_name}\n"
-            f"Or disable this MCP server in config."
-        )
+            return False
     
     async def connect(self) -> ClientSession:
         """Connect to the MCP server via stdio.
