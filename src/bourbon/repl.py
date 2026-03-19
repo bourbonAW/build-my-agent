@@ -16,6 +16,7 @@ from rich.text import Text
 
 from bourbon.agent import Agent, AgentError
 from bourbon.config import Config, ConfigManager
+from bourbon.mcp_client import MCPServerNotInstalledError
 
 
 class REPL:
@@ -370,6 +371,13 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
                     self.console.print(
                         f"[yellow]MCP: {summary['failed']} server(s) failed to connect[/yellow]"
                     )
+        except MCPServerNotInstalledError as e:
+            # Fatal error: MCP server not installed, exit immediately
+            self.console.print(f"[bold red]MCP Error: {e}[/bold red]")
+            self.console.print("\n[yellow]To fix this issue:[/yellow]")
+            self.console.print("1. Install the missing MCP server package, OR")
+            self.console.print("2. Disable the MCP server in ~/.bourbon/config.toml")
+            sys.exit(1)
         except Exception as e:
             self.console.print(f"[yellow]MCP initialization warning: {e}[/yellow]")
     

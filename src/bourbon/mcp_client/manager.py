@@ -11,7 +11,12 @@ from mcp import ClientSession
 from mcp.types import CallToolResult, TextContent
 
 from bourbon.mcp_client.config import MCPConfig, MCPServerConfig
-from bourbon.mcp_client.connector import HttpConnector, MCPConnectionError, StdioConnector
+from bourbon.mcp_client.connector import (
+    HttpConnector,
+    MCPConnectionError,
+    MCPServerNotInstalledError,
+    StdioConnector,
+)
 from bourbon.tools import RiskLevel, Tool, ToolRegistry
 
 
@@ -83,6 +88,9 @@ class MCPManager:
             
         Returns:
             Connection result
+            
+        Raises:
+            MCPServerNotInstalledError: If the server is not installed (no retry)
         """
         import asyncio
         
@@ -115,6 +123,9 @@ class MCPManager:
                     tools_count=tools_count,
                 )
                 
+            except MCPServerNotInstalledError:
+                # Don't retry if server is not installed - fail fast
+                raise
             except MCPConnectionError as e:
                 last_error = e
                 if attempt < config.max_retries - 1:

@@ -3,6 +3,8 @@
 Provides connectors for different MCP transport mechanisms.
 """
 
+import shutil
+import subprocess
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -16,11 +18,19 @@ class MCPConnectionError(Exception):
     pass
 
 
+class MCPServerNotInstalledError(MCPConnectionError):
+    """MCP server package is not installed and auto-download is disabled."""
+    pass
+
+
 class StdioConnector:
     """Stdio transport connector for MCP servers.
     
     Connects to an MCP server by spawning a subprocess and communicating
     over stdin/stdout.
+    
+    Note: This connector does NOT auto-download packages. If the MCP server
+    is not installed, it will raise an error.
     """
     
     def __init__(self, config: MCPServerConfig):
@@ -33,6 +43,109 @@ class StdioConnector:
         self._session: ClientSession | None = None
         self._exit_stack: Any = None
     
+    def _validate_command(self) -> None:
+        """Validate that the command exists and MCP server is installed.
+        
+        Raises:
+            MCPServerNotInstalledError: If the MCP server is not installed
+            MCPConnectionError: If the base command (npx/node) is not found
+        """
+        if not self.config.command:
+            raise MCPConnectionError("No command specified for stdio transport")
+        
+        # Check if base command exists (npx, node, python, etc.)
+        base_cmd = self.config.command
+        if not shutil.which(base_cmd):
+            raise MCPConnectionError(
+                f"Command '{base_cmd}' not found. Please install it first."
+            )
+        
+        # Special handling for npx - check if package is installed
+        if base_cmd == "npx":
+            self._validate_npx_package()
+    
+    def _validate_npx_package(self) -> None:
+        """Check if the npm package for npx is already installed.
+        
+        Raises:
+            MCPServerNotInstalledError: If the package is not installed
+        """
+        if not self.config.args:
+            return
+        
+        # Extract package name from args (e.g., "-y", "@upstash/context7-mcp@latest" -> "@upstash/context7-mcp")
+        package_name = None
+        for arg in self.config.args:
+            # Skip flags
+            if arg.startswith("-"):
+                continue
+            # First non-flag arg is typically the package name
+            package_name = arg
+            break
+        
+        if not package_name:
+            return
+        
+        # Remove version suffix if present (@latest, @1.0.0, etc.)
+        if "@" in package_name and not package_name.startswith("@"):
+            package_name = package_name.split("@")[0]
+        elif package_name.startswith("@"):
+            # Scoped package like @org/package@version
+            parts = package_name.rsplit("@", 1)
+            if len(parts) == 2 and "/" in parts[1]:
+                # No version suffix, keep as is
+                pass
+            elif len(parts) == 2:
+                package_name = parts[0]
+        
+        # Check if package is installed globally
+        try:
+            result = subprocess.run(
+                ["npm", "list", "-g", package_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return  # Package is installed globally
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        
+        # Check if package is in local node_modules
+        try:
+            result = subprocess.run(
+                ["npm", "list", package_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return  # Package is installed locally
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        
+        # Check if package can be resolved without network (dry-run)
+        try:
+            result = subprocess.run(
+                ["npx", "--dry-run", package_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            # If dry-run succeeds, package is cached locally
+            if result.returncode == 0:
+                return
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        
+        # Package is not installed
+        raise MCPServerNotInstalledError(
+            f"MCP server package '{package_name}' is not installed. "
+            f"Please install it first:\n"
+            f"  npm install -g {package_name}\n"
+            f"Or disable this MCP server in config."
+        )
+    
     async def connect(self) -> ClientSession:
         """Connect to the MCP server via stdio.
         
@@ -40,10 +153,11 @@ class StdioConnector:
             Connected ClientSession
             
         Raises:
+            MCPServerNotInstalledError: If the MCP server package is not installed
             MCPConnectionError: If connection fails
         """
-        if not self.config.command:
-            raise MCPConnectionError("No command specified for stdio transport")
+        # Validate command exists and MCP server is installed (no auto-download)
+        self._validate_command()
         
         # Prepare server parameters
         server_params = StdioServerParameters(
