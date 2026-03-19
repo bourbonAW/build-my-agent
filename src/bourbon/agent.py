@@ -56,7 +56,8 @@ class Agent:
         self._rounds_without_todo = 0
 
         # Maximum tool execution rounds to prevent infinite loops
-        self._max_tool_rounds = 5
+        # Can be configured via config.ui.max_tool_rounds (default: 50)
+        self._max_tool_rounds = getattr(config.ui, 'max_tool_rounds', 50)
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with skills and instructions."""
@@ -110,9 +111,9 @@ class Agent:
                 self.messages.append({"role": "assistant", "content": error_msg})
                 return error_msg
 
-            # Debug: log response
-            print(f"[DEBUG] Response stop_reason: {response.get('stop_reason')}")
-            print(f"[DEBUG] Response content blocks: {[b.get('type') for b in response.get('content', [])]}")
+            # Debug: log response (uncomment for debugging)
+            # print(f"[DEBUG] Response stop_reason: {response.get('stop_reason')}")
+            # print(f"[DEBUG] Response content blocks: {[b.get('type') for b in response.get('content', [])]}")
 
             # Check if response contains tool calls
             has_tool_calls = response["stop_reason"] == "tool_use"
@@ -121,7 +122,7 @@ class Agent:
             if not has_tool_calls and tool_use_blocks:
                 # Sometimes stop_reason is not tool_use but we have tool_use blocks
                 has_tool_calls = True
-                print(f"[DEBUG] Found {len(tool_use_blocks)} tool_use blocks despite stop_reason")
+                # print(f"[DEBUG] Found {len(tool_use_blocks)} tool_use blocks despite stop_reason")
 
             # Add assistant response to history
             self.messages.append({"role": "assistant", "content": response["content"]})
@@ -173,7 +174,8 @@ class Agent:
             tool_input = block.get("input", {})
             tool_id = block.get("id", "")
 
-            print(f"[DEBUG] Executing tool: {tool_name} with input: {tool_input}")
+            # Debug: log tool execution (uncomment for debugging)
+            # print(f"[DEBUG] Executing tool: {tool_name} with input: {tool_input}")
 
             # Notify start of tool execution
             if self.on_tool_start:

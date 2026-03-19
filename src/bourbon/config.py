@@ -86,6 +86,7 @@ class UIConfig:
     token_threshold: int = 100000
     show_token_count: bool = True
     syntax_highlighting: bool = True
+    max_tool_rounds: int = 50  # Maximum tool execution rounds per user request
 
 
 @dataclass
@@ -166,6 +167,7 @@ class Config:
                 "token_threshold": self.ui.token_threshold,
                 "show_token_count": self.ui.show_token_count,
                 "syntax_highlighting": self.ui.syntax_highlighting,
+                "max_tool_rounds": self.ui.max_tool_rounds,
             },
         }
 
