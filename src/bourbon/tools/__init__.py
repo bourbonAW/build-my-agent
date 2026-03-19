@@ -106,9 +106,16 @@ def tool(name: str) -> Tool | None:
 
 def handler(name: str) -> ToolHandler | None:
     """Get a tool handler by name."""
+    # Import tool modules to trigger registration
+    from bourbon.tools import base, search  # noqa: F401
+    
     return get_registry().get_handler(name)
 
 
 def definitions() -> list[dict]:
     """Get all tool definitions for LLM."""
+    # Import tool modules to trigger registration
+    # This must be done lazily to avoid circular imports
+    from bourbon.tools import base, search  # noqa: F401
+    
     return get_registry().get_tool_definitions()
