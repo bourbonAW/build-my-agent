@@ -232,12 +232,13 @@ class StdioConnector:
             # Create session
             self._session = ClientSession(read_stream, write_stream)
             
-            # Initialize the session (perform MCP handshake) with 10 second timeout
+            # Initialize the session (perform MCP handshake) with 30 second timeout
+            # Some servers like Context7 need more time for initial setup
             try:
-                await asyncio.wait_for(self._session.initialize(), timeout=10.0)
+                await asyncio.wait_for(self._session.initialize(), timeout=30.0)
             except asyncio.TimeoutError:
                 raise MCPConnectionError(
-                    f"MCP server '{self.config.name}' initialization timeout (10s). "
+                    f"MCP server '{self.config.name}' initialization timeout (30s). "
                     f"The server may be hanging or not responding."
                 )
             
