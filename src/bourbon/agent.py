@@ -7,9 +7,10 @@ from typing import Callable
 from bourbon.compression import ContextCompressor
 from bourbon.config import Config
 from bourbon.llm import LLMClient, LLMError, create_client
+from bourbon.mcp_client import MCPManager
 from bourbon.skills import SkillManager
 from bourbon.todos import TodoManager
-from bourbon.tools import definitions, get_tool_with_metadata, handler
+from bourbon.tools import definitions, get_tool_with_metadata, handler, get_registry
 
 
 class AgentError(Exception):
@@ -57,7 +58,14 @@ class Agent:
         except LLMError as e:
             raise AgentError(f"Failed to initialize LLM: {e}") from e
 
-        # Build system prompt
+        # Initialize MCP manager (but don't connect yet)
+        self.mcp = MCPManager(
+            config=config.mcp,
+            tool_registry=get_registry(),
+            workdir=self.workdir,
+        )
+
+        # Build system prompt (will be updated after MCP connect)
         self.system_prompt = self._build_system_prompt()
 
         # Message history
@@ -72,6 +80,25 @@ class Agent:
         
         # Pending confirmation for high-risk operation failures
         self.pending_confirmation: PendingConfirmation | None = None
+
+    async def initialize_mcp(self) -> dict:
+        """Initialize MCP connections.
+        
+        This should be called after agent creation to connect to MCP servers.
+        
+        Returns:
+            Dictionary with connection results
+        """
+        results = await self.mcp.connect_all()
+        
+        # Rebuild system prompt to include MCP tools info
+        if results:
+            summary = self.mcp.get_connection_summary()
+            if summary["total_tools"] > 0:
+                # Add MCP info to system prompt
+                self.system_prompt = self._build_system_prompt()
+        
+        return results
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with skills and instructions."""
@@ -89,6 +116,8 @@ class Agent:
             "",
             self._get_skills_section(),
             "",
+            self._get_mcp_section(),
+            "",
             "CRITICAL ERROR HANDLING RULES:",
             "1. HIGH RISK operations (software install/uninstall, version changes, system commands, destructive operations):",
             "   - If the operation fails (e.g., version not found, package unavailable), you MUST STOP and ask the user for confirmation",
@@ -104,6 +133,48 @@ class Agent:
             "   - If write/edit fails, report the error and ask before attempting alternatives",
             "",
         ]
+        return "\n".join(lines)
+
+    def _get_mcp_section(self) -> str:
+        """Generate MCP tools section for system prompt.
+        
+        Returns information about available MCP tools.
+        """
+        if not hasattr(self, 'mcp'):
+            return ""
+        
+        summary = self.mcp.get_connection_summary()
+        
+        if not summary["enabled"] or summary["total_tools"] == 0:
+            return ""
+        
+        mcp_tools = self.mcp.list_mcp_tools()
+        if not mcp_tools:
+            return ""
+        
+        lines = [
+            "MCP TOOLS",
+            "=========",
+            "",
+            f"The following external tools are available from MCP servers:",
+            "",
+        ]
+        
+        # Group tools by server
+        server_tools: dict[str, list[str]] = {}
+        for tool_name in mcp_tools:
+            if ":" in tool_name:
+                server, tool = tool_name.split(":", 1)
+                server_tools.setdefault(server, []).append(tool)
+        
+        for server, tools in sorted(server_tools.items()):
+            lines.append(f"  {server}:")
+            for tool in sorted(tools):
+                lines.append(f"    - {server}:{tool}")
+            lines.append("")
+        
+        lines.append("Use these tools just like any other tool.")
+        
         return "\n".join(lines)
 
     def _get_skills_section(self) -> str:

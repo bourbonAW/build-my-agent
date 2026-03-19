@@ -6,6 +6,8 @@ from typing import Optional
 
 import toml
 
+from bourbon.mcp_client.config import MCPConfig
+
 
 @dataclass
 class AnthropicConfig:
@@ -96,6 +98,7 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
@@ -110,6 +113,7 @@ class Config:
         ast_grep_data = tools_data.get("ast_grep", {})
 
         ui_data = data.get("ui", {})
+        mcp_data = data.get("mcp", {})
 
         return cls(
             llm=LLMConfig(
@@ -123,6 +127,7 @@ class Config:
                 ast_grep=AstGrepConfig(**ast_grep_data),
             ),
             ui=UIConfig(**ui_data),
+            mcp=MCPConfig.from_dict(mcp_data),
         )
 
     def to_dict(self) -> dict:
@@ -169,6 +174,7 @@ class Config:
                 "syntax_highlighting": self.ui.syntax_highlighting,
                 "max_tool_rounds": self.ui.max_tool_rounds,
             },
+            "mcp": self.mcp.to_dict(),
         }
 
 

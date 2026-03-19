@@ -28,6 +28,7 @@ class REPL:
         "/compact": "Manually compress context",
         "/tasks": "Show todo list",
         "/skills": "List available skills",
+        "/mcp": "Show MCP server status",
         "/clear": "Clear conversation history",
         "/help": "Show help message",
     }
@@ -59,6 +60,9 @@ class REPL:
         except AgentError as e:
             self.console.print(f"[red]Error initializing agent: {e}[/red]")
             sys.exit(1)
+        
+        # Initialize MCP connections
+        self._init_mcp()
 
         # Initialize prompt session with history
         history_file = Path.home() / ".bourbon" / "history" / "bourbon_history"
@@ -290,6 +294,9 @@ class REPL:
                         self.console.print(f"  • [bold]{name}[/bold]: {skill.description}")
             else:
                 self.console.print("[dim]No skills available.[/dim]")
+        
+        elif cmd == "/mcp":
+            self._print_mcp_status()
 
         elif cmd == "/clear":
             self.agent.clear_history()
@@ -340,3 +347,63 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
         self.console.print(f"  [bold]/skill/name[/bold] - Activate a skill (e.g., /skill/python-refactoring)")
         self.console.print()
         self.console.print("All other input is sent to the AI agent.")
+    
+    def _init_mcp(self) -> None:
+        """Initialize MCP connections."""
+        import asyncio
+        
+        if not self.config.mcp.enabled:
+            return
+        
+        try:
+            # Run async initialization
+            results = asyncio.run(self.agent.initialize_mcp())
+            
+            if results:
+                summary = self.agent.mcp.get_connection_summary()
+                if summary["connected"] > 0:
+                    self.console.print(
+                        f"[dim]MCP: Connected to {summary['connected']} server(s), "
+                        f"{summary['total_tools']} tool(s) available[/dim]"
+                    )
+                if summary["failed"] > 0:
+                    self.console.print(
+                        f"[yellow]MCP: {summary['failed']} server(s) failed to connect[/yellow]"
+                    )
+        except Exception as e:
+            self.console.print(f"[yellow]MCP initialization warning: {e}[/yellow]")
+    
+    def _print_mcp_status(self) -> None:
+        """Print MCP connection status."""
+        summary = self.agent.mcp.get_connection_summary()
+        
+        if not summary["enabled"]:
+            self.console.print("[dim]MCP is disabled.[/dim]")
+            return
+        
+        self.console.print("[bold]MCP Server Status:[/bold]")
+        self.console.print(f"  Enabled: {summary['enabled']}")
+        self.console.print(f"  Configured: {summary['configured']} server(s)")
+        self.console.print(f"  Connected: {summary['connected']} server(s)")
+        self.console.print(f"  Failed: {summary['failed']} server(s)")
+        self.console.print(f"  Total Tools: {summary['total_tools']}")
+        
+        if summary["servers"]:
+            self.console.print()
+            self.console.print("[bold]Server Details:[/bold]")
+            for name, status in sorted(summary["servers"].items()):
+                if status["connected"]:
+                    self.console.print(
+                        f"  • [green]{name}[/green]: "
+                        f"Connected ({status['tools']} tools)"
+                    )
+                else:
+                    error = status.get("error", "Unknown error")
+                    self.console.print(f"  • [red]{name}[/red]: Failed - {error}")
+        
+        mcp_tools = self.agent.mcp.list_mcp_tools()
+        if mcp_tools:
+            self.console.print()
+            self.console.print("[bold]Available MCP Tools:[/bold]")
+            for tool_name in sorted(mcp_tools):
+                self.console.print(f"  • {tool_name}")

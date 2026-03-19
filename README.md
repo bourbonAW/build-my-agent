@@ -13,6 +13,7 @@ Bourbon is designed as a **general agent** that can handle diverse tasks, but St
 - **Safe File Operations**: Read, write, edit with path sandboxing and security checks
 - **Task Management**: Track coding tasks and subtasks
 - **Skill System**: Load coding patterns, refactoring recipes, language-specific guides
+- **MCP Client**: Connect to external Model Context Protocol servers for extended capabilities
 - **Context Compression**: Handle long coding sessions without losing context
 - **Multi-Provider LLM**: Anthropic Claude and OpenAI support
 
@@ -77,22 +78,67 @@ description: Python refactoring patterns
 
 Load with: `load_skill("python-refactoring")`
 
+### MCP (Model Context Protocol)
+
+Bourbon supports MCP servers to extend its capabilities with external tools:
+
+**Configuration** (`~/.bourbon/config.toml`):
+
+```toml
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+name = "fetch"
+transport = "stdio"
+command = "uvx"
+args = ["mcp-server-fetch"]
+
+[[mcp.servers]]
+name = "github"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@github/mcp-server"]
+env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+```
+
+**Usage**:
+
+MCP tools are automatically available to the agent with the `server_name:tool_name` prefix:
+
+```
+> 使用 fetch:fetch_url 获取 https://example.com 的内容
+> 使用 github:search_issues 搜索 bourbon 项目的 open issues
+```
+
+View MCP status with `/mcp` command.
+
+**Recommended MCP Servers**:
+- [mcp-server-fetch](https://github.com/modelcontextprotocol/servers) - Web content fetching
+- [GitHub MCP](https://github.com/github/github-mcp-server) - GitHub operations
+- [Filesystem MCP](https://github.com/modelcontextprotocol/servers) - File operations
+
 ## Project Structure
 
 ```
 bourbon/
 ├── src/bourbon/
-│   ├── agent.py       # Core agent loop
-│   ├── cli.py         # CLI entry point
-│   ├── config.py      # Configuration management
-│   ├── llm.py         # Anthropic/OpenAI clients
-│   ├── repl.py        # REPL interface
-│   ├── skills.py      # Skill loading
-│   ├── todos.py       # Todo management
-│   ├── compression.py # Context compression
+│   ├── agent.py          # Core agent loop
+│   ├── cli.py            # CLI entry point
+│   ├── config.py         # Configuration management
+│   ├── llm.py            # Anthropic/OpenAI clients
+│   ├── repl.py           # REPL interface
+│   ├── skills.py         # Skill loading
+│   ├── todos.py          # Todo management
+│   ├── compression.py    # Context compression
+│   ├── mcp_client/       # MCP Client implementation
+│   │   ├── config.py     # MCP configuration
+│   │   ├── manager.py    # MCP connection management
+│   │   └── connector.py  # Transport connectors
 │   └── tools/
-│       ├── base.py    # bash, read, write, edit
-│       └── search.py  # rg, ast-grep
+│       ├── base.py       # bash, read, write, edit
+│       ├── search.py     # rg, ast-grep
+│       └── __init__.py   # Tool registry
 ├── tests/             # Test suite
 └── docs/
     ├── specs/         # Design specifications

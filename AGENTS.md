@@ -16,6 +16,7 @@ This stage builds exceptional software engineering assistance:
 - Safe file operations with sandboxing
 - Code-aware todo management
 - Skills for coding patterns and best practices
+- MCP Client for external tool integration
 - Context management for long coding sessions
 
 ## Project Structure
@@ -26,6 +27,7 @@ This stage builds exceptional software engineering assistance:
   - `llm.py`: Multi-provider LLM client
   - `repl.py`: REPL interface optimized for code
   - `agent.py`: Core agent loop
+  - `mcp_client/`: MCP Client implementation
   - `tools/`: Tool implementations (search is code-focused)
   - `skills.py`: Agent Skills compatible skill system
   - `todos.py`: Todo management
@@ -179,9 +181,84 @@ Agent: read_file("main.py") → Error: not found
 Agent: "文件不存在。找到 src/main.py，正在读取..."
 ```
 
+## MCP Client Integration
+
+Bourbon integrates the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to connect with external tool servers.
+
+### Architecture
+
+```
+Config ([mcp] section)
+       ↓
+MCPManager (connect_all)
+       ↓
+ToolRegistry (register MCP tools with server: prefix)
+       ↓
+Agent (transparent tool usage)
+```
+
+### MCP Configuration
+
+Add to `~/.bourbon/config.toml`:
+
+```toml
+[mcp]
+enabled = true
+default_timeout = 30
+
+[[mcp.servers]]
+name = "fetch"
+transport = "stdio"
+command = "uvx"
+args = ["mcp-server-fetch"]
+
+[[mcp.servers]]
+name = "github"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@github/mcp-server"]
+env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+```
+
+### Tool Naming
+
+MCP tools are registered with the format: `{server_name}:{tool_name}`
+
+Example:
+- Server: `fetch`
+- Tool: `fetch_url`
+- Registered name: `fetch:fetch_url`
+
+### Risk Level
+
+All MCP tools default to `RiskLevel.MEDIUM` since they are external operations.
+
+### Implementation Notes
+
+- `MCPManager` is initialized in `Agent.__init__()`
+- `Agent.initialize_mcp()` must be called to establish connections
+- Connection results are stored and can be viewed with `/mcp` command
+- Failed connections don't block other servers from connecting
+
+### Testing
+
+```bash
+# Run MCP-specific tests
+pytest tests/test_mcp_config.py tests/test_mcp_manager.py -v
+```
+
 ## Adding New Tools
 
 1. Define tool schema in `tools/__init__.py`
 2. Implement handler in appropriate module
 3. Register in tool registry
 4. Add tests
+
+## Adding MCP Servers
+
+MCP servers provide external tools without code changes:
+
+1. Install the MCP server (e.g., `npm install -g @github/mcp-server`)
+2. Add configuration to `~/.bourbon/config.toml`
+3. Restart Bourbon
+4. Use tools with `server:tool` syntax
