@@ -165,15 +165,9 @@ class MCPManager:
         Returns:
             Number of tools registered
         """
-        import asyncio
-        
         try:
-            # List available tools from server with 5 second timeout
-            try:
-                tools_result = await asyncio.wait_for(session.list_tools(), timeout=5.0)
-            except asyncio.TimeoutError:
-                print(f"Warning: Timeout listing tools from '{server_name}'")
-                return 0
+            # List available tools from server
+            tools_result = await session.list_tools()
             
             for mcp_tool in tools_result.tools:
                 # Create tool with namespace prefix
