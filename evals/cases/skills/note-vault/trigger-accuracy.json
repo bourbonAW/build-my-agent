@@ -1,0 +1,73 @@
+{
+  "id": "skill-trigger-001",
+  "name": "note skill 触发准确率评测",
+  "category": "skill-trigger",
+  "skill": "note-vault",
+  "difficulty": "medium",
+  "eval_type": "trigger",
+  "cases": [
+    {
+      "id": "should-trigger-1",
+      "prompt": "帮我记下来，MCP 工具名称格式修复的内容",
+      "should_trigger": true,
+      "reason": "明确提到'记下来'，属于知识保存场景"
+    },
+    {
+      "id": "should-trigger-2",
+      "prompt": "把刚才讨论的 eval 流程保存到笔记里",
+      "should_trigger": true,
+      "reason": "明确保存意图，涉及笔记"
+    },
+    {
+      "id": "should-trigger-3",
+      "prompt": "note this down: the fix was in agent.py line 386",
+      "should_trigger": true,
+      "reason": "英文明确 note 指令"
+    },
+    {
+      "id": "should-not-trigger-1",
+      "prompt": "读取 README.md 文件",
+      "should_trigger": false,
+      "reason": "普通文件读取，无保存意图"
+    },
+    {
+      "id": "should-not-trigger-2",
+      "prompt": "搜索项目中所有的 eval 配置",
+      "should_trigger": false,
+      "reason": "搜索操作，无保存意图"
+    },
+    {
+      "id": "should-not-trigger-3",
+      "prompt": "note 这个词在代码中出现了很多次",
+      "should_trigger": false,
+      "reason": "只是提到 note 这个词，非指令"
+    },
+    {
+      "id": "edge-case-1",
+      "prompt": "我不知道该不该记下来，但这个 bug 很奇怪",
+      "should_trigger": true,
+      "reason": "模糊但有保存意图，应触发"
+    }
+  ],
+  "assertions": [
+    {
+      "id": "trigger_accuracy",
+      "type": "programmatic",
+      "description": "触发准确率 >= 80%",
+      "check": "trigger_accuracy >= 0.8"
+    },
+    {
+      "id": "no_false_positive",
+      "type": "programmatic",
+      "description": "误触发率 <= 20%",
+      "check": "false_positive_rate <= 0.2"
+    }
+  ],
+  "metrics": {
+    "accuracy": "(TP + TN) / Total",
+    "precision": "TP / (TP + FP)",
+    "recall": "TP / (TP + FN)",
+    "f1": "2 * Precision * Recall / (Precision + Recall)"
+  },
+  "tags": ["skill", "trigger", "note-vault"]
+}

@@ -383,7 +383,7 @@ class Agent:
                 # skill tool is handled by registered handler, but we keep
                 # this for backward compatibility during transition
                 skill_name = tool_input.get("name", "")
-                output = self.skills.load(skill_name)
+                output = self.skills.activate(skill_name)
             else:
                 # Execute regular tool
                 tool_handler = handler(tool_name)

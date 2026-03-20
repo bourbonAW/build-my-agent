@@ -197,8 +197,8 @@ class MCPManager:
             tools_result = await session.list_tools()
             
             for mcp_tool in tools_result.tools:
-                # Create tool with namespace prefix
-                tool_name = f"{server_name}:{mcp_tool.name}"
+                # Create tool with namespace prefix (use - instead of : for LLM compatibility)
+                tool_name = f"{server_name}-{mcp_tool.name}"
                 
                 # Create handler for this tool
                 handler = self._create_tool_handler(
@@ -256,7 +256,7 @@ class MCPManager:
                 )
                 return self._format_tool_result(result)
             except Exception as e:
-                return f"Error calling {server_name}:{tool_name}: {e}"
+                return f"Error calling {server_name}-{tool_name}: {e}"
         
         return handler
     
@@ -321,10 +321,13 @@ class MCPManager:
         Returns:
             List of tool names with server prefix
         """
+        # Get all configured server names
+        server_prefixes = tuple(f"{s.name}-" for s in self.config.servers)
+        
         mcp_tools = []
         for tool in self.tool_registry.list_tools():
-            # MCP tools have colon in their name (server:tool)
-            if ":" in tool.name:
+            # MCP tools have server prefix in their name (server-tool)
+            if tool.name.startswith(server_prefixes):
                 mcp_tools.append(tool.name)
         return mcp_tools
     

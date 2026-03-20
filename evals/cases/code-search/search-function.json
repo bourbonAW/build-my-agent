@@ -1,0 +1,35 @@
+{
+  "id": "code-search-001",
+  "name": "搜索特定函数定义",
+  "category": "code-search",
+  "difficulty": "easy",
+  "prompt": "在项目中搜索 'activate' 函数的所有定义位置，告诉我它们分别在哪些文件的哪一行",
+  "context": {
+    "workdir": "fixtures/python-project"
+  },
+  "expected": {
+    "description": "应该找到 agent.py 第 386 行和 skills.py 第 431 行的 activate 函数定义",
+    "min_results": 2
+  },
+  "assertions": [
+    {
+      "id": "has_results",
+      "type": "programmatic",
+      "description": "搜索结果不为空",
+      "check": "output_contains:activate"
+    },
+    {
+      "id": "correct_file",
+      "type": "programmatic",
+      "description": "提到了 agent.py 或 skills.py",
+      "check": "output_contains_any:[agent.py, skills.py]"
+    },
+    {
+      "id": "correct_line_info",
+      "type": "llm_judge",
+      "description": "行号信息准确（允许±3行误差）",
+      "criteria": "检查返回的行号是否在 383-389 和 428-434 范围内"
+    }
+  ],
+  "tags": ["rg", "ast-grep", "function-search"]
+}

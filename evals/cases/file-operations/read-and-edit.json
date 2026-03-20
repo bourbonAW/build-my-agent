@@ -1,0 +1,43 @@
+{
+  "id": "file-op-001",
+  "name": "读取并修改配置文件",
+  "category": "file-operations",
+  "difficulty": "medium",
+  "prompt": "读取 config.toml，把 default_timeout 从 30 改成 60，保存回去",
+  "context": {
+    "workdir": "fixtures/python-project",
+    "setup_files": ["config.toml"]
+  },
+  "setup": {
+    "create_files": {
+      "config.toml": "[mcp]\nenabled = true\ndefault_timeout = 30\n"
+    }
+  },
+  "expected": {
+    "description": "config.toml 中的 default_timeout 应被修改为 60"
+  },
+  "assertions": [
+    {
+      "id": "file_exists",
+      "type": "programmatic",
+      "description": "config.toml 文件存在",
+      "check": "file_exists:config.toml"
+    },
+    {
+      "id": "content_modified",
+      "type": "programmatic",
+      "description": "default_timeout 被改为 60",
+      "check": "file_contains:config.toml:default_timeout = 60"
+    },
+    {
+      "id": "old_value_removed",
+      "type": "programmatic",
+      "description": "旧的值 30 不存在（或被注释）",
+      "check": "file_not_contains:config.toml:default_timeout = 30"
+    }
+  ],
+  "cleanup": {
+    "remove_files": ["config.toml"]
+  },
+  "tags": ["read_file", "edit_file", "toml"]
+}

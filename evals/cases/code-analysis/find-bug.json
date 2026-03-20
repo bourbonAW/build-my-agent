@@ -1,0 +1,25 @@
+{
+  "id": "code-analysis-001",
+  "name": "分析代码中的 bug",
+  "category": "code-analysis",
+  "difficulty": "medium",
+  "prompt": "分析以下代码中的问题，解释 bug 原因并给出修复建议：\n\ndef calculate_average(numbers):\n    sum = 0\n    for n in numbers:\n        sum += n\n    return sum / len(numbers)\n\nresult = calculate_average([])\n",
+  "expected": {
+    "description": "应该指出空列表会导致 ZeroDivisionError"
+  },
+  "assertions": [
+    {
+      "id": "identify_bug",
+      "type": "llm_judge",
+      "description": "正确识别 ZeroDivisionError 或除零问题",
+      "criteria": "检查是否提到了空列表、除零、ZeroDivisionError 或 len(numbers)==0 的判断"
+    },
+    {
+      "id": "provide_fix",
+      "type": "llm_judge",
+      "description": "提供了合理的修复建议",
+      "criteria": "检查是否建议添加空列表检查、返回 0 或抛出更有意义的异常"
+    }
+  ],
+  "tags": ["code-analysis", "bug-finding", "edge-case"]
+}

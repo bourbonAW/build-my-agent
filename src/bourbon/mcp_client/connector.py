@@ -3,9 +3,11 @@
 Provides connectors for different MCP transport mechanisms.
 """
 
+import json
 import shutil
 import subprocess
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -205,17 +207,82 @@ class StdioConnector:
             return False
     
     def _check_npx_cache(self, package_name: str) -> bool:
-        """Check if package is in npx cache."""
+        """Check if package is in npx cache.
+        
+        First tries 'npx --dry-run' for quick check, but falls back to
+        directly scanning the npm cache directory if that times out.
+        """
+        # Try npx --dry-run first (fast when it works)
         try:
             result = subprocess.run(
                 ["npx", "--dry-run", package_name],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=5,
             )
-            return result.returncode == 0
+            if result.returncode == 0:
+                return True
         except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass  # Fall through to directory scan
+        
+        # Fallback: scan npm cache directory directly
+        return self._scan_npx_cache_directory(package_name)
+    
+    def _scan_npx_cache_directory(self, package_name: str) -> bool:
+        """Scan npm npx cache directory for the package.
+        
+        Args:
+            package_name: Package name to look for (e.g., 'firecrawl-mcp')
+            
+        Returns:
+            True if package is found in cache
+        """
+        # Get npm cache directory
+        try:
+            result = subprocess.run(
+                ["npm", "config", "get", "cache"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0:
+                return False
+            npm_cache = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            # Default fallback
+            npm_cache = Path.home() / ".npm"
+        
+        npx_cache_dir = Path(npm_cache) / "_npx"
+        if not npx_cache_dir.exists():
             return False
+        
+        # Normalize package name (remove version suffix)
+        clean_name = self._normalize_npx_package_name(package_name)
+        
+        # Scan all cache entries
+        try:
+            for entry in npx_cache_dir.iterdir():
+                if not entry.is_dir():
+                    continue
+                package_json = entry / "package.json"
+                if not package_json.exists():
+                    continue
+                
+                try:
+                    content = package_json.read_text()
+                    # Quick string check before parsing JSON
+                    if f'"{clean_name}"' in content:
+                        import json
+                        data = json.loads(content)
+                        deps = data.get("dependencies", {})
+                        if clean_name in deps:
+                            return True
+                except (IOError, json.JSONDecodeError):
+                    continue
+        except (OSError, PermissionError):
+            pass
+        
+        return False
     
     async def connect(self) -> ClientSession:
         """Connect to the MCP server via stdio.

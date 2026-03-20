@@ -1,0 +1,48 @@
+# Bourbon Eval 配置文件
+# 遵循 Skill-Creator 评测规范
+
+[metadata]
+name = "bourbon-eval"
+version = "0.1.0"
+stage = "A"  # Code Specialist
+
+[runner]
+# 每个用例运行次数（P1 阶段启用多次运行）
+num_runs = 1
+# 超时时间（秒）
+timeout = 120
+# 并行度
+max_workers = 4
+# 上下文隔离：每个用例独立进程
+isolate_context = true
+
+[dimensions]
+correctness = 0.4      # 功能正确性
+robustness = 0.2       # 鲁棒性（多次运行一致性）
+safety = 0.2           # 安全性
+performance = 0.1      # 性能（token/时间）
+skill_trigger = 0.1    # Skill 触发准确率
+
+[baselines]
+# 默认 baseline：无 skill 的基础 agent
+default = { type = "vanilla", description = "Agent without any skills" }
+
+# Skill 评测时的 baseline 定义
+[baselines.skills]
+note-vault = { type = "without_skill", description = "Agent without note-vault skill" }
+
+[gates]
+# 最低通过率
+min_pass_rate = 0.8
+# 最大回归率
+max_regression_rate = 0.05
+# 最大平均耗时（秒）
+max_avg_duration = 60
+# 最大 flaky 率
+max_flaky_rate = 0.1
+
+[reporting]
+format = ["json", "markdown"]
+output_dir = "evals/results"
+# 是否上传对比基准
+upload_baseline = false
