@@ -8,9 +8,9 @@ stage = "A"  # Code Specialist
 
 [runner]
 # 每个用例运行次数（P1 阶段启用多次运行）
-num_runs = 1
+num_runs = 3
 # 超时时间（秒）
-timeout = 120
+timeout = 60
 # 并行度
 max_workers = 4
 # 上下文隔离：每个用例独立进程

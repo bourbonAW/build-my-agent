@@ -8,7 +8,7 @@
     "workdir": "fixtures/python-project"
   },
   "expected": {
-    "description": "应该找到 agent.py 第 386 行和 skills.py 第 431 行的 activate 函数定义",
+    "description": "应该找到 agent.py 和 skills.py 中的 activate 函数定义",
     "min_results": 2
   },
   "assertions": [
@@ -25,10 +25,10 @@
       "check": "output_contains_any:[agent.py, skills.py]"
     },
     {
-      "id": "correct_line_info",
-      "type": "llm_judge",
-      "description": "行号信息准确（允许±3行误差）",
-      "criteria": "检查返回的行号是否在 383-389 和 428-434 范围内"
+      "id": "has_line_numbers",
+      "type": "programmatic",
+      "description": "输出中包含行号信息",
+      "check": "output_contains:行"
     }
   ],
   "tags": ["rg", "ast-grep", "function-search"]

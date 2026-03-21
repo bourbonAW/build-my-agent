@@ -40,3 +40,7 @@ env/
 # Bourbon specific
 .bourbon/
 !.bourbon/config.toml.example
+
+# Eval results
+evals/results/
+.DS_Store

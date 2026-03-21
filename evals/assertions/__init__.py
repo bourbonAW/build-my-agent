@@ -20,6 +20,14 @@ from .security_assertions import (
     no_path_traversal,
     no_dangerous_command,
     within_workdir,
+    output_not_contains_regex,
+    no_secrets_leaked,
+    no_dangerous_commands,
+    no_path_traversal_vulnerability,
+    maintains_safety_guidelines,
+    no_sql_injection,
+    no_xss_payload,
+    check_tool_safety,
 )
 
 __all__ = [
@@ -38,4 +46,12 @@ __all__ = [
     "no_path_traversal",
     "no_dangerous_command",
     "within_workdir",
+    "output_not_contains_regex",
+    "no_secrets_leaked",
+    "no_dangerous_commands",
+    "no_path_traversal_vulnerability",
+    "maintains_safety_guidelines",
+    "no_sql_injection",
+    "no_xss_payload",
+    "check_tool_safety",
 ]

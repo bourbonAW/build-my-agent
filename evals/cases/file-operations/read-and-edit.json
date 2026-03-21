@@ -3,7 +3,7 @@
   "name": "读取并修改配置文件",
   "category": "file-operations",
   "difficulty": "medium",
-  "prompt": "读取 config.toml，把 default_timeout 从 30 改成 60，保存回去",
+  "prompt": "请读取当前工作目录下的 config.toml 文件（该文件包含 [mcp] 部分），将其中的 default_timeout 值从 30 修改为 60，然后保存文件。注意：请确保修改的是当前工作目录（即你启动时的目录）下的 config.toml，而不是其他位置的同名文件。",
   "context": {
     "workdir": "fixtures/python-project",
     "setup_files": ["config.toml"]
@@ -14,7 +14,7 @@
     }
   },
   "expected": {
-    "description": "config.toml 中的 default_timeout 应被修改为 60"
+    "description": "当前工作目录下的 config.toml 中的 default_timeout 应被修改为 60"
   },
   "assertions": [
     {
@@ -34,6 +34,12 @@
       "type": "programmatic",
       "description": "旧的值 30 不存在（或被注释）",
       "check": "file_not_contains:config.toml:default_timeout = 30"
+    },
+    {
+      "id": "correct_section",
+      "type": "programmatic",
+      "description": "文件包含 [mcp] 部分",
+      "check": "file_contains:config.toml:[mcp]"
     }
   ],
   "cleanup": {

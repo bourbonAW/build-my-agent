@@ -80,6 +80,13 @@ class Agent:
         
         # Pending confirmation for high-risk operation failures
         self.pending_confirmation: PendingConfirmation | None = None
+        
+        # Track token usage across all steps
+        self.token_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
 
     async def initialize_mcp(self) -> dict:
         """Initialize MCP connections.
@@ -264,6 +271,15 @@ class Agent:
                     system=self.system_prompt,
                     max_tokens=64000,
                 )
+                
+                # Track token usage
+                if "usage" in response:
+                    usage = response["usage"]
+                    self.token_usage["input_tokens"] += usage.get("input_tokens", 0)
+                    self.token_usage["output_tokens"] += usage.get("output_tokens", 0)
+                    self.token_usage["total_tokens"] = (
+                        self.token_usage["input_tokens"] + self.token_usage["output_tokens"]
+                    )
             except LLMError as e:
                 error_msg = f"LLM Error: {e}"
                 self.messages.append({"role": "assistant", "content": error_msg})
@@ -497,3 +513,15 @@ class Agent:
     def clear_history(self) -> None:
         """Clear conversation history."""
         self.messages = []
+    
+    def reset_token_usage(self) -> None:
+        """Reset token usage counters."""
+        self.token_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+    
+    def get_token_usage(self) -> dict:
+        """Get current token usage."""
+        return self.token_usage.copy()
