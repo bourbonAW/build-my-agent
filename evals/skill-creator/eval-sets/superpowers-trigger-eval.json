@@ -1,0 +1,77 @@
+[
+  {
+    "query": "帮我分析一下这个项目的架构",
+    "should_trigger": true,
+    "reason": "项目分析场景，符合 superpowers 的 description"
+  },
+  {
+    "query": "我需要对这个代码库进行头脑风暴",
+    "should_trigger": true,
+    "reason": "头脑风暴场景"
+  },
+  {
+    "query": " Bourbon 项目的错误处理策略是什么？",
+    "should_trigger": true,
+    "reason": "询问项目策略"
+  },
+  {
+    "query": "帮我规划一个新功能",
+    "should_trigger": true,
+    "reason": "规划场景"
+  },
+  {
+    "query": "这个项目有哪些技术债务？",
+    "should_trigger": true,
+    "reason": "技术分析"
+  },
+  {
+    "query": "读取 README.md 文件",
+    "should_trigger": false,
+    "reason": "普通文件操作，不需要 skill"
+  },
+  {
+    "query": "搜索项目中的函数定义",
+    "should_trigger": false,
+    "reason": "代码搜索，基础工具足够"
+  },
+  {
+    "query": "帮我写一个 Python 函数",
+    "should_trigger": false,
+    "reason": "代码编写，基础能力"
+  },
+  {
+    "query": "git status",
+    "should_trigger": false,
+    "reason": "简单的 git 操作"
+  },
+  {
+    "query": "帮我重构这段代码",
+    "should_trigger": false,
+    "reason": "代码重构，基础能力"
+  },
+  {
+    "query": "分析这个项目的风险和改进点",
+    "should_trigger": true,
+    "reason": "项目分析 + 风险评估"
+  },
+  {
+    "query": "我想创建一个新的 skill，有什么建议？",
+    "should_trigger": true,
+    "reason": "skill 创建建议，superpowers 可以帮忙"
+  },
+  {
+    "query": "npm install",
+    "should_trigger": false,
+    "reason": "包管理命令"
+  },
+  {
+    "query": "docker build",
+    "should_trigger": false,
+    "reason": "docker 操作"
+  },
+  {
+    "query": "Superpowers 能做什么？",
+    "should_trigger": true,
+    "reason": "明确询问 superpowers"
+  }
+]
