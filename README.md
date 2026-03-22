@@ -1,244 +1,226 @@
-# 股票数据爬取工具
+# Bourbon - General-Purpose AI Agent Platform
 
-一个功能强大的股票数据爬取脚本，支持A股、港股、美股、基金等多种金融数据的获取。
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 功能特点
+Bourbon is a general-purpose AI agent platform with a code-first evolution, designed for software engineering, data analysis, and domain-specific tasks through an extensible skill system.
 
-- 📈 **A股数据**: 实时行情、历史数据
-- 🎯 **基金数据**: 净值查询、业绩数据
-- 🇺🇸 **美股数据**: 全球指数、个股信息
-- 📊 **批量收集**: 根据配置文件批量获取
-- 💾 **多格式导出**: JSON、CSV格式
+## 🎯 Overview
 
-## 安装依赖
+**Current Stage (B)**: General-purpose agent for knowledge work
+- ✅ **Software Engineering**: Code search, refactoring, analysis
+- ✅ **Domain Expertise**: Investment analysis via skills
+- ✅ **External Tools**: MCP Client for databases, APIs
+- ✅ **Safe Operations**: Sandboxed file operations, risk-based error handling
+
+**Architecture**:
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Skills    │     │   Agent     │     │    MCP      │
+│  (Domain)   │◀───▶│   Core      │◀───▶│  (External) │
+└─────────────┘     └─────────────┘     └─────────────┘
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌─────────────────────────────────────────────────────┐
+│                 Built-in Tools                      │
+│  File Ops │ Search │ Bash │ LLM │ Todos │ Config   │
+└─────────────────────────────────────────────────────┘
+```
+
+## 🚀 Quick Start
 
 ```bash
-# 安装必需依赖
-pip install akshare yfinance pyyaml pandas
+# Clone and setup
+git clone <repo-url>
+cd bourbon
 
-# 可选：安装Playwright用于基金详情爬取
-pip install playwright
-playwright install chromium
+# Install with uv (recommended)
+uv pip install -e ".[dev]"
+
+# Or with pip
+pip install -e ".[dev]"
+
+# Run the agent
+python -m bourbon
+
+# Or use the CLI
+bourbon
 ```
 
-## 快速开始
+## 📁 Project Structure
 
-### 1. 单只股票查询
+```
+.
+├── src/bourbon/           # Core agent implementation
+│   ├── cli.py            # Entry point
+│   ├── agent.py          # Core agent loop
+│   ├── skills.py         # Skill system (Agent Skills compatible)
+│   ├── mcp_client/       # MCP Client implementation
+│   ├── tools/            # Built-in tools
+│   └── ...
+├── .kimi/skills/          # Project-level skills
+│   └── investment-skill/ # Investment analysis skill
+├── evals/                 # Evaluation framework
+│   ├── runner.py         # Test runner
+│   └── cases/            # Test cases
+└── tests/                 # Unit tests
+```
+
+## 🛠️ Core Capabilities
+
+### 1. Built-in Tools
+
+| Tool | Purpose | Safety |
+|------|---------|--------|
+| `read_file` | Read text/media files | Sandboxed to workdir |
+| `write_file` | Create/modify files | Backup before changes |
+| `shell` | Execute bash commands | Blacklist dangerous commands |
+| `search` | Code search (rg/ast-grep) | Read-only |
+| `todo` | Task management | - |
+
+### 2. Skill System (Agent Skills Compatible)
+
+Bourbon implements the [Agent Skills](https://agentskills.io/) open specification:
 
 ```bash
-# 查询A股
-python stock_collector.py --type stock --code sh600519
+# List available skills
+> /skills
 
-# 查询基金
-python stock_collector.py --type fund --code 000216
+# Activate a skill
+> /skill/investment-agent
 
-# 查询美股指数
-python stock_collector.py --type index --code SPX
-
-# 查询美股个股
-python stock_collector.py --type us_stock --code AAPL
-
-# 查询恒生指数
-python stock_collector.py --type index --code HSI
+# Use skill resources
+> skill_read_resource("investment-agent", "config/portfolio.yaml")
 ```
 
-### 2. 批量数据收集
+**Skill Discovery Scopes** (priority order):
+1. `{workdir}/.agents/skills/*/` - Project-level, cross-client
+2. `{workdir}/.bourbon/skills/*/` - Project-level, client-specific
+3. `~/.agents/skills/*/` - User-level, cross-client
+4. `~/.bourbon/skills/*/` - User-level, client-specific
+
+### 3. MCP Integration
+
+Connect to external tool servers via Model Context Protocol:
+
+```toml
+# ~/.bourbon/config.toml
+[mcp]
+enabled = true
+
+[[mcp.servers]]
+name = "fetch"
+transport = "stdio"
+command = "uvx"
+args = ["mcp-server-fetch"]
+```
+
+## 📊 Performance Highlights
+
+### Investment Skill Optimization
+
+The investment-agent skill has been optimized for **50-100x performance improvement**:
+
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| Fund Monitor (12 funds) | 120-180s | **0.6s** | **200-300x** |
+| Single fund query | 10-15s | **0.1s** | **100x** |
+| Full eval suite (13 tests) | 500s+ | **<60s** | **8x+** |
+
+**Key Optimizations**:
+- **Fast Collector**: HTTP API direct access (0.1s vs 10s)
+- **Hybrid Collector**: Smart fallback (Fast API 83%, Playwright 17%)
+- **Concurrent Fetching**: ThreadPoolExecutor for parallel requests
+- **Caching**: `@cached` decorator with 5-minute TTL
+
+See:
+- `evals/INVESTMENT_SKILL_PERFORMANCE_ANALYSIS.md` - Detailed analysis
+- `evals/INVESTMENT_SKILL_OPTIMIZATION_PATCH.md` - Implementation guide
+
+## 🧪 Evaluation Framework
+
+Comprehensive testing for skills, safety, and performance:
 
 ```bash
-# 根据配置文件收集所有数据
-python batch_collector.py
+# Run all evaluations
+uv run python evals/runner.py
 
-# 导出为CSV格式
-python batch_collector.py --export csv
+# Run specific category
+uv run python evals/runner.py --category skills
 
-# 同时导出JSON和CSV
-python batch_collector.py --export both
+# Run with multiple iterations for variance analysis
+uv run python evals/runner.py --num-runs 5
+
+# Fast mode (skip LLM judge)
+uv run python evals/runner.py --fast
 ```
 
-### 3. 查看列表
+**Test Categories**:
+- `skills/` - Skill functionality tests
+- `safety/` - Security red team tests
+- `trigger/` - Skill description accuracy tests
+
+## 📝 Development
 
 ```bash
-# 查看A股列表
-python stock_collector.py --type stock --list
+# Run linting
+ruff check src tests
+ruff format src tests
 
-# 查看基金列表
-python stock_collector.py --type fund --list
+# Run tests
+pytest
+
+# Run specific test
+pytest tests/test_skills.py -v
 ```
 
-### 4. JSON输出
+## ⚙️ Configuration
 
-```bash
-# 导出为JSON格式（便于程序处理）
-python stock_collector.py --type stock --code sh600519 --output json
+Global configuration in `~/.bourbon/config.toml`:
+
+```toml
+[llm]
+provider = "moonshot"
+api_key = "your-api-key"
+model = "kimi-k2-0711-preview"
+
+[agent]
+workdir = "/path/to/workspace"
+
+[mcp]
+enabled = true
+default_timeout = 30
 ```
 
-## 代码示例
+## 🔒 Safety Features
 
-### 在Python代码中使用
+### Risk-Based Error Handling
 
-```python
-from stock_collector import AKShareCollector, YahooCollector
+| Risk Level | Operations | Strategy |
+|------------|------------|----------|
+| **HIGH** | Install/uninstall, system commands | MUST STOP and ask user |
+| **MEDIUM** | File modifications | Report error, ask before alternatives |
+| **LOW** | Read, search | May intelligently recover |
 
-# 获取A股数据
-ak = AKShareCollector()
-stock = ak.get_stock_quote("sh600519")
-print(f"茅台当前价格: ¥{stock.price}")
+### Path Safety
+- All file operations sandboxed to workspace
+- No access outside working directory without explicit permission
 
-# 获取基金数据
-fund = ak.get_fund_nav("000216")
-print(f"黄金ETF净值: ¥{fund.nav}")
+### Command Safety
+- Dangerous bash commands blacklisted
+- Interactive confirmation for high-risk operations
 
-# 获取美股数据
-yahoo = YahooCollector()
-spx = yahoo.get_quote("SPX")
-print(f"标普500: {spx.close}")
+## 📚 Documentation
 
-# 获取个股
-aapl = yahoo.get_stock("AAPL")
-print(f"苹果股价: ${aapl['price']}")
-```
+- `AGENTS.md` - Detailed development guide
+- `EVAL_GUIDE.md` - Evaluation framework documentation
+- `evals/INVESTMENT_SKILL_*.md` - Investment skill optimization
 
-### 批量收集
-
-```python
-from batch_collector import BatchCollector
-
-# 创建收集器
-collector = BatchCollector("stock_config.yaml")
-
-# 收集所有数据
-results = collector.collect_all()
-
-# 导出
-collector.export_json("my_data.json")
-collector.export_csv("./data")
-```
-
-## 配置文件
-
-编辑 `stock_config.yaml` 来自定义你关注的标的：
-
-```yaml
-# A股关注列表
-a_shares:
-  - code: "sh600519"
-    name: "贵州茅台"
-  - code: "sz000858"
-    name: "五粮液"
-
-# 基金关注列表
-funds:
-  - code: "000216"
-    name: "华安黄金ETF联接A"
-  - code: "019455"
-    name: "华泰柏瑞中韩半导体ETF联接C"
-
-# 美股关注列表
-us_stocks:
-  - symbol: "AAPL"
-    name: "Apple"
-  - symbol: "NVDA"
-    name: "NVIDIA"
-
-# 指数关注列表
-indices:
-  domestic:
-    - code: "sh000300"
-      name: "沪深300"
-  global:
-    - code: "SPX"
-      name: "标普500"
-    - code: "VIX"
-      name: "波动率指数"
-```
-
-## 支持的代码
-
-### A股代码格式
-- 上证指数: `sh000001`
-- 沪深300: `sh000300`
-- 创业板指: `sz399006`
-- 个股: `sh600519` (茅台), `sz000858` (五粮液) 等
-
-### 美股指数代码
-- 标普500: `SPX`
-- 纳斯达克: `IXIC`
-- 道琼斯: `DJI`
-- 恒生指数: `HSI`
-- 日经225: `N225`
-- VIX波动率: `VIX`
-- 美元指数: `DXY`
-- 黄金期货: `GLD`
-- 原油期货: `CL`
-
-### 基金代码
-- 在天天基金网查询基金代码
-- 例如: `000216` (华安黄金ETF)
-
-## 数据结构
-
-### 股票数据 (StockData)
-```python
-{
-    "code": "sh600519",
-    "name": "贵州茅台",
-    "price": 1688.88,
-    "change": 1.23,
-    "change_pct": 0.07,
-    "volume": 1234567,
-    "turnover": 2087654321.0,
-    "open": 1670.00,
-    "high": 1695.00,
-    "low": 1666.66,
-    "date": "2024-01-15"
-}
-```
-
-### 基金数据 (FundData)
-```python
-{
-    "code": "000216",
-    "name": "华安黄金ETF联接A",
-    "nav": 1.2345,
-    "nav_date": "2024-01-15",
-    "daily_change": 0.56,
-    "return_1m": 2.34,
-    "return_3m": 5.67,
-    "return_1y": 12.34
-}
-```
-
-### 指数数据 (IndexData)
-```python
-{
-    "symbol": "SPX",
-    "name": "S&P 500",
-    "close": 4783.35,
-    "open": 4765.22,
-    "high": 4793.30,
-    "low": 4758.93,
-    "change": 25.48,
-    "change_pct": 0.54,
-    "volume": 2345678900,
-    "date": "2024-01-15"
-}
-```
-
-## 注意事项
-
-1. **数据源限制**: 
-   - AKShare数据来自东方财富，有频率限制
-   - Yahoo Finance可能有访问限制
-   
-2. **网络要求**: 
-   - 美股数据需要能访问Yahoo Finance
-   - 部分网络环境可能需要代理
-
-3. **免责声明**: 
-   - 本工具仅供学习研究使用
-   - 不构成投资建议
-   - 数据准确性以官方为准
-
-## 许可证
+## 📄 License
 
 MIT License
+
+## 🙏 Acknowledgments
+
+- [Agent Skills](https://agentskills.io/) - Skill system specification
+- [Model Context Protocol](https://modelcontextprotocol.io/) - External tool integration

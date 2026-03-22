@@ -306,9 +306,21 @@ class EvalRunner:
             agent = Agent(config=bourbon_config, workdir=workdir)
             agent.reset_token_usage()
             
-            # 禁用 skills
-            agent.skills._skills = {}
-            agent.system_prompt = agent._build_system_prompt()
+            # 根据测试用例决定是否启用 skills
+            required_skill = case.get("skill")
+            if required_skill:
+                # 启用特定 skill
+                try:
+                    agent.skills._discover()  # 发现可用技能
+                    agent.skills.activate(required_skill)  # 激活技能
+                    print(f"      📚 Activated skill: {required_skill}")
+                except Exception as e:
+                    print(f"      ⚠️  Failed to activate skill '{required_skill}': {e}")
+                agent.system_prompt = agent._build_system_prompt()
+            else:
+                # 禁用 skills 以保持测试干净
+                agent.skills._skills = {}
+                agent.system_prompt = agent._build_system_prompt()
             
             prompt = case.get("prompt", "")
             output = agent.step(prompt)
