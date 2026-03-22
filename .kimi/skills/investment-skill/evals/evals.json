@@ -1,0 +1,132 @@
+{
+  "skill_name": "investment-agent",
+  "version": "2.0",
+  "description": "Test cases for investment-agent skill covering portfolio monitoring, leading indicators, crisis response, and strategy recommendations",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "daily-portfolio-monitoring",
+      "prompt": "帮我跑一遍今天的任务，生成报告。我想看看我的12只基金表现如何，全球市场怎么样，还有没有什么风险需要注意的。",
+      "expected_output": "运行所有6个监控模块，生成包含全球市场领先指标、中国A股/港股监控、基金组合监控、宏观流动性、半导体行业追踪、每日摘要的综合报告。报告应包含警告级别、关键发现、战略建议和生成的文件路径。",
+      "files": [],
+      "assertions": [
+        {
+          "name": "comprehensive_report_generated",
+          "type": "file_exists",
+          "target": "daily/*_comprehensive_report.md"
+        },
+        {
+          "name": "warning_level_present",
+          "type": "content_contains",
+          "target": "预警级别"
+        }
+      ],
+      "metadata": {
+        "category": "daily_monitoring",
+        "difficulty": "medium"
+      }
+    },
+    {
+      "id": 2,
+      "eval_name": "vix-spike-crisis-response",
+      "prompt": "VIX今天飙升到30以上了，我应该怎么办？我的QDII基金会不会大跌？要不要减仓？",
+      "expected_output": "分析VIX飙升的影响，解释其含义，评估对QDII基金的具体影响，给出明确的减仓建议，并提供对冲策略。",
+      "files": [],
+      "assertions": [
+        {
+          "name": "vix_analyzed",
+          "type": "content_contains",
+          "target": "VIX"
+        },
+        {
+          "name": "action_recommended",
+          "type": "content_contains",
+          "target": "减仓"
+        }
+      ],
+      "metadata": {
+        "category": "crisis_response",
+        "difficulty": "high"
+      }
+    },
+    {
+      "id": 3,
+      "eval_name": "long-term-investor-guidance",
+      "prompt": "我是长线投资者，持有这些基金3-5年不动。今天市场又跌了1%，我需要采取什么措施吗？还是继续隔岸观火？",
+      "expected_output": "确认长线投资理念，解释短期波动属正常市场噪音，建议隔岸观火策略，说明什么情况下才需要行动，提供心理建设和历史案例。",
+      "files": [],
+      "assertions": [
+        {
+          "name": "long_term_acknowledged",
+          "type": "content_contains",
+          "target": "长线"
+        },
+        {
+          "name": "normal_fluctuation_explained",
+          "type": "content_contains",
+          "target": "正常波动"
+        }
+      ],
+      "metadata": {
+        "category": "strategy_guidance",
+        "difficulty": "medium"
+      }
+    },
+    {
+      "id": 4,
+      "eval_name": "semiconductor-sector-analysis",
+      "prompt": "半导体行业最近怎么样？我的中韩半导体ETF（019455）为什么昨天跌那么多？现在应该抄底还是止损？",
+      "expected_output": "分析半导体行业现状，解释019455下跌原因，对比A股半导体和海外半导体的差异，给出策略建议。",
+      "files": [],
+      "assertions": [
+        {
+          "name": "sox_index_analyzed",
+          "type": "content_contains",
+          "target": "SOX"
+        },
+        {
+          "name": "fund_019455_explained",
+          "type": "content_contains",
+          "target": "019455"
+        }
+      ],
+      "metadata": {
+        "category": "sector_analysis",
+        "difficulty": "high"
+      }
+    },
+    {
+      "id": 5,
+      "eval_name": "china-market-check",
+      "prompt": "看看A股和港股今天的表现怎么样，北向资金有没有大规模流出？融资余额有没有风险？",
+      "expected_output": "检查中国A股/港股的25个指标，报告北向资金情况、融资余额水平、市场情绪指标，给出中国市场整体评估和风险提示。",
+      "files": [],
+      "assertions": [
+        {
+          "name": "china_monitor_triggered",
+          "type": "content_contains",
+          "target": "A股"
+        },
+        {
+          "name": "northbound_analyzed",
+          "type": "content_contains",
+          "target": "北向资金"
+        }
+      ],
+      "metadata": {
+        "category": "china_market",
+        "difficulty": "medium"
+      }
+    }
+  ],
+  "metadata": {
+    "total_evals": 5,
+    "categories": [
+      "daily_monitoring",
+      "crisis_response",
+      "strategy_guidance",
+      "sector_analysis",
+      "china_market"
+    ]
+  }
+}

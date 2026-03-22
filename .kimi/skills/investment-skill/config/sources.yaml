@@ -1,0 +1,135 @@
+# Data Sources Configuration
+# Configure data sources and collection parameters
+
+sources:
+  # Fund valuation data
+  fund_data:
+    primary:
+      name: "eastmoney"
+      enabled: true
+      method: "web_scraping"
+      base_url: "https://fund.eastmoney.com"
+      rate_limit: 1.0         # Seconds between requests
+      timeout: 30
+    
+    backup:
+      name: "akshare"
+      enabled: true
+      method: "python_sdk"
+      rate_limit: 0.5
+      
+    fallback:
+      name: "tiantianjijin"
+      enabled: false
+      method: "web_scraping"
+
+  # Stock and index data
+  market_data:
+    china:
+      name: "akshare"
+      enabled: true
+      method: "python_sdk"
+    
+    global:
+      name: "yahoo_finance"
+      enabled: true
+      method: "python_sdk"
+      library: "yfinance"
+    
+    hk:
+      name: "akshare"
+      enabled: true
+      method: "python_sdk"
+
+  # Macro economic data
+  macro_data:
+    fed:
+      name: "federal_reserve"
+      enabled: true
+      method: "api"
+      base_url: "https://www.federalreserve.gov"
+      endpoints:
+        - balance_sheet
+        - interest_rates
+        - economic_data
+    
+    commodities:
+      name: "eastmoney"
+      enabled: true
+      method: "web_scraping"
+    
+    fx:
+      name: "yahoo_finance"
+      enabled: true
+      method: "python_sdk"
+      pairs:
+        - "USDCNH"
+        - "DXY"
+        - "USDKRW"
+
+  # News and sentiment
+  news:
+    chinese:
+      name: "cailianshe"
+      enabled: true
+      method: "web_scraping"
+      base_url: "https://www.cls.cn"
+      categories:
+        - "market"
+        - "macro"
+        - "industry"
+    
+    english:
+      name: "bloomberg"
+      enabled: false
+      method: "rss"
+      requires_api_key: true
+
+  # Industry specific data
+  industry_data:
+    semiconductor:
+      name: "multiple"
+      sources:
+        - name: "yahoo_finance"
+          symbols: ["^SOX"]
+        - name: "dramexchange"
+          enabled: true
+          url: "https://www.dramexchange.com"
+        
+    metals:
+      name: "eastmoney"
+      enabled: true
+      futures: true
+
+# Data collection settings
+collection:
+  # Cache settings
+  cache:
+    enabled: true
+    type: "sqlite"
+    path: "~/.investment-skill/cache.db"
+    ttl: 3600               # Cache TTL in seconds (1 hour)
+  
+  # Retry settings
+  retry:
+    max_attempts: 3
+    backoff_factor: 2.0
+    
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    default_delay: 1.0      # Seconds between requests
+
+# Data quality settings
+quality:
+  # Validate data freshness
+  max_data_age: 86400       # Max 24 hours old
+  
+  # Handle missing data
+  missing_data_strategy: "interpolate"  # interpolate|forward_fill|drop
+  
+  # Outlier detection
+  outlier_detection:
+    enabled: true
+    method: "z_score"
+    threshold: 3.0

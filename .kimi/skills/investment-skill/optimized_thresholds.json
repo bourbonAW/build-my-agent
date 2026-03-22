@@ -1,0 +1,187 @@
+{
+  "version": "2.0",
+  "optimized_date": "2026-02-23T18:59:46.665941",
+  "based_on": "8 historical crises, 29 signals",
+  "indicators": {
+    "us_jp_spread_2y": {
+      "name": "美日2年期利差",
+      "thresholds": {
+        "elevated": 4.0,
+        "critical": 3.0
+      },
+      "previous_thresholds": {
+        "elevated": 4.0,
+        "critical": 3.0
+      },
+      "weight": 3.0,
+      "confidence": "low",
+      "rationale": "缺乏历史数据验证，保持当前配置",
+      "historical_range": [
+        4.0,
+        3.0
+      ]
+    },
+    "dxy": {
+      "name": "美元指数DXY",
+      "thresholds": {
+        "elevated": 105.0,
+        "critical": 107
+      },
+      "previous_thresholds": {
+        "elevated": 105,
+        "critical": 107
+      },
+      "weight": 3.6,
+      "confidence": "low",
+      "rationale": "基于1次历史信号优化；其中Critical级别0次，Elevated级别1次；历史数据验证当前阈值基本合理",
+      "historical_range": [
+        105,
+        105
+      ]
+    },
+    "vix": {
+      "name": "VIX波动率指数",
+      "thresholds": {
+        "elevated": 42.88,
+        "critical": 77.9
+      },
+      "previous_thresholds": {
+        "elevated": 28,
+        "critical": 35
+      },
+      "weight": 2.0,
+      "confidence": "medium",
+      "rationale": "基于4次历史信号优化；其中Critical级别2次，Elevated级别2次；阈值调整幅度: Elevated +53%, Critical +123%",
+      "historical_range": [
+        35,
+        82
+      ]
+    },
+    "move": {
+      "name": "MOVE美债波动率",
+      "thresholds": {
+        "elevated": 120,
+        "critical": 152.0
+      },
+      "previous_thresholds": {
+        "elevated": 120,
+        "critical": 140
+      },
+      "weight": 2.0,
+      "confidence": "low",
+      "rationale": "基于1次历史信号优化；其中Critical级别1次，Elevated级别0次；历史数据验证当前阈值基本合理",
+      "historical_range": [
+        160,
+        160
+      ]
+    },
+    "yield_curve_10y2y": {
+      "name": "收益率曲线(10Y-2Y)",
+      "thresholds": {
+        "elevated": 0.5,
+        "critical": 0.0
+      },
+      "previous_thresholds": {
+        "elevated": 0.5,
+        "critical": 0.0
+      },
+      "weight": 3.0,
+      "confidence": "low",
+      "rationale": "缺乏历史数据验证，保持当前配置",
+      "historical_range": [
+        0.5,
+        0.0
+      ]
+    },
+    "credit_spread_ig": {
+      "name": "投资级信用利差",
+      "thresholds": {
+        "elevated": 150,
+        "critical": 200
+      },
+      "previous_thresholds": {
+        "elevated": 150,
+        "critical": 200
+      },
+      "weight": 2.0,
+      "confidence": "low",
+      "rationale": "缺乏历史数据验证，保持当前配置",
+      "historical_range": [
+        150,
+        200
+      ]
+    },
+    "high_yield_spread": {
+      "name": "高收益债利差",
+      "thresholds": {
+        "elevated": 500,
+        "critical": 800
+      },
+      "previous_thresholds": {
+        "elevated": 500,
+        "critical": 800
+      },
+      "weight": 2.0,
+      "confidence": "low",
+      "rationale": "缺乏历史数据验证，保持当前配置",
+      "historical_range": [
+        500,
+        800
+      ]
+    },
+    "sofr_ois_spread": {
+      "name": "SOFR-OIS利差",
+      "thresholds": {
+        "elevated": 30,
+        "critical": 50
+      },
+      "previous_thresholds": {
+        "elevated": 30,
+        "critical": 50
+      },
+      "weight": 2.5,
+      "confidence": "low",
+      "rationale": "缺乏历史数据验证，保持当前配置",
+      "historical_range": [
+        30,
+        50
+      ]
+    },
+    "ted_spread": {
+      "name": "TED利差",
+      "thresholds": {
+        "elevated": 40,
+        "critical": 100
+      },
+      "previous_thresholds": {
+        "elevated": 40,
+        "critical": 100
+      },
+      "weight": 2.0,
+      "confidence": "low",
+      "rationale": "缺乏历史数据验证，保持当前配置",
+      "historical_range": [
+        40,
+        100
+      ]
+    },
+    "copper_gold_ratio": {
+      "name": "铜金比",
+      "thresholds": {
+        "elevated": -5,
+        "critical": -10
+      },
+      "previous_thresholds": {
+        "elevated": -5,
+        "critical": -10
+      },
+      "weight": 1.5,
+      "confidence": "low",
+      "rationale": "缺乏历史数据验证，保持当前配置",
+      "historical_range": [
+        -5,
+        -10
+      ]
+    }
+  }
+}

@@ -1,0 +1,148 @@
+# Portfolio Configuration
+# Configure your fund holdings and alert thresholds
+
+portfolio:
+  # Your fund holdings
+  # Initial investment: 50,000 RMB per fund (Total: 600,000 RMB)
+  # Purchase date: 2026-02-22
+  funds:
+    # Semiconductor - Korea/China
+    - code: "019455"
+      name: "华泰柏瑞中韩半导体ETF联接C"
+      category: "semiconductor"
+      sub_category: "korea_china"
+      region: "asia"
+      shares: 20238.82       # 50,000 / 2.4705
+      cost_basis: 2.4705     # NAV on 2026-02-22
+      
+    # Gold
+    - code: "000216"
+      name: "华安黄金ETF联接A"
+      category: "commodity"
+      sub_category: "gold"
+      region: "global"
+      shares: 12993.17       # 50,000 / 3.8481
+      cost_basis: 3.8481     # NAV on 2026-02-22
+      
+    # Non-ferrous metals
+    - code: "018167"
+      name: "国泰有色矿业ETF联接A"
+      category: "commodity"
+      sub_category: "non_ferrous"
+      region: "china"
+      shares: 24249.48       # 50,000 / 2.0619
+      cost_basis: 2.0619     # NAV on 2026-02-22
+      
+    # Semiconductor - China A-share
+    - code: "007300"
+      name: "国联安中证半导体ETF联接A"
+      category: "semiconductor"
+      sub_category: "china"
+      region: "china"
+      shares: 15491.39       # 50,000 / 3.2276
+      cost_basis: 3.2276     # NAV on 2026-02-22
+      
+    # Non-ferrous metals futures
+    - code: "007910"
+      name: "大成有色金属期货ETF联接A"
+      category: "commodity"
+      sub_category: "non_ferrous_futures"
+      region: "china"
+      shares: 43675.05       # 50,000 / 1.1448
+      cost_basis: 1.1448     # NAV on 2026-02-22
+      
+    # Semiconductor - China Chip
+    - code: "008887"
+      name: "华夏国证半导体芯片ETF联接A"
+      category: "semiconductor"
+      sub_category: "china_chip"
+      region: "china"
+      shares: 29601.56       # 50,000 / 1.6891
+      cost_basis: 1.6891     # NAV on 2026-02-22
+      
+    # US Tech - ARK-like
+    - code: "501312"
+      name: "华宝海外科技股票"
+      category: "tech"
+      sub_category: "innovation"
+      region: "us"
+      shares: 25606.88       # 50,000 / 1.9526
+      cost_basis: 1.9526     # NAV on 2026-02-22
+      
+    # US Market - S&P 500
+    - code: "050025"
+      name: "博时标普500ETF联接A"
+      category: "us_equity"
+      sub_category: "sp500"
+      region: "us"
+      shares: 9783.78        # 50,000 / 5.1105
+      cost_basis: 5.1105     # NAV on 2026-02-22
+      
+    # US Market - S&P 500
+    - code: "161125"
+      name: "易方达标普500指数"
+      category: "us_equity"
+      sub_category: "sp500"
+      region: "us"
+      shares: 17347.26       # 50,000 / 2.8823
+      cost_basis: 2.8823     # NAV on 2026-02-22
+      
+    # US Market - NASDAQ 100
+    - code: "016532"
+      name: "嘉实纳斯达克100ETF"
+      category: "us_equity"
+      sub_category: "nasdaq100"
+      region: "us"
+      shares: 26856.10       # 50,000 / 1.8617
+      cost_basis: 1.8617     # NAV on 2026-02-22
+      
+    # US Market - NASDAQ Tech
+    - code: "017091"
+      name: "景顺长城纳斯达克科技ETF"
+      category: "us_equity"
+      sub_category: "nasdaq_tech"
+      region: "us"
+      shares: 22210.38       # 50,000 / 2.2512
+      cost_basis: 2.2512     # NAV on 2026-02-22
+      
+    # HK Tech
+    - code: "013402"
+      name: "华夏恒生科技ETF"
+      category: "hk_equity"
+      sub_category: "tech"
+      region: "hk"
+      shares: 55199.82       # 50,000 / 0.9058
+      cost_basis: 0.9058     # NAV on 2026-02-22
+
+  # Category allocations for analysis
+  allocations:
+    semiconductor: 0.30     # Target 30%
+    commodity: 0.25         # Target 25%
+    us_equity: 0.30         # Target 30%
+    hk_equity: 0.10         # Target 10%
+    tech: 0.05              # Target 5%
+
+# Alert thresholds
+alerts:
+  # Single day decline threshold (%)
+  daily_decline_threshold: -3.0
+  
+  # Single day surge threshold (%)
+  daily_surge_threshold: 5.0
+  
+  # Consecutive decline days to trigger alert
+  consecutive_decline_days: 3
+  
+  # Deviation from benchmark index (%)
+  benchmark_deviation: 5.0
+  
+  # Portfolio total value decline (%)
+  portfolio_decline_threshold: -5.0
+
+# Benchmark indices for comparison
+benchmarks:
+  china: "000300"           # CSI 300
+  hk: "HSI"                 # Hang Seng Index
+  us: "SPX"                 # S&P 500
+  semiconductor: "SOX"      # Philadelphia Semiconductor
+  gold: "XAU"               # Gold spot

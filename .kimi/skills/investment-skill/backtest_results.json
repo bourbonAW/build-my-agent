@@ -1,0 +1,710 @@
+{
+  "backtest_date": "2026-02-23T18:55:21.280214",
+  "total_crisis": 8,
+  "indicators_tested": [
+    "us_jp_spread_2y",
+    "dxy",
+    "vix",
+    "move",
+    "yield_curve_10y2y",
+    "credit_spread_ig",
+    "high_yield_spread",
+    "sofr_ois_spread",
+    "ted_spread",
+    "copper_gold_ratio"
+  ],
+  "results": [
+    {
+      "crisis_id": "1997_asian_crisis",
+      "crisis_name": "1997年亚洲金融危机",
+      "indicators_triggered": 0,
+      "total_indicators": 10,
+      "hit_rate": 0.0,
+      "avg_lead_time": 0,
+      "best_indicators": [],
+      "worst_indicators": [],
+      "recommendations": [
+        "本次回测未发现明显的优化点"
+      ],
+      "indicator_performances": [
+        {
+          "indicator_name": "美日2年期利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "美元指数DXY",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "VIX波动率指数",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "MOVE美债波动率",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "收益率曲线(10Y-2Y)",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "投资级信用利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "高收益债利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "SOFR-OIS利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "TED利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "铜金比",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        }
+      ]
+    },
+    {
+      "crisis_id": "2008_financial_crisis",
+      "crisis_name": "2008年金融危机",
+      "indicators_triggered": 0,
+      "total_indicators": 10,
+      "hit_rate": 0.0,
+      "avg_lead_time": 0,
+      "best_indicators": [],
+      "worst_indicators": [
+        "收益率曲线(10Y-2Y)",
+        "投资级信用利差"
+      ],
+      "recommendations": [
+        "⚠️ 本次危机中漏报的指标: 收益率曲线(10Y-2Y), 投资级信用利差，建议降低阈值或改进算法"
+      ],
+      "indicator_performances": [
+        {
+          "indicator_name": "美日2年期利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "美元指数DXY",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "VIX波动率指数",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "MOVE美债波动率",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "收益率曲线(10Y-2Y)",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 20.0,
+          "missed_crisis": true
+        },
+        {
+          "indicator_name": "投资级信用利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 20.0,
+          "missed_crisis": true
+        },
+        {
+          "indicator_name": "高收益债利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "SOFR-OIS利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "TED利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "铜金比",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        }
+      ]
+    },
+    {
+      "crisis_id": "2011_eu_debt_crisis",
+      "crisis_name": "2011年欧债危机",
+      "indicators_triggered": 0,
+      "total_indicators": 10,
+      "hit_rate": 0.0,
+      "avg_lead_time": 0,
+      "best_indicators": [],
+      "worst_indicators": [],
+      "recommendations": [
+        "本次回测未发现明显的优化点"
+      ],
+      "indicator_performances": [
+        {
+          "indicator_name": "美日2年期利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "美元指数DXY",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "VIX波动率指数",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "MOVE美债波动率",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "收益率曲线(10Y-2Y)",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "投资级信用利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "高收益债利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "SOFR-OIS利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "TED利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "铜金比",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        }
+      ]
+    },
+    {
+      "crisis_id": "2015_a_share_crash",
+      "crisis_name": "2015年A股熔断危机",
+      "indicators_triggered": 0,
+      "total_indicators": 10,
+      "hit_rate": 0.0,
+      "avg_lead_time": 0,
+      "best_indicators": [],
+      "worst_indicators": [],
+      "recommendations": [
+        "本次回测未发现明显的优化点"
+      ],
+      "indicator_performances": [
+        {
+          "indicator_name": "美日2年期利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "美元指数DXY",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "VIX波动率指数",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "MOVE美债波动率",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "收益率曲线(10Y-2Y)",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "投资级信用利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "高收益债利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "SOFR-OIS利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "TED利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "铜金比",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        }
+      ]
+    },
+    {
+      "crisis_id": "2018_trade_war",
+      "crisis_name": "2018年中美贸易战",
+      "indicators_triggered": 0,
+      "total_indicators": 10,
+      "hit_rate": 0.0,
+      "avg_lead_time": 0,
+      "best_indicators": [],
+      "worst_indicators": [],
+      "recommendations": [
+        "本次回测未发现明显的优化点"
+      ],
+      "indicator_performances": [
+        {
+          "indicator_name": "美日2年期利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "美元指数DXY",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "VIX波动率指数",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "MOVE美债波动率",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "收益率曲线(10Y-2Y)",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "投资级信用利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "高收益债利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "SOFR-OIS利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "TED利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "铜金比",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        }
+      ]
+    },
+    {
+      "crisis_id": "2020_covid_crisis",
+      "crisis_name": "2020年COVID流动性危机",
+      "indicators_triggered": 0,
+      "total_indicators": 10,
+      "hit_rate": 0.0,
+      "avg_lead_time": 0,
+      "best_indicators": [],
+      "worst_indicators": [
+        "MOVE美债波动率",
+        "SOFR-OIS利差",
+        "TED利差"
+      ],
+      "recommendations": [
+        "⚠️ 本次危机中漏报的指标: MOVE美债波动率, SOFR-OIS利差, TED利差，建议降低阈值或改进算法"
+      ],
+      "indicator_performances": [
+        {
+          "indicator_name": "美日2年期利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "美元指数DXY",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "VIX波动率指数",
+          "warned": false,
+          "lead_time_days": -7,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "MOVE美债波动率",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 20.0,
+          "missed_crisis": true
+        },
+        {
+          "indicator_name": "收益率曲线(10Y-2Y)",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "投资级信用利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "高收益债利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "SOFR-OIS利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 20.0,
+          "missed_crisis": true
+        },
+        {
+          "indicator_name": "TED利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 20.0,
+          "missed_crisis": true
+        },
+        {
+          "indicator_name": "铜金比",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        }
+      ]
+    },
+    {
+      "crisis_id": "2022_strong_dollar",
+      "crisis_name": "2022年强美元冲击",
+      "indicators_triggered": 1,
+      "total_indicators": 10,
+      "hit_rate": 0.1,
+      "avg_lead_time": 200.0,
+      "best_indicators": [
+        "美元指数DXY"
+      ],
+      "worst_indicators": [],
+      "recommendations": [
+        "✅ 本次危机中表现优秀的指标: 美元指数DXY，建议保持或提高权重",
+        "⏰ 本次危机中预警过早的指标(>6个月): 美元指数DXY，可能导致误报，建议提高阈值"
+      ],
+      "indicator_performances": [
+        {
+          "indicator_name": "美日2年期利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "美元指数DXY",
+          "warned": true,
+          "lead_time_days": 200,
+          "effectiveness_score": 90.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "VIX波动率指数",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "MOVE美债波动率",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "收益率曲线(10Y-2Y)",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "投资级信用利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "高收益债利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "SOFR-OIS利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "TED利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "铜金比",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        }
+      ]
+    },
+    {
+      "crisis_id": "2024_08_yen_carry",
+      "crisis_name": "2024年8月日元套利交易unwind",
+      "indicators_triggered": 0,
+      "total_indicators": 10,
+      "hit_rate": 0.0,
+      "avg_lead_time": 0,
+      "best_indicators": [],
+      "worst_indicators": [
+        "美日2年期利差"
+      ],
+      "recommendations": [
+        "⚠️ 本次危机中漏报的指标: 美日2年期利差，建议降低阈值或改进算法"
+      ],
+      "indicator_performances": [
+        {
+          "indicator_name": "美日2年期利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 20.0,
+          "missed_crisis": true
+        },
+        {
+          "indicator_name": "美元指数DXY",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "VIX波动率指数",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 30.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "MOVE美债波动率",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "收益率曲线(10Y-2Y)",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "投资级信用利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "高收益债利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "SOFR-OIS利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "TED利差",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        },
+        {
+          "indicator_name": "铜金比",
+          "warned": false,
+          "lead_time_days": 0,
+          "effectiveness_score": 50.0,
+          "missed_crisis": false
+        }
+      ]
+    }
+  ]
+}

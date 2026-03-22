@@ -1,0 +1,268 @@
+# Investment Agent Skill
+
+An intelligent investment analysis system that automates data collection, portfolio monitoring, and market analysis. Built for integration with Obsidian vault-based knowledge management.
+
+## Overview
+
+This skill provides four core capabilities:
+
+1. **Portfolio Monitoring** (`/fund-monitor`) - Track fund performance and detect anomalies
+2. **Macro Liquidity Alerts** (`/macro-liquidity`) - Monitor global liquidity conditions
+3. **Daily Market Summary** (`/daily-summary`) - Generate comprehensive daily reports
+4. **Semiconductor Tracking** (`/semi-tracker`) - Track semiconductor industry trends
+
+## Architecture
+
+```
+~/investment-skill/
+├── SKILL.md                          # This file
+├── config/
+│   ├── portfolio.yaml                # Your portfolio configuration
+│   └── sources.yaml                  # Data source settings
+├── skills/                           # Core analysis modules
+│   ├── fund_monitor/
+│   ├── macro_liquidity/
+│   ├── daily_summary/
+│   └── semiconductor_tracker/
+├── collectors/                       # Data collection modules
+├── utils/                           # Shared utilities
+└── templates/                       # Output templates
+```
+
+## Commands
+
+### /fund-monitor
+Monitor portfolio funds and detect anomalies.
+
+**Usage:**
+```bash
+/fund-monitor              # Full portfolio report
+/fund-monitor --alert      # Show only alerts
+/fund-monitor --code 019455 # Monitor specific fund
+```
+
+**Output:**
+- Portfolio performance summary
+- Individual fund analysis
+- Alert notifications for significant changes
+- Auto-saved to: `vault-notes/daily/YYYY-MM-DD_fund_report.md`
+
+### /macro-liquidity
+Monitor global macro liquidity conditions and their impact on your portfolio.
+
+**Usage:**
+```bash
+/macro-liquidity           # Full macro report
+/macro-liquidity --alert   # Show only alerts
+```
+
+**Monitored Indicators:**
+- US Dollar Index (DXY)
+- Gold prices vs real yields
+- US 10Y Treasury yields
+- China-US yield spread
+- Base metals futures
+- Fed balance sheet changes
+
+**Output:**
+- Liquidity environment assessment
+- Portfolio impact analysis
+- Auto-saved to: `vault-notes/knowledge/investment/macro/`
+
+### /daily-summary
+Generate comprehensive daily market summary with global markets and portfolio performance.
+
+**Usage:**
+```bash
+/daily-summary             # Generate today's report
+/daily-summary --date 2026-02-22 # Specific date
+```
+
+**Includes:**
+- Global market overview (US, HK, CN)
+- Portfolio performance
+- Key news and events
+- Watchlist for the day
+- Strategy suggestions
+
+**Output:**
+- Markdown report auto-saved to: `vault-notes/daily/YYYY-MM-DD_investment.md`
+
+### /semi-tracker
+Track semiconductor industry trends and their correlation with your semiconductor holdings.
+
+**Usage:**
+```bash
+/semi-tracker              # Industry analysis
+/semi-tracker --weekly     # Weekly deep dive
+```
+
+**Tracked Metrics:**
+- Philadelphia Semiconductor Index (SOX)
+- Memory chip prices (DRAM/NAND)
+- Semiconductor equipment orders
+- US-China tech policy news
+- Korea KOSPI correlation
+
+**Output:**
+- Industry analysis report
+- Correlation with your funds (019455, 007300, 008887)
+- Auto-saved to: `vault-notes/knowledge/investment/industries/semiconductor/`
+
+### /investment-daily
+Run all skills in sequence for a complete daily analysis.
+
+**Usage:**
+```bash
+/investment-daily          # Run all skills
+/investment-daily --quick  # Skip detailed analysis
+```
+
+## Configuration
+
+### Portfolio Setup
+
+Edit `config/portfolio.yaml` to configure your holdings:
+
+```yaml
+portfolio:
+  funds:
+    - code: "019455"
+      name: "华泰柏瑞中韩半导体ETF联接C"
+      category: "semiconductor"
+      region: "asia"
+      shares: 1000          # Your holdings
+      cost_basis: 1.50     # Average cost
+    
+    - code: "000216"
+      name: "华安黄金ETF联接A"
+      category: "commodity"
+      region: "global"
+      shares: 500
+      cost_basis: 3.20
+  
+  alerts:
+    daily_decline_threshold: -3.0
+    consecutive_decline_days: 3
+    daily_surge_threshold: 5.0
+    benchmark_deviation: 5.0
+```
+
+### Data Sources
+
+Edit `config/sources.yaml` to configure data sources:
+
+```yaml
+sources:
+  fund_data:
+    primary: "eastmoney"      #东方财富
+    backup: "akshare"
+  
+  macro_data:
+    fed: "federal_reserve_api"
+    commodities: "eastmoney"
+    fx: "yahoo_finance"
+  
+  news:
+    chinese: "cailianshe"     #财联社
+    english: "bloomberg"
+```
+
+## Data Collection Strategy
+
+### Free Data Sources
+
+1. **AKShare** - Chinese market data (free, Python SDK)
+2. **Yahoo Finance** - Global markets (free, yfinance)
+3. **EastMoney** - Fund data (free, web scraping)
+4. **Federal Reserve** - Macro data (free, API)
+
+### Collection Methods
+
+- **Python SDK**: AKShare, yfinance for structured data
+- **Playwright**: Web scraping for fund valuations, news
+- **API calls**: Macro data from official sources
+- **Caching**: Local SQLite for historical data
+
+## Integration with Vault
+
+All outputs are automatically saved to your Obsidian vault:
+
+- **Daily reports**: `vault-notes/daily/YYYY-MM-DD_*.md`
+- **Knowledge base**: `vault-notes/knowledge/investment/`
+- **Linked entries**: Created with wiki-links for navigation
+
+Example vault structure after running:
+```
+vault-notes/
+├── daily/
+│   ├── 2026-02-22_investment.md
+│   ├── 2026-02-22_fund_report.md
+│   └── ...
+└── knowledge/
+    └── investment/
+        ├── portfolio/
+        │   └── current_allocation.md
+        ├── macro/
+        │   └── liquidity_analysis_2026-02.md
+        └── industries/
+            └── semiconductor/
+                └── weekly_analysis.md
+```
+
+## Automation
+
+### Scheduled Execution
+
+Add to crontab (macOS/Linux):
+
+```bash
+# Daily at 8:00 AM
+0 8 * * 1-5 cd ~/investment-skill && python -m skills.daily_summary
+
+# Fund monitoring every hour during market hours
+0 9-15 * * 1-5 cd ~/investment-skill && python -m skills.fund_monitor --alert
+```
+
+### macOS LaunchAgent
+
+Create `~/Library/LaunchAgents/com.investment.agent.plist` for native macOS scheduling.
+
+## Development
+
+### Adding New Skills
+
+1. Create new directory in `skills/`
+2. Implement `run()` function
+3. Add CLI command in `__main__.py`
+4. Update SKILL.md documentation
+
+### Extending Data Sources
+
+1. Add collector in `collectors/`
+2. Implement standard interface:
+   - `fetch_fund_data(code)`
+   - `fetch_macro_data(indicator)`
+   - `fetch_news(keywords)`
+3. Register in `sources.yaml`
+
+## Requirements
+
+- Python 3.10+
+- Playwright (for web scraping)
+- pandas, numpy (data processing)
+- pyyaml (configuration)
+- jinja2 (templating)
+- requests (HTTP calls)
+
+## License
+
+Private use only. This is a personal investment tool.
+
+## Changelog
+
+### v1.0.0 (Initial Release)
+- Four core skills implemented
+- EastMoney and AKShare data sources
+- Vault integration
+- Basic alerting system

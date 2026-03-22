@@ -1,0 +1,39 @@
+{
+  "id": "skill-inv-macro-001",
+  "name": "宏观流动性分析报告",
+  "category": "skills",
+  "skill": "investment-agent",
+  "difficulty": "hard",
+  "description": "测试 investment-agent 生成宏观流动性分析报告的能力",
+  "prompt": "帮我生成一份当前的宏观流动性分析报告，包括DXY、SOFR-OIS、美债收益率曲线等关键指标",
+  "expected": {
+    "description": "应该生成包含多个宏观指标的流动性分析报告"
+  },
+  "assertions": [
+    {
+      "id": "dxy_analyzed",
+      "type": "programmatic",
+      "description": "分析了DXY美元指数",
+      "check": "output_contains:DXY"
+    },
+    {
+      "id": "sofr_analyzed",
+      "type": "programmatic",
+      "description": "分析了SOFR-OIS利差",
+      "check": "output_contains_any:[SOFR, OIS]"
+    },
+    {
+      "id": "yield_curve_analyzed",
+      "type": "programmatic",
+      "description": "分析了收益率曲线",
+      "check": "output_contains_any:[收益率, yield, 期限溢价]"
+    },
+    {
+      "id": "comprehensive_report",
+      "type": "programmatic",
+      "description": "报告包含多个指标分析",
+      "check": "output_contains_any:[综合分析, 总结, 结论]"
+    }
+  ],
+  "tags": ["skill", "investment", "macro", "liquidity", "report"]
+}
