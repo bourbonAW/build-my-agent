@@ -72,7 +72,7 @@ def main() -> int:
     """
     parser = argparse.ArgumentParser(
         prog="bourbon",
-        description="🥃 Bourbon - A code specialist agent",
+        description="🥃 Bourbon - A general-purpose agent platform",
     )
     parser.add_argument(
         "--init",

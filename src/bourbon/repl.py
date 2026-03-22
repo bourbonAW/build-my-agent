@@ -336,7 +336,7 @@ class REPL:
     def _print_banner(self) -> None:
         """Print welcome banner."""
         banner = """[bold #D4A373]
-🥃 Bourbon - Code Specialist Agent
+🥃 Bourbon - General-Purpose Agent
 [/bold #D4A373]
 Type your message or use [bold]/help[/bold] for commands.
 Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
