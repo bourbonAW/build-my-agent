@@ -78,6 +78,16 @@ bourbon
 | `search` | Code search (rg/ast-grep) | Read-only |
 | `todo` | Task management | - |
 
+### Stage B: General Knowledge Tools
+
+| Tool | Purpose | Domain |
+|------|---------|--------|
+| `fetch_url` | Fetch web content | Web |
+| `csv_analyze` | CSV statistics | Data |
+| `json_query` | JSON path queries | Data |
+| `pdf_to_text` | PDF text extraction | Documents |
+| `docx_to_markdown` | Word conversion | Documents |
+
 ### 2. Skill System (Agent Skills Compatible)
 
 Bourbon implements the [Agent Skills](https://agentskills.io/) open specification:

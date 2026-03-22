@@ -272,6 +272,74 @@ MCP servers provide external tools without code changes:
 
 ---
 
+## Stage B Capabilities (General Assistant)
+
+Bourbon has expanded from code specialist to general knowledge worker with new Stage B capabilities:
+
+### New Tools and Skills
+
+| Domain | Tool | Skill | Description |
+|--------|------|-------|-------------|
+| **Web** | `fetch_url` | `web-fetch` | Fetch content from URLs with safety limits |
+| **Data** | `csv_analyze`, `json_query` | `data-analysis` | Analyze CSV/JSON with statistics |
+| **Documents** | `pdf_to_text`, `docx_to_markdown` | `document-parse` | Extract text from PDF/Word |
+| **Writing** | - | `report-gen` | Generate markdown reports from templates |
+
+### Usage Examples
+
+```bash
+# Fetch web content
+> skill("web-fetch", url="https://example.com")
+
+# Analyze CSV file
+> skill("data-analysis", file="sales.csv", operations=["summary", "groupby:product"])
+
+# Extract PDF text
+> skill("document-parse", file="report.pdf", type="pdf")
+
+# Generate report
+> skill("report-gen", title="Sales Analysis", data=sales_data)
+```
+
+### Mixed Workflow Example
+
+```python
+# Complete workflow: Analyze CSV → Fetch web data → Generate report
+sales = skill("data-analysis", file="sales.csv", operations=["summary"])
+competitor = skill("web-fetch", url="https://competitor.com/pricing")
+report = skill("report-gen", 
+               title="Competitive Analysis",
+               sections=[
+                   {"heading": "Our Sales", "content": str(sales['stats'])},
+                   {"heading": "Competitor Pricing", "content": competitor['text'][:1000]}
+               ])
+```
+
+### Tool Reference
+
+**Web Tools** (`src/bourbon/tools/web.py`):
+- `fetch_url(url, timeout=30, max_length=100000)` - Fetch URL with safety limits
+
+**Data Tools** (`src/bourbon/tools/data.py`):
+- `csv_analyze(file_path, operations=["summary"])` - Analyze CSV statistics
+- `json_query(file_path, query="path.to.value")` - Query JSON with dot notation
+
+**Document Tools** (`src/bourbon/tools/documents.py`):
+- `pdf_to_text(file_path, page_range=None)` - Extract PDF text
+- `docx_to_markdown(file_path)` - Convert Word to markdown
+
+### Installation
+
+Stage B requires additional dependencies:
+
+```bash
+uv pip install -e ".[stage-b]"
+```
+
+This installs: pandas, pypdf, python-docx, jinja2, aiohttp, beautifulsoup4
+
+---
+
 ## Investment Skill Optimization
 
 The investment-agent skill has been optimized for **50-100x performance improvement**.
