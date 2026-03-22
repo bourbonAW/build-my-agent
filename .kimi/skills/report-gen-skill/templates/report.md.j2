@@ -1,0 +1,35 @@
+# {{ title }}
+
+Generated: {{ date }}
+
+{% if summary %}
+## Summary
+
+{{ summary }}
+
+{% endif %}
+
+{% for section in sections %}
+## {{ section.heading }}
+
+{% if section.content %}
+{{ section.content }}
+{% endif %}
+
+{% if section.table %}
+| {{ section.table.columns | join(" | ") }} |
+| {{ section.table.columns | map('length') | map('default', 3, true) | map('repeat', '-') | map('join', '') | join(" | ") }} |
+{% for row in section.table.rows %}
+| {{ row | join(" | ") }} |
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+
+{% if data %}
+## Data
+
+```json
+{{ data | tojson(indent=2) }}
+```
+{% endif %}
