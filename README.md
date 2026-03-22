@@ -125,28 +125,6 @@ command = "uvx"
 args = ["mcp-server-fetch"]
 ```
 
-## 📊 Performance Highlights
-
-### Investment Skill Optimization
-
-The investment-agent skill has been optimized for **50-100x performance improvement**:
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Fund Monitor (12 funds) | 120-180s | **0.6s** | **200-300x** |
-| Single fund query | 10-15s | **0.1s** | **100x** |
-| Full eval suite (13 tests) | 500s+ | **<60s** | **8x+** |
-
-**Key Optimizations**:
-- **Fast Collector**: HTTP API direct access (0.1s vs 10s)
-- **Hybrid Collector**: Smart fallback (Fast API 83%, Playwright 17%)
-- **Concurrent Fetching**: ThreadPoolExecutor for parallel requests
-- **Caching**: `@cached` decorator with 5-minute TTL
-
-See:
-- `evals/INVESTMENT_SKILL_PERFORMANCE_ANALYSIS.md` - Detailed analysis
-- `evals/INVESTMENT_SKILL_OPTIMIZATION_PATCH.md` - Implementation guide
-
 ## 🧪 Evaluation Framework
 
 Comprehensive testing for skills, safety, and performance:

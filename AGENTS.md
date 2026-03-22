@@ -342,16 +342,7 @@ This installs: pandas, pypdf, python-docx, jinja2, aiohttp, beautifulsoup4
 
 ## Investment Skill Optimization
 
-The investment-agent skill has been optimized for **50-100x performance improvement**.
-
-### Performance Results
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Fund Monitor (12 funds) | 120-180s | **0.6s** | **200-300x** |
-| Single fund query | 10-15s | **0.1s** | **100x** |
-| Batch 3 funds | 30-45s | **0.2s** | **150x** |
-| Cache hit | N/A | **<0.01s** | **1000x** |
+The investment-agent skill uses a hybrid collector architecture for efficient fund data retrieval.
 
 ### Architecture
 
