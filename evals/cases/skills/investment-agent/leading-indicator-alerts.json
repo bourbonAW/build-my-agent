@@ -1,0 +1,39 @@
+{
+  "id": "skill-inv-leading-001",
+  "name": "领先指标预警系统 - 多指标综合分析",
+  "category": "skills",
+  "skill": "investment-agent",
+  "difficulty": "hard",
+  "description": "测试领先指标预警系统对多个宏观经济指标的综合分析能力",
+  "prompt": "运行领先指标预警系统，检查当前的US-Japan利差、MOVE指数、高收益债利差和期限溢价，告诉我整体风险等级",
+  "expected": {
+    "description": "应该分析多个领先指标，给出综合风险评级和预警"
+  },
+  "assertions": [
+    {
+      "id": "multiple_indicators_analyzed",
+      "type": "programmatic",
+      "description": "分析了多个领先指标",
+      "check": "output_contains_any:[US-Japan, MOVE, 利差, 高收益债, 期限溢价, 2年期]"
+    },
+    {
+      "id": "risk_level_assigned",
+      "type": "programmatic",
+      "description": "给出了明确的风险等级",
+      "check": "output_contains_any:[🟢, 🟡, 🟠, 🔴, Green, Yellow, Orange, Red, 风险等级]"
+    },
+    {
+      "id": "warning_threshold_check",
+      "type": "programmatic",
+      "description": "检查了预警阈值",
+      "check": "output_contains_any:[阈值, threshold, 预警, alert, 警告]"
+    },
+    {
+      "id": "actionable_advice",
+      "type": "programmatic",
+      "description": "提供了可执行的建议",
+      "check": "output_contains_any:[建议, 策略, 操作, 防御, 减仓, 加仓]"
+    }
+  ],
+  "tags": ["skill", "investment", "leading-indicator", "macro", "risk"]
+}

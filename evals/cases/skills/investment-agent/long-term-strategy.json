@@ -1,0 +1,39 @@
+{
+  "id": "skill-inv-longterm-001",
+  "name": "长期投资策略 - 定投与再平衡",
+  "category": "skills",
+  "skill": "investment-agent",
+  "difficulty": "medium",
+  "description": "测试对长期投资者的策略建议（定投、再平衡）",
+  "prompt": "我是长期投资者，打算定投3-5年，现在这个时点应该怎么做？需要再平衡吗？",
+  "expected": {
+    "description": "应该提供长期投资建议，包含定投策略和再平衡建议"
+  },
+  "assertions": [
+    {
+      "id": "long_term_acknowledged",
+      "type": "programmatic",
+      "description": "确认了长期投资视角",
+      "check": "output_contains_any:[长期, 定投, 3年, 5年, 时间, 持有]"
+    },
+    {
+      "id": "dca_strategy",
+      "type": "programmatic",
+      "description": "提供了定投策略",
+      "check": "output_contains_any:[定投, DCA, 分批, 定期, 每月]"
+    },
+    {
+      "id": "rebalance_advice",
+      "type": "programmatic",
+      "description": "给出了再平衡建议",
+      "check": "output_contains_any:[再平衡, 调仓, 配置, 比例, 权重]"
+    },
+    {
+      "id": "time_horizon_consideration",
+      "type": "programmatic",
+      "description": "考虑了时间跨度",
+      "check": "output_contains_any:[时间, 跨度, 周期, 年份, 忽视, 波动]"
+    }
+  ],
+  "tags": ["skill", "investment", "long-term", "strategy", "dca", "rebalance"]
+}
