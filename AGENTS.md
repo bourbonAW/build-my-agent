@@ -5,19 +5,26 @@ Development guide for AI agents working on Bourbon.
 ## Project Vision
 
 **Bourbon is a general-purpose agent platform** with a code-first evolution:
-- **Stage A (Current)**: Perfect code capabilities - search, refactoring, analysis
-- **Stage B**: Expand to general knowledge work - documents, web, data
+- **Stage A (Completed)**: Perfect code capabilities - search, refactoring, analysis
+- **Stage B (Current)**: Expand to general knowledge work - documents, web, data, investment analysis
 - **Stage C**: Autonomous workflows across all domains
 
-## Stage A Focus: Code Specialist
+## Stage B Focus: General-Purpose Agent
 
-This stage builds exceptional software engineering assistance:
-- Advanced code search (rg + ast-grep)
-- Safe file operations with sandboxing
-- Code-aware todo management
-- Skills for coding patterns and best practices
-- MCP Client for external tool integration
-- Context management for long coding sessions
+Bourbon has evolved from a code specialist to a general-purpose agent capable of:
+- **Software Engineering**: Code search, refactoring, analysis (Stage A capabilities)
+- **Domain Expertise via Skills**: Investment analysis, project management, and more
+- **External Integrations**: MCP Client for databases, APIs, and external tools
+- **Knowledge Work**: Documents, web, data analysis
+- **Safe Operations**: Sandboxed file operations, risk-based error handling
+- **Context Management**: Long session support with compression
+
+### Key Capabilities
+
+1. **Core Tools**: File operations, code search, bash execution, todo management
+2. **Skill System**: Agent Skills compatible - progressive disclosure, multi-scope discovery
+3. **MCP Integration**: External tool servers for extended capabilities
+4. **Eval Framework**: Comprehensive testing for skills, safety, and performance
 
 ## Project Structure
 
