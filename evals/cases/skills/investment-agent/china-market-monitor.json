@@ -1,0 +1,39 @@
+{
+  "id": "skill-inv-china-001",
+  "name": "中国市场监控 - A股港股综合分析",
+  "category": "skills",
+  "skill": "investment-agent",
+  "difficulty": "medium",
+  "description": "测试中国市场监控器对A股和港市场的综合分析能力",
+  "prompt": "看一下今天A股和港股的表现，特别是沪深300估值、融资余额和北向资金流向",
+  "expected": {
+    "description": "应该提供A股和港市场的综合分析，包含估值、杠杆和资金流向"
+  },
+  "assertions": [
+    {
+      "id": "csi300_valuation",
+      "type": "programmatic",
+      "description": "分析了沪深300估值",
+      "check": "output_contains_any:[沪深300, CSI300, PE, PB, 估值]"
+    },
+    {
+      "id": "margin_data",
+      "type": "programmatic",
+      "description": "包含了融资余额数据",
+      "check": "output_contains_any:[融资余额, 杠杆, 两融, Margin]"
+    },
+    {
+      "id": "northbound_flows",
+      "type": "programmatic",
+      "description": "分析了北向资金流向",
+      "check": "output_contains_any:[北向资金, 外资, 净流入, 资金流向]"
+    },
+    {
+      "id": "hk_market_data",
+      "type": "programmatic",
+      "description": "包含了港市场数据",
+      "check": "output_contains_any:[港股, 恒生, 恒科, HK, Hong Kong]"
+    }
+  ],
+  "tags": ["skill", "investment", "china", "a-share", "hk", "market"]
+}

@@ -1,0 +1,39 @@
+{
+  "id": "skill-inv-compare-001",
+  "name": "多基金对比分析",
+  "category": "skills",
+  "skill": "investment-agent",
+  "difficulty": "medium",
+  "description": "测试对比多只基金表现和相关性的能力",
+  "prompt": "对比一下我的中韩半导体ETF、黄金ETF和纳斯达克100ETF的表现，哪个最强？",
+  "expected": {
+    "description": "应该对比多只基金的表现、涨跌幅和相关性"
+  },
+  "assertions": [
+    {
+      "id": "multiple_funds_analyzed",
+      "type": "programmatic",
+      "description": "分析了多只基金",
+      "check": "output_contains_any:[中韩半导体, 黄金, 纳斯达克, 019455, 000216, 016532]"
+    },
+    {
+      "id": "performance_comparison",
+      "type": "programmatic",
+      "description": "提供了业绩对比",
+      "check": "output_contains_any:[对比, 比较, 最强, 跑赢, 跑赢, 表现]"
+    },
+    {
+      "id": "correlation_analysis",
+      "type": "programmatic",
+      "description": "分析了相关性",
+      "check": "output_contains_any:[相关性, 分散, 配置, 对冲, 负相关]"
+    },
+    {
+      "id": "ranking_or_winner",
+      "type": "programmatic",
+      "description": "给出了排名或最强者",
+      "check": "output_contains_any:[排名, 第一, 最强, 冠军, 领先]"
+    }
+  ],
+  "tags": ["skill", "investment", "comparison", "multi-fund", "correlation"]
+}
