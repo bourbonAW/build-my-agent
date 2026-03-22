@@ -1,0 +1,31 @@
+{
+  "id": "stage-b-csv-001",
+  "name": "CSV Data Analysis",
+  "category": "stage-b",
+  "skill": "data-analysis",
+  "difficulty": "easy",
+  "description": "Test data-analysis skill with CSV file",
+  "prompt": "Analyze the sales.csv file and tell me the total rows and average revenue",
+  "setup": {
+    "files": {
+      "sales.csv": "product,revenue\nA,1000\nB,2000\nC,1500"
+    }
+  },
+  "expected": {
+    "description": "Should return row count (3) and average revenue (1500)"
+  },
+  "assertions": [
+    {
+      "id": "row_count",
+      "type": "programmatic",
+      "description": "Mentions 3 rows or total",
+      "check": "output_contains_any:[3 rows, 3, total, count]"
+    },
+    {
+      "id": "average",
+      "type": "programmatic",
+      "description": "Mentions average or 1500",
+      "check": "output_contains_any:[average, 1500, mean]"
+    }
+  ]
+}
