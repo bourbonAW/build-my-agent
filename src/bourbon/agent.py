@@ -411,8 +411,11 @@ class Agent:
             elif tool_name == "skill":
                 # skill tool is handled by registered handler, but we keep
                 # this for backward compatibility during transition
-                skill_name = tool_input.get("name", "")
-                output = self.skills.activate(skill_name)
+                try:
+                    skill_name = tool_input.get("name", "")
+                    output = self.skills.activate(skill_name)
+                except Exception as e:
+                    output = f"Error activating skill '{skill_name}': {e}"
             else:
                 # Execute regular tool
                 tool_handler = handler(tool_name)
