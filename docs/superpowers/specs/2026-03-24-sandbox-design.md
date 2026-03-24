@@ -122,14 +122,40 @@ class Tool:
     required_capabilities: list[CapabilityType] = field(default_factory=list)
 ```
 
-### 动态能力推断
-
-bash 工具的不同输入需要不同能力：
+注册示例（包括非 bash 工具）：
 
 ```python
-def infer_capabilities(tool_name: str, tool_input: dict) -> list[CapabilityType]:
-    """根据工具输入动态推断实际需要的能力"""
+@register_tool(
+    name="read_file", ...,
+    required_capabilities=[CapabilityType.FILE_READ],
+)
+
+@register_tool(
+    name="write_file", ...,
+    required_capabilities=[CapabilityType.FILE_WRITE],
+)
+
+@register_tool(
+    name="bash", ...,
+    required_capabilities=[CapabilityType.EXEC],
+)
+```
+
+### 动态能力推断与参数提取
+
+不同工具的不同输入需要不同能力。`infer_capabilities` 既做能力推断，也从工具参数中提取待校验的资源路径：
+
+```python
+@dataclass
+class InferredContext:
+    """推断结果：实际需要的能力 + 待校验的资源"""
+    capabilities: list[CapabilityType]
+    file_paths: list[str]    # 待校验的文件路径（从工具参数中提取）
+
+def infer_capabilities(tool_name: str, tool_input: dict) -> InferredContext:
+    """根据工具名称和输入，推断实际需要的能力并提取资源路径"""
     caps = list(tool.required_capabilities)
+    file_paths = []
 
     if tool_name == "bash":
         command = tool_input.get("command", "")
@@ -138,8 +164,16 @@ def infer_capabilities(tool_name: str, tool_input: dict) -> list[CapabilityType]
         if any(p in command for p in [">", ">>", "tee ", "mv ", "cp "]):
             caps.append(CapabilityType.FILE_WRITE)
 
-    return caps
+    elif tool_name in ("read_file", "write_file", "edit_file"):
+        # 提取 path 参数，供策略引擎校验文件路径规则
+        path = tool_input.get("path", tool_input.get("file_path", ""))
+        if path:
+            file_paths.append(path)
+
+    return InferredContext(capabilities=caps, file_paths=file_paths)
 ```
+
+策略引擎在评估 FILE_READ/FILE_WRITE 能力时，使用 `file_paths` 与 `[access_control.file]` 规则进行路径匹配。这意味着 `safe_path()` 的职责被完整迁移到了策略引擎中——路径校验不再是硬编码逻辑，而是配置驱动的规则。
 
 ### 策略评估流程
 
@@ -170,11 +204,26 @@ class PolicyAction(Enum):
     NEED_APPROVAL = "need_approval"
 
 @dataclass
+class CapabilityDecision:
+    """单个能力的评估结果"""
+    capability: CapabilityType
+    action: PolicyAction
+    matched_rule: str | None
+
+@dataclass
 class PolicyDecision:
+    """合并后的最终决策"""
     action: PolicyAction
     reason: str              # 人类可读的判定理由
-    matched_rule: str | None # 命中了哪条配置规则
-    capability: CapabilityType
+    decisions: list[CapabilityDecision]  # 每个能力各自的评估结果
+
+    @property
+    def denied_capability(self) -> CapabilityType | None:
+        """如果被 deny，返回导致 deny 的能力"""
+        for d in self.decisions:
+            if d.action == PolicyAction.DENY:
+                return d.capability
+        return None
 ```
 
 ### 与现有代码的关系
@@ -185,7 +234,8 @@ class PolicyDecision:
 | `is_high_risk_operation()` 模式匹配 | 迁移到 TOML `deny_patterns` / `need_approval_patterns` |
 | `run_bash()` 中硬编码 `dangerous` 列表 | 迁移到 `[access_control.command].deny_patterns` |
 | `PendingConfirmation` 机制 | 由 `PolicyAction.NEED_APPROVAL` 统一触发 |
-| `safe_path()` | 迁移到 `[access_control.file]` 规则 + `mandatory_deny` 保证底线 |
+| `safe_path()` | 迁移到 `[access_control.file]` 规则 + `mandatory_deny` 保证底线。`infer_capabilities` 从 read_file/write_file/edit_file 的参数中提取路径，策略引擎校验 |
+| `BashConfig.blocked_commands`（config.py）| 废弃，迁移到 `[access_control.command].deny_patterns`。过渡期可共存，最终删除 `BashConfig` |
 
 ## Sandbox Runtime 层
 
@@ -193,12 +243,18 @@ class PolicyDecision:
 
 ```python
 @dataclass
+class ResourceUsage:
+    cpu_time: float          # 秒
+    memory_peak: str         # 如 "45M"
+    files_written: list[str] # 写入的文件路径列表
+
+@dataclass
 class SandboxResult:
     stdout: str
     stderr: str
     exit_code: int
     timed_out: bool
-    resource_usage: ResourceUsage  # cpu_time, memory_peak, files_written
+    resource_usage: ResourceUsage
 
 class SandboxProvider(ABC):
     @abstractmethod
@@ -332,11 +388,17 @@ class CredentialManager:
 
     def clean_env(self, passthrough_vars: list[str]) -> dict[str, str]:
         """从 os.environ 中：
-        1. 只保留 passthrough_vars 中列出的变量
-        2. 额外过滤匹配 SENSITIVE_PATTERNS 的变量
+        1. 只保留 passthrough_vars 中列出的变量（白名单）
+        2. 额外过滤匹配 SENSITIVE_PATTERNS 的变量（安全网）
         3. 返回清洗后的 env dict
+
+        两步过滤是纵深防御：passthrough 是主要白名单，
+        SENSITIVE_PATTERNS 是安全网——防止有人误将 AWS_SECRET_KEY
+        加入 passthrough_vars。
         """
 ```
+
+当显式配置的 provider 不可用时（如 `provider = "bubblewrap"` 但系统未安装 bwrap），在 Agent 初始化时抛出明确错误：`SandboxProviderNotFound: bubblewrap not found. Install it or set provider = "auto"`。不做静默降级——显式配置意味着用户有明确意图。
 
 ### SandboxManager 协调逻辑
 
@@ -465,7 +527,10 @@ for tool_block in tool_use_blocks:
         return
 
     # Step 2: 分流
-    if CapabilityType.EXEC in tool.required_capabilities:
+    # 重要：EXEC 类工具不调用其注册的 handler，而是由 SandboxManager 接管执行。
+    # 原有 bash_tool handler（base.py 中的 run_bash）在 sandbox 启用时不再被调用。
+    # 当 sandbox 被禁用（enabled = false）时，退回到直接调用 handler 的旧路径。
+    if CapabilityType.EXEC in tool.required_capabilities and self.sandbox.enabled:
         sandbox_result = self.sandbox.execute(tool_input["command"])
         self.audit.record(sandbox_event)
         result = sandbox_result.stdout
@@ -503,6 +568,7 @@ need_approval_patterns = ["pip install *", "apt *"]
 
 # Sandbox Runtime — 仅 bash/code 执行的隔离环境
 [sandbox]
+enabled = true              # false 时 EXEC 工具退回直接调用 handler
 provider = "auto"           # auto / local / bubblewrap / seatbelt / docker
 
 [sandbox.filesystem]
@@ -531,6 +597,12 @@ format = "jsonl"
 record_tool_input = true
 record_tool_output = true
 ```
+
+### 配置说明
+
+**`{workdir}` 占位符解析**：配置中的 `{workdir}` 在运行时由 `AccessController.__init__` 和 `SandboxManager.__init__` 解析为 `Agent.workdir` 的实际路径。TOML 文件中存储的始终是模板形式。
+
+**deny 路径重叠是有意的纵深防御**：`[access_control.file].deny` 和 `[sandbox.filesystem].deny` 都包含 `~/.ssh`，这不是冗余。Access Control 在工具调用层基于模式匹配拦截——但它可以被间接命令绕过（如 `bash -c "cat $(echo ~/.ssh/id_rsa)"`）。Sandbox Runtime 在 OS 层强制隔离——即使 Access Control 被绕过，进程也无法访问该路径。两层独立运作，任何一层失效另一层仍有效。
 
 ## 学习路径
 
