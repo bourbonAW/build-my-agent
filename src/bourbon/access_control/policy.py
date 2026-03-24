@@ -138,7 +138,10 @@ class PolicyEngine:
         return str(Path(pattern.replace("{workdir}", str(self.workdir))).expanduser())
 
     def _check_file_path(self, path: str, capability: CapabilityType) -> CapabilityDecision:
-        resolved_path = str(Path(path).expanduser())
+        resolved = Path(path).expanduser()
+        if not resolved.is_absolute():
+            resolved = self.workdir / resolved
+        resolved_path = str(resolved)
 
         for pattern in self.file_mandatory_deny:
             if fnmatch(resolved_path, self._resolve_pattern(pattern)):

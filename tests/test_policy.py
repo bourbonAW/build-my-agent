@@ -44,6 +44,24 @@ def test_file_allow_in_workspace():
     assert decision.decisions[0].matched_rule == "file.allow: {workdir}/**"
 
 
+def test_relative_file_path_is_resolved_against_workdir():
+    engine = make_engine(
+        default_action=PolicyAction.DENY,
+        file_rules={"allow": ["{workdir}/**"]},
+    )
+
+    decision = engine.evaluate(
+        "read_file",
+        InferredContext(
+            capabilities=[CapabilityType.FILE_READ],
+            file_paths=["src/main.py"],
+        ),
+    )
+
+    assert decision.action == PolicyAction.ALLOW
+    assert decision.denied_capability is None
+
+
 def test_file_deny_outside_workspace():
     engine = make_engine(
         default_action=PolicyAction.DENY,
@@ -158,6 +176,20 @@ def test_sudo_wildcard_deny():
 
     assert decision.action == PolicyAction.DENY
     assert decision.reason == "exec: deny (command.deny: sudo *)"
+
+
+def test_command_substring_match_without_wildcard():
+    engine = make_engine(
+        command_rules={"deny_patterns": ["git hook"]},
+    )
+
+    decision = engine.evaluate_command(
+        "git hook install",
+        InferredContext(capabilities=[CapabilityType.EXEC]),
+    )
+
+    assert decision.action == PolicyAction.DENY
+    assert decision.reason == "exec: deny (command.deny: git hook)"
 
 
 def test_merge_semantics_deny_beats_need_approval_beats_allow():
