@@ -60,7 +60,7 @@ Agent._execute_tools()
     │
     └─ bash("pip install flask && python app.py")
          → AccessController.evaluate() → NeedApproval → 用户确认 → Allow
-         → SandboxManager.execute(command, context)
+         → SandboxManager.execute(command)
               ├─ CredentialManager.clean_env()
               ├─ Provider.execute(command, sandbox_context)
               └─ AuditLogger.record(sandbox_exec)
@@ -161,8 +161,13 @@ def infer_capabilities(tool_name: str, tool_input: dict) -> InferredContext:
         command = tool_input.get("command", "")
         if any(p in command for p in ["curl", "wget", "pip install", "git clone"]):
             caps.append(CapabilityType.NET)
+        if any(p in command for p in ["cat ", "less ", "head ", "tail ", "grep "]):
+            caps.append(CapabilityType.FILE_READ)
         if any(p in command for p in [">", ">>", "tee ", "mv ", "cp "]):
             caps.append(CapabilityType.FILE_WRITE)
+        # 注意：bash 命令不提取 file_paths，因为从 shell 命令中可靠地解析路径
+        # 是不现实的（管道、变量展开、子 shell 等）。bash 的文件路径保护
+        # 交给 Sandbox Runtime 在 OS 层强制执行，而不是在 Access Control 层。
 
     elif tool_name in ("read_file", "write_file", "edit_file"):
         # 提取 path 参数，供策略引擎校验文件路径规则
