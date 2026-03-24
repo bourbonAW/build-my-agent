@@ -28,6 +28,18 @@ class AuditEvent:
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the event to a flattened dictionary."""
+        reserved_keys = {
+            "timestamp",
+            "event_type",
+            "tool_name",
+            "tool_input_summary",
+        }
+        collision_keys = reserved_keys.intersection(self.extra)
+        if collision_keys:
+            raise ValueError(
+                f"extra contains reserved audit field(s): {sorted(collision_keys)}"
+            )
+
         payload: dict[str, object] = {
             "timestamp": self.timestamp.isoformat(),
             "event_type": self.event_type.value,

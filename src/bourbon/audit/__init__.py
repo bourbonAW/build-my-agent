@@ -31,17 +31,18 @@ class AuditLogger:
         if not self.enabled:
             return
 
-        self.events.append(event)
+        payload = json.dumps(event.to_dict(), sort_keys=True)
         assert self.log_file is not None
         with self.log_file.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event.to_dict(), sort_keys=True))
+            handle.write(payload)
             handle.write("\n")
+        self.events.append(event)
 
     def query(self, **filters: object) -> list[AuditEvent]:
         if not self.enabled:
             return []
 
-        results = self.events
+        results = list(self.events)
         for key, value in filters.items():
             results = [event for event in results if self._matches(event, key, value)]
         return results

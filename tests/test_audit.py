@@ -4,6 +4,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from bourbon.audit import AuditLogger
 from bourbon.audit.events import AuditEvent, EventType
 
@@ -25,6 +27,17 @@ def test_policy_decision_event_to_dict_flattens_extra():
     assert payload["decision"] == "deny"
     assert payload["reason"] == "dangerous command"
     assert "extra" not in payload
+
+
+def test_reserved_key_collision_is_rejected():
+    event = AuditEvent.tool_call(
+        tool_name="search",
+        tool_input_summary="find main.py",
+        timestamp="shadow",
+    )
+
+    with pytest.raises(ValueError, match="reserved audit field"):
+        event.to_dict()
 
 
 def test_sandbox_exec_event_classmethod_sets_fields():
@@ -114,6 +127,23 @@ def test_logger_record_query_and_jsonl(tmp_path: Path):
     assert second_payload["command"] == "echo hello"
 
 
+def test_logger_record_does_not_mutate_state_on_serialization_failure(tmp_path: Path):
+    logger = AuditLogger(log_dir=tmp_path)
+    event = AuditEvent.tool_call(
+        tool_name="search",
+        tool_input_summary="find main.py",
+        arguments={"query": object()},
+    )
+
+    with pytest.raises(TypeError):
+        logger.record(event)
+
+    assert logger.events == []
+    assert list(tmp_path.glob("session-*.jsonl")) == [logger.log_file]
+    assert logger.log_file is not None
+    assert logger.log_file.read_text(encoding="utf-8") == ""
+
+
 def test_logger_records_timestamp_and_creates_log_dir(tmp_path: Path):
     log_dir = tmp_path / "audit"
     logger = AuditLogger(log_dir=log_dir)
@@ -130,6 +160,22 @@ def test_logger_records_timestamp_and_creates_log_dir(tmp_path: Path):
     assert log_dir.exists()
     assert len(logger.events) == 1
     assert before <= logger.events[0].timestamp <= after
+
+
+def test_query_returns_isolated_list(tmp_path: Path):
+    logger = AuditLogger(log_dir=tmp_path)
+    event = AuditEvent.tool_call(
+        tool_name="search",
+        tool_input_summary="find main.py",
+        arguments={"query": "main.py"},
+    )
+    logger.record(event)
+
+    results = logger.query()
+    results.clear()
+
+    assert logger.events == [event]
+    assert logger.query() == [event]
 
 
 def test_disabled_logger_does_nothing(tmp_path: Path):
