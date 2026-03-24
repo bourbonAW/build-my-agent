@@ -22,10 +22,10 @@ class TestCredentialManager:
         """Test that sensitive variables are blocked even when passthrough is allowed."""
         source_env = {
             "PATH": "/usr/bin",
-            "OPENAI_API_KEY": "secret",
+            "SECRET_KEY": "secret",
         }
 
-        result = CredentialManager.clean_env(["PATH", "OPENAI_API_KEY"], source_env=source_env)
+        result = CredentialManager.clean_env(["PATH", "SECRET_KEY"], source_env=source_env)
 
         assert result == {"PATH": "/usr/bin"}
 
@@ -36,6 +36,16 @@ class TestCredentialManager:
         }
 
         result = CredentialManager.clean_env(["ANTHROPIC_API_KEY"], source_env=source_env)
+
+        assert result == {}
+
+    def test_clean_env_aws_secret_key_blocked(self):
+        """Test that AWS-prefixed sensitive variables are blocked."""
+        source_env = {
+            "AWS_SECRET_KEY": "secret",
+        }
+
+        result = CredentialManager.clean_env(["AWS_SECRET_KEY"], source_env=source_env)
 
         assert result == {}
 
