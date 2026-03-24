@@ -65,6 +65,8 @@ def infer_capabilities(
         path = _extract_path(tool_input)
         if path is not None:
             file_paths.append(path)
+    else:
+        return InferredContext(capabilities, file_paths)
 
     return InferredContext(_dedupe(capabilities), file_paths)
 
@@ -77,8 +79,6 @@ def _bash_command(tool_input: object) -> str:
     if isinstance(tool_input, Mapping):
         command = tool_input.get("command", "")
         return command if isinstance(command, str) else ""
-    if isinstance(tool_input, str):
-        return tool_input
     return ""
 
 

@@ -26,6 +26,17 @@ def test_inferred_context_shape():
     assert context.file_paths == ["src/main.py"]
 
 
+def test_inferred_context_default_lists_are_not_shared():
+    first = InferredContext()
+    second = InferredContext()
+
+    first.capabilities.append(CapabilityType.EXEC)
+    first.file_paths.append("src/main.py")
+
+    assert second.capabilities == []
+    assert second.file_paths == []
+
+
 def test_extracts_paths_for_file_tools():
     read_context = infer_capabilities(
         "read_file",
@@ -62,6 +73,17 @@ def test_bash_basic_returns_exec_only_and_no_paths():
     assert context.file_paths == []
 
 
+def test_bash_ignores_non_command_fields():
+    context = infer_capabilities(
+        "bash",
+        {"command": "echo hello", "path": "src/app.py", "note": "curl https://example.com"},
+        [CapabilityType.EXEC],
+    )
+
+    assert context.capabilities == [CapabilityType.EXEC]
+    assert context.file_paths == []
+
+
 def test_bash_pip_install_adds_net():
     context = infer_capabilities(
         "bash",
@@ -73,6 +95,39 @@ def test_bash_pip_install_adds_net():
     assert context.file_paths == []
 
 
+def test_bash_read_detection_adds_file_read():
+    context = infer_capabilities(
+        "bash",
+        {"command": "cat /etc/hosts"},
+        [CapabilityType.EXEC],
+    )
+
+    assert context.capabilities == [CapabilityType.EXEC, CapabilityType.FILE_READ]
+    assert context.file_paths == []
+
+
+def test_bash_write_detection_adds_file_write():
+    context = infer_capabilities(
+        "bash",
+        {"command": "echo hi > out.txt"},
+        [CapabilityType.EXEC],
+    )
+
+    assert context.capabilities == [CapabilityType.EXEC, CapabilityType.FILE_WRITE]
+    assert context.file_paths == []
+
+
+def test_bash_path_like_content_does_not_extract_file_paths():
+    context = infer_capabilities(
+        "bash",
+        {"command": "cat src/app.py"},
+        [CapabilityType.EXEC],
+    )
+
+    assert context.capabilities == [CapabilityType.EXEC, CapabilityType.FILE_READ]
+    assert context.file_paths == []
+
+
 def test_unknown_tool_returns_base_capabilities_and_no_paths():
     context = infer_capabilities(
         "unknown",
@@ -81,4 +136,13 @@ def test_unknown_tool_returns_base_capabilities_and_no_paths():
     )
 
     assert context.capabilities == [CapabilityType.EXEC]
+    assert context.file_paths == []
+
+
+def test_unknown_tool_preserves_base_capabilities_exactly():
+    base_capabilities = [CapabilityType.EXEC, CapabilityType.EXEC]
+
+    context = infer_capabilities("unknown", {"path": "src/app.py"}, base_capabilities)
+
+    assert context.capabilities == base_capabilities
     assert context.file_paths == []
