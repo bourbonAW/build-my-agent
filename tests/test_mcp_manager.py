@@ -1,10 +1,11 @@
 """Tests for MCP Manager."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from bourbon.mcp_client.config import MCPConfig, MCPServerConfig
-from bourbon.mcp_client.manager import MCPManager, ConnectionResult
+from bourbon.mcp_client.manager import ConnectionResult, MCPManager
 from bourbon.tools import ToolRegistry
 
 
@@ -88,7 +89,7 @@ class TestMCPManager:
             ],
         )
         manager = MCPManager(config=config, tool_registry=tool_registry)
-        
+
         summary = manager.get_connection_summary()
         assert summary["configured"] == 2
 
@@ -101,7 +102,7 @@ class TestMCPManager:
             url="http://localhost:3000/mcp",
             max_retries=1,
         )
-        
+
         # Mock the HTTP connector
         with patch("bourbon.mcp_client.manager.HttpConnector") as mock_connector_class:
             mock_connector = MagicMock()
@@ -109,9 +110,9 @@ class TestMCPManager:
             mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
             mock_connector.connect = AsyncMock(return_value=mock_session)
             mock_connector_class.return_value = mock_connector
-            
+
             result = await manager._connect_server(config)
-            
+
             assert result.success is True
             assert result.server_name == "http_server"
             mock_connector_class.assert_called_once_with(config)
@@ -119,19 +120,19 @@ class TestMCPManager:
     def test_format_tool_result_text_only(self, manager):
         """Test formatting tool result with text content."""
         from mcp.types import CallToolResult, TextContent
-        
+
         result = CallToolResult(
             content=[TextContent(type="text", text="Hello, World!")],
             isError=False,
         )
-        
+
         formatted = manager._format_tool_result(result)
         assert formatted == "Hello, World!"
 
     def test_format_tool_result_multiple_texts(self, manager):
         """Test formatting tool result with multiple text contents."""
         from mcp.types import CallToolResult, TextContent
-        
+
         result = CallToolResult(
             content=[
                 TextContent(type="text", text="Line 1"),
@@ -139,34 +140,36 @@ class TestMCPManager:
             ],
             isError=False,
         )
-        
+
         formatted = manager._format_tool_result(result)
         assert formatted == "Line 1\nLine 2"
 
     def test_format_tool_result_empty(self, manager):
         """Test formatting empty tool result."""
         from mcp.types import CallToolResult
-        
+
         result = CallToolResult(content=[], isError=False)
-        
+
         formatted = manager._format_tool_result(result)
         assert formatted == "(no output)"
 
     def test_create_tool_handler(self, manager):
         """Test creating tool handler."""
         mock_session = MagicMock()
-        mock_session.call_tool = AsyncMock(return_value=MagicMock(
-            content=[MagicMock(type="text", text="Result")],
-        ))
+        mock_session.call_tool = AsyncMock(
+            return_value=MagicMock(
+                content=[MagicMock(type="text", text="Result")],
+            )
+        )
         manager._runtime = MagicMock()
         manager._runtime.run.return_value = MagicMock(
             content=[MagicMock(type="text", text="Result")],
         )
-        
+
         handler = manager._create_tool_handler(mock_session, "test_tool", "test_server")
 
         result = handler(arg1="value1")
-        
+
         assert "Result" in result
         manager._runtime.run.assert_called_once()
 
@@ -176,11 +179,11 @@ class TestMCPManager:
         mock_session.call_tool = AsyncMock(side_effect=Exception("Tool error"))
         manager._runtime = MagicMock()
         manager._runtime.run.side_effect = Exception("Tool error")
-        
+
         handler = manager._create_tool_handler(mock_session, "test_tool", "test_server")
 
         result = handler(arg1="value1")
-        
+
         assert "Error" in result
         assert "test_server:test_tool" in result
 

@@ -2,7 +2,6 @@
 
 import json
 from abc import ABC, abstractmethod
-from typing import Any
 
 from bourbon.config import Config
 
@@ -72,19 +71,21 @@ class AnthropicLLMClient(LLMClient):
             with self.client.messages.stream(**kwargs) as stream:
                 # Collect the final message
                 final_message = stream.get_final_message()
-                
+
                 # Normalize to our format
                 content = []
                 for block in final_message.content:
                     if block.type == "text":
                         content.append({"type": "text", "text": block.text})
                     elif block.type == "tool_use":
-                        content.append({
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        })
+                        content.append(
+                            {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.input,
+                            }
+                        )
 
                 return {
                     "content": content,
@@ -150,14 +151,16 @@ class OpenAILLMClient(LLMClient):
                 # Convert tools to OpenAI format
                 openai_tools = []
                 for tool in tools:
-                    openai_tools.append({
-                        "type": "function",
-                        "function": {
-                            "name": tool["name"],
-                            "description": tool["description"],
-                            "parameters": tool["input_schema"],
-                        },
-                    })
+                    openai_tools.append(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": tool["name"],
+                                "description": tool["description"],
+                                "parameters": tool["input_schema"],
+                            },
+                        }
+                    )
                 kwargs["tools"] = openai_tools
 
             response = self.client.chat.completions.create(**kwargs)
@@ -175,12 +178,14 @@ class OpenAILLMClient(LLMClient):
                         args = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
                         args = {}
-                    content.append({
-                        "type": "tool_use",
-                        "id": tc.id,
-                        "name": tc.function.name,
-                        "input": args,
-                    })
+                    content.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc.id,
+                            "name": tc.function.name,
+                            "input": args,
+                        }
+                    )
 
             return {
                 "content": content,

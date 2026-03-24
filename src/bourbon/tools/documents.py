@@ -1,7 +1,8 @@
 """Document processing tools for Stage B"""
-from pathlib import Path
-from bourbon.tools import RiskLevel, register_tool
 
+from pathlib import Path
+
+from bourbon.tools import RiskLevel, register_tool
 
 PDF_TO_TEXT_SCHEMA = {
     "type": "object",
@@ -33,29 +34,29 @@ def pdf_to_text(
     """Extract text from PDF"""
     try:
         from pypdf import PdfReader
-        
+
         path = Path(file_path)
         if not path.exists():
             return {
                 "success": False,
                 "error": f"File not found: {file_path}",
             }
-        
+
         reader = PdfReader(file_path)
         text_parts = []
-        
+
         pages = range(len(reader.pages))
         if page_range and len(page_range) == 2:
             start, end = page_range
             pages = range(start, min(end, len(reader.pages)))
-        
+
         for i in pages:
             page = reader.pages[i]
             page_text = page.extract_text()
             if page_text.strip():
-                text_parts.append(f"--- Page {i+1} ---\n")
+                text_parts.append(f"--- Page {i + 1} ---\n")
                 text_parts.append(page_text)
-        
+
         return {
             "success": True,
             "file_path": file_path,
@@ -63,7 +64,7 @@ def pdf_to_text(
             "page_count": len(reader.pages),
             "pages_extracted": len(pages),
         }
-        
+
     except ImportError:
         return {
             "success": False,
@@ -100,17 +101,17 @@ def docx_to_markdown(
     """Convert Word docx to markdown"""
     try:
         from docx import Document
-        
+
         path = Path(file_path)
         if not path.exists():
             return {
                 "success": False,
                 "error": f"File not found: {file_path}",
             }
-        
+
         doc = Document(file_path)
         md_parts = []
-        
+
         for para in doc.paragraphs:
             text = para.text.strip()
             if text:
@@ -125,13 +126,13 @@ def docx_to_markdown(
                         md_parts.append(f"## {text}\n")
                 else:
                     md_parts.append(f"{text}\n")
-        
+
         return {
             "success": True,
             "file_path": file_path,
             "text": "\n".join(md_parts),
         }
-        
+
     except ImportError:
         return {
             "success": False,

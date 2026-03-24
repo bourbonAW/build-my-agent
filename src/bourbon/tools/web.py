@@ -1,5 +1,5 @@
 """Web fetching tools for Stage B"""
-import asyncio
+
 from urllib.parse import urlparse
 
 import aiohttp
@@ -11,7 +11,7 @@ def _is_valid_url(url: str) -> bool:
     """Validate URL format"""
     try:
         parsed = urlparse(url)
-        return parsed.scheme in ('http', 'https') and bool(parsed.netloc)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
     except Exception:
         return False
 
@@ -57,22 +57,24 @@ async def fetch_url(
             "url": url,
             "error": "Invalid URL format. Must be http:// or https://",
         }
-    
+
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                text = await resp.text()
-                # Truncate if too long
-                if len(text) > max_length:
-                    text = text[:max_length] + "\n... [truncated]"
-                
-                return {
-                    "success": resp.status < 400,
-                    "url": url,
-                    "status_code": resp.status,
-                    "text": text,
-                }
-    except asyncio.TimeoutError:
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp,
+        ):
+            text = await resp.text()
+            # Truncate if too long
+            if len(text) > max_length:
+                text = text[:max_length] + "\n... [truncated]"
+
+            return {
+                "success": resp.status < 400,
+                "url": url,
+                "status_code": resp.status,
+                "text": text,
+            }
+    except TimeoutError:
         return {
             "success": False,
             "url": url,

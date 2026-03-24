@@ -150,6 +150,29 @@ class TestLocalProvider:
         assert result.stdout.endswith("...")
         assert len(result.stdout) == 10
 
+    def test_stderr_truncation(self, tmp_path: Path) -> None:
+        provider = LocalProvider()
+        context = SandboxContext(
+            workdir=tmp_path,
+            writable_paths=[],
+            readonly_paths=[],
+            deny_paths=[],
+            network_enabled=False,
+            allow_domains=[],
+            timeout=5,
+            max_memory="0M",
+            max_output=10,
+            env_vars={"PATH": os.environ.get("PATH", "")},
+        )
+
+        result = provider.execute(
+            "python -c 'import sys; sys.stderr.write(\"y\" * 100)'",
+            context,
+        )
+
+        assert result.stderr.endswith("...")
+        assert len(result.stderr) == 10
+
     def test_isolation_level(self) -> None:
         provider = LocalProvider()
 

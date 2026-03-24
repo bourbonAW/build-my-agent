@@ -89,6 +89,9 @@ indent-style = "space"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+markers = [
+    "integration: marks integration tests",
+]
 
 [tool.mypy]
 python_version = "3.12"

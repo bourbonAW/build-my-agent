@@ -3,7 +3,6 @@
 import json
 import shutil
 import subprocess
-from pathlib import Path
 
 from bourbon.tools import RiskLevel, register_tool
 
@@ -75,17 +74,19 @@ def rg_search(
 
                     # Extract matched lines
                     lines = []
-                    for submatch in match_data.get("submatches", []):
-                        for l in match_data.get("lines", {}).get("text", "").split("\n"):
-                            if l:
-                                lines.append(l)
+                    for _submatch in match_data.get("submatches", []):
+                        for match_line in match_data.get("lines", {}).get("text", "").split("\n"):
+                            if match_line:
+                                lines.append(match_line)
 
                     if lines:
-                        matches.append({
-                            "file": file_path,
-                            "line": line_num,
-                            "content": lines[0] if lines else "",
-                        })
+                        matches.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "content": lines[0] if lines else "",
+                            }
+                        )
             except json.JSONDecodeError:
                 continue
 
@@ -212,6 +213,7 @@ def ast_grep_search(
         "required": ["pattern"],
     },
     risk_level=RiskLevel.LOW,
+    required_capabilities=["file_read"],
 )
 def rg_search_tool(
     pattern: str,
@@ -245,6 +247,7 @@ def rg_search_tool(
         "required": ["pattern"],
     },
     risk_level=RiskLevel.LOW,
+    required_capabilities=["file_read"],
 )
 def ast_grep_search_tool(
     pattern: str,

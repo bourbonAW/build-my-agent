@@ -1,10 +1,9 @@
 """Data analysis tools for Stage B"""
+
 import json
 from pathlib import Path
-from typing import Any
 
 from bourbon.tools import RiskLevel, register_tool
-
 
 CSV_ANALYZE_SCHEMA = {
     "type": "object",
@@ -37,17 +36,17 @@ def csv_analyze(
     """Analyze CSV file"""
     try:
         import pandas as pd
-        
+
         path = Path(file_path)
         if not path.exists():
             return {
                 "success": False,
                 "error": f"File not found: {file_path}",
             }
-        
+
         # Read CSV
         df = pd.read_csv(file_path)
-        
+
         result = {
             "success": True,
             "file_path": file_path,
@@ -58,14 +57,14 @@ def csv_analyze(
             "sample": [],
             "error": "",
         }
-        
+
         # Process operations
         operations = operations or ["summary"]
-        
+
         for op in operations:
             if op == "summary":
                 # Numeric columns stats
-                numeric_cols = df.select_dtypes(include=['number']).columns
+                numeric_cols = df.select_dtypes(include=["number"]).columns
                 for col in numeric_cols:
                     stats = df[col].describe()
                     result["stats"][col] = {
@@ -75,23 +74,22 @@ def csv_analyze(
                         "min": float(stats["min"]) if not pd.isna(stats["min"]) else None,
                         "max": float(stats["max"]) if not pd.isna(stats["max"]) else None,
                     }
-            
+
             elif op.startswith("groupby:"):
                 col = op.split(":", 1)[1]
                 if col in df.columns:
                     grouped = df.groupby(col).size().to_dict()
                     result["groups"][col] = {str(k): int(v) for k, v in grouped.items()}
-        
+
         # Sample data (first 5 rows, convert to serializable types)
         sample_df = df.head(5)
         result["sample"] = [
-            {k: (v.item() if hasattr(v, 'item') else v) 
-             for k, v in row.items()}
-            for row in sample_df.to_dict('records')
+            {k: (v.item() if hasattr(v, "item") else v) for k, v in row.items()}
+            for row in sample_df.to_dict("records")
         ]
-        
+
         return result
-        
+
     except ImportError:
         return {
             "success": False,
@@ -138,13 +136,13 @@ def json_query(
                 "success": False,
                 "error": f"File not found: {file_path}",
             }
-        
+
         with open(file_path) as f:
             data = json.load(f)
-        
+
         # Simple dot-notation query support
         if query:
-            parts = query.split('.')
+            parts = query.split(".")
             for part in parts:
                 if isinstance(data, dict):
                     data = data.get(part)
@@ -162,7 +160,7 @@ def json_query(
                         "success": False,
                         "error": f"Cannot navigate into {type(data).__name__}",
                     }
-        
+
         return {
             "success": True,
             "file_path": file_path,

@@ -3,10 +3,6 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from bourbon.agent import Agent
-from bourbon.config import Config
 from bourbon.skills import SkillManager
 from bourbon.todos import TodoManager
 
@@ -20,7 +16,7 @@ class TestIntegration:
             # Create test skill structure
             agents_skills = Path(tmpdir) / ".agents/skills"
             agents_skills.mkdir(parents=True)
-            
+
             skill_dir = agents_skills / "test-skill"
             skill_dir.mkdir()
             (skill_dir / "SKILL.md").write_text("""---
@@ -45,18 +41,22 @@ This is a test.
         todos = TodoManager()
 
         # Add todos
-        todos.update([
-            {"content": "Task 1", "status": "in_progress", "activeForm": "cli"},
-            {"content": "Task 2", "status": "pending", "activeForm": "cli"},
-        ])
+        todos.update(
+            [
+                {"content": "Task 1", "status": "in_progress", "activeForm": "cli"},
+                {"content": "Task 2", "status": "pending", "activeForm": "cli"},
+            ]
+        )
 
         assert todos.has_open_items()
 
         # Complete first task
-        todos.update([
-            {"content": "Task 1", "status": "completed", "activeForm": "cli"},
-            {"content": "Task 2", "status": "in_progress", "activeForm": "cli"},
-        ])
+        todos.update(
+            [
+                {"content": "Task 1", "status": "completed", "activeForm": "cli"},
+                {"content": "Task 2", "status": "in_progress", "activeForm": "cli"},
+            ]
+        )
 
         render = todos.render()
         assert "[x] Task 1" in render
@@ -71,7 +71,7 @@ This is a test.
             manager.ensure_config_dir()
 
             # Create config
-            config = manager.create_default_config(
+            manager.create_default_config(
                 anthropic_key="test-key",
             )
 

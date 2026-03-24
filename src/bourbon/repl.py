@@ -6,16 +6,12 @@ from pathlib import Path
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
-from rich.syntax import Syntax
-from rich.text import Text
 
 from bourbon.agent import Agent, AgentError
-from bourbon.config import Config, ConfigManager
+from bourbon.config import Config
 from bourbon.mcp_client import MCPServerNotInstalledError
 
 
@@ -33,7 +29,7 @@ class REPL:
         "/clear": "Clear conversation history",
         "/help": "Show help message",
     }
-    
+
     # Skill activation prefix
     SKILL_PREFIX = "/skill/"
 
@@ -61,7 +57,7 @@ class REPL:
         except AgentError as e:
             self.console.print(f"[red]Error initializing agent: {e}[/red]")
             sys.exit(1)
-        
+
         # Initialize MCP connections
         self._init_mcp()
 
@@ -76,9 +72,11 @@ class REPL:
         )
 
         # Style for prompt
-        self.style = Style.from_dict({
-            "prompt": "#5F9EA0 bold",  # Cadet blue
-        })
+        self.style = Style.from_dict(
+            {
+                "prompt": "#5F9EA0 bold",  # Cadet blue
+            }
+        )
 
     def _on_tool_start(self, tool_name: str, tool_input: dict) -> None:
         """Callback when a tool starts executing.
@@ -156,7 +154,7 @@ class REPL:
         """
         # Show thinking status
         self.console.print("[dim]Thinking...[/dim]")
-        
+
         try:
             response = self.agent.step(user_input)
         except Exception as e:
@@ -166,17 +164,17 @@ class REPL:
         # Print response
         self.console.print()  # Blank line before response
         self._print_response(response)
-        
+
         # Check if we have a pending confirmation (high-risk operation failed)
         if self.agent.pending_confirmation:
             self._handle_pending_confirmation()
-    
+
     def _handle_pending_confirmation(self) -> None:
         """Handle pending user confirmation for high-risk operation failure."""
         conf = self.agent.pending_confirmation
         if not conf:
             return
-        
+
         # Print confirmation prompt with styling
         self.console.print()
         self.console.print("[bold red]⚠️  HIGH-RISK OPERATION FAILED[/bold red]")
@@ -185,23 +183,29 @@ class REPL:
         self.console.print(f"[bold]Input:[/bold] {conf.tool_input}")
         self.console.print(f"[bold red]Error:[/bold red] {conf.error_output}")
         self.console.print()
-        self.console.print("[yellow]This is a high-risk operation. Please choose how to proceed:[/yellow]")
+        self.console.print(
+            "[yellow]This is a high-risk operation. Please choose how to proceed:[/yellow]"
+        )
         self.console.print()
-        
+
         for i, option in enumerate(conf.options, 1):
             self.console.print(f"  [bold][{i}][/bold] {option}")
         self.console.print("  [bold][c][/bold] Cancel this operation")
         self.console.print()
-        
+
         # Get user choice
         while True:
             try:
-                choice = self.session.prompt(
-                    "Enter your choice: ",
-                    style=self.style,
-                ).strip().lower()
-                
-                if choice == 'c':
+                choice = (
+                    self.session.prompt(
+                        "Enter your choice: ",
+                        style=self.style,
+                    )
+                    .strip()
+                    .lower()
+                )
+
+                if choice == "c":
                     user_decision = "Cancel this operation"
                     break
                 elif choice.isdigit():
@@ -209,12 +213,12 @@ class REPL:
                     if 0 <= idx < len(conf.options):
                         user_decision = conf.options[idx]
                         break
-                
+
                 self.console.print("[red]Invalid choice. Please try again.[/red]")
             except (KeyboardInterrupt, EOFError):
                 user_decision = "Cancel this operation"
                 break
-        
+
         # Continue with user decision
         self.console.print(f"[dim]Proceeding with: {user_decision}[/dim]")
         self._process_input(user_decision)
@@ -227,7 +231,7 @@ class REPL:
         """
         if not response:
             return
-            
+
         # Check if response contains code blocks
         if "```" in response:
             # Print as markdown
@@ -238,16 +242,16 @@ class REPL:
                 self._print_streaming(response)
             else:
                 self.console.print(response)
-    
+
     def _print_streaming(self, text: str, delay: float = 0.01) -> None:
         """Print text with streaming effect.
-        
+
         Args:
             text: Text to print
             delay: Delay between words in seconds
         """
         import time
-        
+
         words = text.split(" ")
         for i, word in enumerate(words):
             self.console.print(word, end="")
@@ -266,10 +270,10 @@ class REPL:
             True if REPL should exit
         """
         cmd = command.lower()
-        
+
         # Handle skill activation via /skill/skill-name
         if cmd.startswith(self.SKILL_PREFIX):
-            skill_name = command[len(self.SKILL_PREFIX):]
+            skill_name = command[len(self.SKILL_PREFIX) :]
             if skill_name:
                 self._activate_skill(skill_name)
             else:
@@ -298,7 +302,7 @@ class REPL:
                         self.console.print(f"  • [bold]{name}[/bold]: {skill.description}")
             else:
                 self.console.print("[dim]No skills available.[/dim]")
-        
+
         elif cmd == "/mcp":
             self._print_mcp_status()
 
@@ -314,10 +318,10 @@ class REPL:
             self.console.print("Type /help for available commands.")
 
         return False
-    
+
     def _activate_skill(self, skill_name: str) -> None:
         """Activate a skill and display its content.
-        
+
         Args:
             skill_name: Name of skill to activate
         """
@@ -325,10 +329,9 @@ class REPL:
             content = self.agent.skills.activate(skill_name)
             self.console.print(f"[green]✓ Skill '{skill_name}' activated[/green]")
             # Add to conversation context
-            self.agent.messages.append({
-                "role": "user",
-                "content": f"[User activated skill: {skill_name}]\n\n{content}"
-            })
+            self.agent.messages.append(
+                {"role": "user", "content": f"[User activated skill: {skill_name}]\n\n{content}"}
+            )
             self.console.print("[dim]Skill instructions loaded into context.[/dim]")
         except Exception as e:
             self.console.print(f"[red]Error activating skill: {e}[/red]")
@@ -348,10 +351,12 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
         self.console.print("[bold]Available commands:[/bold]")
         for cmd, desc in self.COMMANDS.items():
             self.console.print(f"  [bold]{cmd}[/bold] - {desc}")
-        self.console.print(f"  [bold]/skill/name[/bold] - Activate a skill (e.g., /skill/python-refactoring)")
+        self.console.print(
+            "  [bold]/skill/name[/bold] - Activate a skill (e.g., /skill/python-refactoring)"
+        )
         self.console.print()
         self.console.print("All other input is sent to the AI agent.")
-    
+
     def _init_mcp(self) -> None:
         """Initialize MCP connections."""
         if not self.config.mcp.enabled:
@@ -379,9 +384,10 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
             sys.exit(1)
         except Exception as e:
             import traceback
+
             self.console.print(f"[yellow]MCP initialization failed: {e}[/yellow]")
             self.console.print("[dim red]Detailed error:[/dim red]")
-            for line in traceback.format_exc().split('\n'):
+            for line in traceback.format_exc().split("\n"):
                 self.console.print(f"[dim red]{line}[/dim red]")
             self.console.print("[dim]Continuing without MCP tools...[/dim]")
 
@@ -394,35 +400,34 @@ Use [bold]Ctrl+D[/bold] or [bold]/exit[/bold] to quit.
             self.agent.shutdown_mcp_sync(timeout=10.0)
         except Exception as e:
             self.console.print(f"[yellow]MCP shutdown warning: {e}[/yellow]")
-    
+
     def _print_mcp_status(self) -> None:
         """Print MCP connection status."""
         summary = self.agent.mcp.get_connection_summary()
-        
+
         if not summary["enabled"]:
             self.console.print("[dim]MCP is disabled.[/dim]")
             return
-        
+
         self.console.print("[bold]MCP Server Status:[/bold]")
         self.console.print(f"  Enabled: {summary['enabled']}")
         self.console.print(f"  Configured: {summary['configured']} server(s)")
         self.console.print(f"  Connected: {summary['connected']} server(s)")
         self.console.print(f"  Failed: {summary['failed']} server(s)")
         self.console.print(f"  Total Tools: {summary['total_tools']}")
-        
+
         if summary["servers"]:
             self.console.print()
             self.console.print("[bold]Server Details:[/bold]")
             for name, status in sorted(summary["servers"].items()):
                 if status["connected"]:
                     self.console.print(
-                        f"  • [green]{name}[/green]: "
-                        f"Connected ({status['tools']} tools)"
+                        f"  • [green]{name}[/green]: Connected ({status['tools']} tools)"
                     )
                 else:
                     error = status.get("error", "Unknown error")
                     self.console.print(f"  • [red]{name}[/red]: Failed - {error}")
-        
+
         mcp_tools = self.agent.mcp.list_mcp_tools()
         if mcp_tools:
             self.console.print()

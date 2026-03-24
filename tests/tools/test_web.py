@@ -1,5 +1,7 @@
 """Tests for web tools"""
+
 import pytest
+
 from bourbon.tools.web import fetch_url
 
 

@@ -1,11 +1,11 @@
 """Utilities for running long-lived async MCP resources from sync code."""
 
 import asyncio
-from concurrent.futures import Future
 import threading
 from collections.abc import Coroutine
+from concurrent.futures import Future
+from contextlib import suppress
 from typing import Any, TypeVar
-
 
 T = TypeVar("T")
 
@@ -32,7 +32,9 @@ class AsyncRuntime:
 
             def run_loop() -> None:
                 asyncio.set_event_loop(loop)
-                queue: asyncio.Queue[tuple[Coroutine[Any, Any, Any], Future] | None] = asyncio.Queue()
+                queue: asyncio.Queue[tuple[Coroutine[Any, Any, Any], Future] | None] = (
+                    asyncio.Queue()
+                )
                 self._queue = queue
 
                 async def worker() -> None:
@@ -60,10 +62,8 @@ class AsyncRuntime:
                 finally:
                     if self._worker_task and not self._worker_task.done():
                         self._worker_task.cancel()
-                        try:
+                        with suppress(asyncio.CancelledError):
                             loop.run_until_complete(self._worker_task)
-                        except asyncio.CancelledError:
-                            pass
                     loop.run_until_complete(loop.shutdown_asyncgens())
                     loop.close()
 

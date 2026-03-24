@@ -138,6 +138,32 @@ def test_mandatory_deny_overrides_allow():
     assert decision.reason == "file_read: deny (file.mandatory_deny: ~/.ssh/**)"
 
 
+def test_mandatory_deny_normalizes_home_pattern_with_symlink_prefix(monkeypatch, tmp_path: Path):
+    home_path = str(tmp_path)
+    if home_path.startswith("/private/var/"):
+        monkeypatch.setenv("HOME", home_path.removeprefix("/private"))
+    else:
+        monkeypatch.setenv("HOME", home_path)
+
+    engine = make_engine(
+        file_rules={
+            "allow": ["**"],
+            "deny": [],
+            "mandatory_deny": ["~/.ssh/**"],
+        },
+    )
+
+    decision = engine.evaluate(
+        "read_file",
+        InferredContext(
+            capabilities=[CapabilityType.FILE_READ],
+            file_paths=[str(tmp_path / ".ssh/id_rsa")],
+        ),
+    )
+
+    assert decision.action == PolicyAction.DENY
+
+
 def test_deny_git_hooks():
     engine = make_engine(
         file_rules={"deny": ["**/.git/hooks/**"]},

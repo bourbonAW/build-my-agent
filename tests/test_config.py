@@ -35,6 +35,52 @@ class TestConfig:
         assert config.ui.theme == "monokai"
 
 
+class TestSandboxConfig:
+    def test_default_config_has_sandbox_sections(self):
+        config = Config()
+        assert hasattr(config, "access_control")
+        assert hasattr(config, "sandbox")
+        assert hasattr(config, "audit")
+
+    def test_from_dict_with_sandbox(self):
+        data = {
+            "access_control": {
+                "default_action": "deny",
+                "file": {"allow": ["/workspace/**"], "deny": [], "mandatory_deny": []},
+                "command": {"deny_patterns": ["rm -rf /"], "need_approval_patterns": []},
+            },
+            "sandbox": {
+                "enabled": True,
+                "provider": "local",
+            },
+            "audit": {
+                "enabled": True,
+                "log_dir": "/tmp/audit",
+            },
+        }
+        config = Config.from_dict(data)
+        assert config.access_control["default_action"] == "deny"
+        assert config.sandbox["provider"] == "local"
+        assert config.audit["enabled"] is True
+
+    def test_from_dict_without_sandbox_uses_defaults(self):
+        config = Config.from_dict({})
+        assert config.access_control["default_action"] == "allow"
+        assert config.sandbox["enabled"] is True
+        assert config.audit["enabled"] is True
+
+    def test_from_dict_deep_merges_nested_keys(self):
+        data = {
+            "sandbox": {
+                "network": {"enabled": True},
+            },
+        }
+        config = Config.from_dict(data)
+        assert config.sandbox["network"]["enabled"] is True
+        assert config.sandbox["network"]["allow_domains"] == []
+        assert config.sandbox["filesystem"]["writable"] == ["{workdir}"]
+
+
 class TestConfigManager:
     """Test configuration manager."""
 

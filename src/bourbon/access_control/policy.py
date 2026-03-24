@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from fnmatch import fnmatch
 from pathlib import Path
 
 from bourbon.access_control.capabilities import CapabilityType, InferredContext
 
 
-class PolicyAction(str, Enum):
+class PolicyAction(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
     NEED_APPROVAL = "need_approval"
@@ -87,7 +87,9 @@ class PolicyEngine:
                 decisions.append(CapabilityDecision(capability, self.default_action, "default"))
 
         if not decisions:
-            decisions.append(CapabilityDecision(CapabilityType.EXEC, self.default_action, "default"))
+            decisions.append(
+                CapabilityDecision(CapabilityType.EXEC, self.default_action, "default")
+            )
 
         return PolicyDecision.merge(decisions)
 
@@ -135,7 +137,28 @@ class PolicyEngine:
         return PolicyDecision.merge(decisions)
 
     def _resolve_pattern(self, pattern: str) -> str:
-        return str(Path(pattern.replace("{workdir}", str(self.workdir))).expanduser())
+        normalized = pattern.replace("{workdir}", str(self.workdir))
+        if normalized.startswith("~") or Path(normalized).is_absolute():
+            return self._resolve_glob_pattern(normalized)
+        return str(Path(normalized).expanduser())
+
+    @staticmethod
+    def _resolve_glob_pattern(pattern: str) -> str:
+        first_glob = min(
+            (index for char in "*?[" if (index := pattern.find(char)) != -1),
+            default=-1,
+        )
+        if first_glob == -1:
+            return str(Path(pattern).expanduser().resolve(strict=False))
+
+        prefix_end = pattern.rfind("/", 0, first_glob)
+        if prefix_end == -1:
+            return pattern
+
+        prefix = pattern[:prefix_end]
+        suffix = pattern[prefix_end + 1 :]
+        resolved_prefix = Path(prefix).expanduser().resolve(strict=False)
+        return str(resolved_prefix / suffix)
 
     def _check_file_path(self, path: str, capability: CapabilityType) -> CapabilityDecision:
         input_path = Path(path).expanduser()
@@ -148,21 +171,33 @@ class PolicyEngine:
 
         for pattern in self.file_mandatory_deny:
             if self._path_matches_pattern(resolved_path, pattern):
-                return CapabilityDecision(capability, PolicyAction.DENY, f"file.mandatory_deny: {pattern}")
+                return CapabilityDecision(
+                    capability, PolicyAction.DENY, f"file.mandatory_deny: {pattern}"
+                )
 
         for pattern in self.file_deny:
             if self._path_matches_pattern(resolved_path, pattern):
-                return CapabilityDecision(capability, PolicyAction.DENY, f"file.deny: {pattern}")
+                return CapabilityDecision(
+                    capability,
+                    PolicyAction.DENY,
+                    f"file.deny: {pattern}",
+                )
 
         for pattern in self.file_allow:
             if self._path_matches_pattern(resolved_path, pattern):
-                return CapabilityDecision(capability, PolicyAction.ALLOW, f"file.allow: {pattern}")
+                return CapabilityDecision(
+                    capability,
+                    PolicyAction.ALLOW,
+                    f"file.allow: {pattern}",
+                )
 
         return CapabilityDecision(capability, self.default_action, "default")
 
     def _path_matches_pattern(self, resolved_path: str, pattern: str) -> bool:
         resolved_pattern = self._resolve_pattern(pattern)
-        return fnmatch(resolved_path, resolved_pattern) or fnmatch(f"{resolved_path}/", resolved_pattern)
+        return fnmatch(resolved_path, resolved_pattern) or fnmatch(
+            f"{resolved_path}/", resolved_pattern
+        )
 
     @staticmethod
     def _command_matches(command: str, pattern: str) -> bool:

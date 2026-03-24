@@ -1,7 +1,7 @@
 """Tests for synchronous MCP integration points."""
 
-from types import SimpleNamespace
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from mcp.types import TextContent

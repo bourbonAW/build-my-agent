@@ -1,7 +1,7 @@
 """Tests for MCP transport connectors."""
 
-from contextlib import asynccontextmanager
 import unittest
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from bourbon.mcp_client.config import MCPServerConfig
@@ -86,9 +86,9 @@ class TestStdioConnector(unittest.IsolatedAsyncioTestCase):
             patch.object(connector, "_validate_command"),
             patch(
                 "bourbon.mcp_client.connector.shutil.which",
-                side_effect=lambda command: "/opt/homebrew/bin/context7-mcp"
-                if command == "context7-mcp"
-                else None,
+                side_effect=lambda command: (
+                    "/opt/homebrew/bin/context7-mcp" if command == "context7-mcp" else None
+                ),
             ),
             patch(
                 "bourbon.mcp_client.connector.stdio_client",

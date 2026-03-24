@@ -86,10 +86,12 @@ class TestMCPServerConfig:
     def test_from_dict_missing_name(self):
         """Test that missing name raises error."""
         with pytest.raises(ValueError, match="missing required 'name' field"):
-            MCPServerConfig.from_dict({
-                "transport": "stdio",
-                "command": "echo",
-            })
+            MCPServerConfig.from_dict(
+                {
+                    "transport": "stdio",
+                    "command": "echo",
+                }
+            )
 
     def test_to_dict_stdio(self):
         """Test serialization of stdio config."""

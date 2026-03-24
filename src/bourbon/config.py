@@ -2,11 +2,21 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import toml
 
 from bourbon.mcp_client.config import MCPConfig
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base, returning a new dict."""
+    result = base.copy()
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 @dataclass
@@ -99,6 +109,48 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    access_control: dict = field(
+        default_factory=lambda: {
+            "default_action": "allow",
+            "file": {
+                "allow": ["{workdir}/**"],
+                "deny": ["~/.ssh/**", "~/.aws/**"],
+                "mandatory_deny": ["~/.ssh/**"],
+            },
+            "command": {
+                "deny_patterns": ["rm -rf /", "sudo *"],
+                "need_approval_patterns": ["pip install *", "apt *"],
+            },
+        }
+    )
+    sandbox: dict = field(
+        default_factory=lambda: {
+            "enabled": True,
+            "provider": "auto",
+            "filesystem": {
+                "writable": ["{workdir}"],
+                "readonly": ["/usr", "/lib"],
+                "deny": ["~/.ssh", "~/.aws"],
+            },
+            "network": {"enabled": False, "allow_domains": []},
+            "resources": {
+                "timeout": 120,
+                "max_memory": "512M",
+                "max_output": 50000,
+            },
+            "credentials": {
+                "clean_env": True,
+                "passthrough_vars": ["PATH", "HOME", "LANG"],
+            },
+        }
+    )
+    audit: dict = field(
+        default_factory=lambda: {
+            "enabled": True,
+            "log_dir": "~/.bourbon/audit/",
+            "format": "jsonl",
+        }
+    )
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
@@ -114,6 +166,9 @@ class Config:
 
         ui_data = data.get("ui", {})
         mcp_data = data.get("mcp", {})
+        access_control_data = data.get("access_control", {})
+        sandbox_data = data.get("sandbox", {})
+        audit_data = data.get("audit", {})
 
         return cls(
             llm=LLMConfig(
@@ -128,6 +183,9 @@ class Config:
             ),
             ui=UIConfig(**ui_data),
             mcp=MCPConfig.from_dict(mcp_data),
+            access_control=_deep_merge(Config().access_control, access_control_data),
+            sandbox=_deep_merge(Config().sandbox, sandbox_data),
+            audit=_deep_merge(Config().audit, audit_data),
         )
 
     def to_dict(self) -> dict:
@@ -175,6 +233,9 @@ class Config:
                 "max_tool_rounds": self.ui.max_tool_rounds,
             },
             "mcp": self.mcp.to_dict(),
+            "access_control": self.access_control,
+            "sandbox": self.sandbox,
+            "audit": self.audit,
         }
 
 
@@ -184,7 +245,7 @@ class ConfigManager:
     CONFIG_DIR_NAME = ".bourbon"
     CONFIG_FILE_NAME = "config.toml"
 
-    def __init__(self, home_dir: Optional[Path] = None):
+    def __init__(self, home_dir: Path | None = None):
         """Initialize with optional home directory override."""
         self._home = home_dir or Path.home()
 
@@ -225,10 +286,10 @@ class ConfigManager:
 
         if not config_path.exists():
             raise FileNotFoundError(
-                f"Configuration not found at {config_path}\n" f"Run 'bourbon --init' to create one."
+                f"Configuration not found at {config_path}\nRun 'bourbon --init' to create one."
             )
 
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             data = toml.load(f)
 
         return Config.from_dict(data)

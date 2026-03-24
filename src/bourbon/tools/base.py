@@ -20,10 +20,7 @@ def safe_path(path: str, workdir: Path) -> Path:
         ValueError: If path escapes workspace
     """
     # Handle absolute paths
-    if Path(path).is_absolute():
-        resolved = Path(path).resolve()
-    else:
-        resolved = (workdir / path).resolve()
+    resolved = Path(path).resolve() if Path(path).is_absolute() else (workdir / path).resolve()
 
     # Check for path traversal
     try:
@@ -219,6 +216,7 @@ def edit_file(
         "required": ["command"],
     },
     risk_level=RiskLevel.HIGH,
+    required_capabilities=["exec"],
 )
 def bash_tool(command: str) -> str:
     """Tool handler for bash."""
@@ -243,6 +241,7 @@ def bash_tool(command: str) -> str:
         "required": ["path"],
     },
     risk_level=RiskLevel.LOW,
+    required_capabilities=["file_read"],
 )
 def read_file_tool(path: str, limit: int | None = None) -> str:
     """Tool handler for read_file."""
@@ -267,6 +266,7 @@ def read_file_tool(path: str, limit: int | None = None) -> str:
         "required": ["path", "content"],
     },
     risk_level=RiskLevel.MEDIUM,
+    required_capabilities=["file_write"],
 )
 def write_file_tool(path: str, content: str) -> str:
     """Tool handler for write_file."""
@@ -295,6 +295,7 @@ def write_file_tool(path: str, content: str) -> str:
         "required": ["path", "old_text", "new_text"],
     },
     risk_level=RiskLevel.MEDIUM,
+    required_capabilities=["file_write"],
 )
 def edit_file_tool(path: str, old_text: str, new_text: str) -> str:
     """Tool handler for edit_file."""

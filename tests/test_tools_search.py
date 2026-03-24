@@ -1,13 +1,12 @@
 """Tests for search tools."""
 
-import json
 import shutil
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from bourbon.tools.search import rg_search, ast_grep_search
+from bourbon.tools.search import ast_grep_search, rg_search
 
 
 class TestRgSearch:

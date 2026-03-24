@@ -1,7 +1,6 @@
 """Tests for document processing tools"""
-import pytest
-from pathlib import Path
-from bourbon.tools.documents import pdf_to_text, docx_to_markdown
+
+from bourbon.tools.documents import docx_to_markdown, pdf_to_text
 
 
 def test_pdf_to_text_file_not_found():

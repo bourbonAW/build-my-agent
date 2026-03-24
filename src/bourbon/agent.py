@@ -1,16 +1,21 @@
 """Core agent loop for Bourbon."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
+from bourbon.access_control import AccessController
+from bourbon.access_control.policy import PolicyAction
+from bourbon.audit import AuditLogger
+from bourbon.audit.events import AuditEvent
 from bourbon.compression import ContextCompressor
 from bourbon.config import Config
-from bourbon.llm import LLMClient, LLMError, create_client
+from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
+from bourbon.sandbox import SandboxManager
 from bourbon.skills import SkillManager
 from bourbon.todos import TodoManager
-from bourbon.tools import definitions, get_tool_with_metadata, handler, get_registry
+from bourbon.tools import definitions, get_registry, get_tool_with_metadata, handler
 
 
 class AgentError(Exception):
@@ -22,11 +27,12 @@ class AgentError(Exception):
 @dataclass
 class PendingConfirmation:
     """Represents a pending user confirmation for high-risk operation failure."""
-    
+
     tool_name: str
     tool_input: dict
     error_output: str
     options: list[str]
+    confirmation_type: str = "high_risk_failure"
 
 
 class Agent:
@@ -76,11 +82,25 @@ class Agent:
 
         # Maximum tool execution rounds to prevent infinite loops
         # Can be configured via config.ui.max_tool_rounds (default: 50)
-        self._max_tool_rounds = getattr(config.ui, 'max_tool_rounds', 50)
-        
+        self._max_tool_rounds = getattr(config.ui, "max_tool_rounds", 50)
+
+        # Initialize security components
+        audit_config = config.audit if hasattr(config, "audit") else {}
+        log_dir = Path(audit_config.get("log_dir", "~/.bourbon/audit/")).expanduser()
+        self.audit = AuditLogger(
+            log_dir=log_dir,
+            enabled=audit_config.get("enabled", True),
+        )
+
+        ac_config = config.access_control if hasattr(config, "access_control") else {}
+        self.access_controller = AccessController(config=ac_config, workdir=self.workdir)
+
+        sandbox_config = config.sandbox if hasattr(config, "sandbox") else {}
+        self.sandbox = SandboxManager(config=sandbox_config, workdir=self.workdir, audit=self.audit)
+
         # Pending confirmation for high-risk operation failures
         self.pending_confirmation: PendingConfirmation | None = None
-        
+
         # Track token usage across all steps
         self.token_usage = {
             "input_tokens": 0,
@@ -90,9 +110,9 @@ class Agent:
 
     async def initialize_mcp(self) -> dict:
         """Initialize MCP connections.
-        
+
         This should be called after agent creation to connect to MCP servers.
-        
+
         Returns:
             Dictionary with connection results
         """
@@ -126,7 +146,10 @@ class Agent:
             "",
             "You have access to:",
             "- Built-in tools for file operations, code search, and execution",
-            "- Specialized Skills for domain-specific tasks (investment analysis, project management, etc.)",
+            (
+                "- Specialized Skills for domain-specific tasks "
+                "(investment analysis, project management, etc.)"
+            ),
             "- MCP tools for external integrations (databases, APIs, etc.)",
             "",
             "When working on multi-step tasks, use TodoWrite to track progress.",
@@ -144,17 +167,32 @@ class Agent:
             "TASK ADAPTABILITY:",
             "- For coding tasks: Use code search, file editing, and testing tools",
             "- For investment tasks: Activate investment-agent skill for portfolio analysis",
-            "- For data tasks: Use file operations and data processing tools", 
+            "- For data tasks: Use file operations and data processing tools",
             "- For general questions: Use your knowledge and available tools as needed",
             "",
             "CRITICAL ERROR HANDLING RULES:",
-            "1. HIGH RISK operations (software install/uninstall, version changes, system commands, destructive operations):",
-            "   - If the operation fails (e.g., version not found, package unavailable), you MUST STOP and ask the user for confirmation",
-            "   - NEVER automatically switch versions, install alternatives, or change parameters without user approval",
-            "   - Examples: pip install package==wrong_version, apt install nonexistent-package, rm important-files",
+            (
+                "1. HIGH RISK operations (software install/uninstall, version changes, "
+                "system commands, destructive operations):"
+            ),
+            (
+                "   - If the operation fails (e.g., version not found, package unavailable), "
+                "you MUST STOP and ask the user for confirmation"
+            ),
+            (
+                "   - NEVER automatically switch versions, install alternatives, or change "
+                "parameters without user approval"
+            ),
+            (
+                "   - Examples: pip install package==wrong_version, apt install "
+                "nonexistent-package, rm important-files"
+            ),
             "",
             "2. LOW RISK operations (read_file, search, exploration):",
-            "   - If a file is not found, you MAY search for similar files and attempt to read the correct one",
+            (
+                "   - If a file is not found, you MAY search for similar files and "
+                "attempt to read the correct one"
+            ),
             "   - If search returns no results, you MAY adjust patterns and retry",
             "   - Always report what you found and what action you took",
             "",
@@ -166,56 +204,56 @@ class Agent:
 
     def _get_mcp_section(self) -> str:
         """Generate MCP tools section for system prompt.
-        
+
         Returns information about available MCP tools.
         """
-        if not hasattr(self, 'mcp'):
+        if not hasattr(self, "mcp"):
             return ""
-        
+
         summary = self.mcp.get_connection_summary()
-        
+
         if not summary["enabled"] or summary["total_tools"] == 0:
             return ""
-        
+
         mcp_tools = self.mcp.list_mcp_tools()
         if not mcp_tools:
             return ""
-        
+
         lines = [
             "MCP TOOLS",
             "=========",
             "",
-            f"The following external tools are available from MCP servers:",
+            "The following external tools are available from MCP servers:",
             "",
         ]
-        
+
         # Group tools by server
         server_tools: dict[str, list[str]] = {}
         for tool_name in mcp_tools:
             if ":" in tool_name:
                 server, tool = tool_name.split(":", 1)
                 server_tools.setdefault(server, []).append(tool)
-        
+
         for server, tools in sorted(server_tools.items()):
             lines.append(f"  {server}:")
             for tool in sorted(tools):
                 lines.append(f"    - {server}:{tool}")
             lines.append("")
-        
+
         lines.append("Use these tools just like any other tool.")
-        
+
         return "\n".join(lines)
 
     def _get_skills_section(self) -> str:
         """Generate skills section for system prompt.
-        
+
         Returns catalog of available skills with activation instructions.
         """
         catalog = self.skills.get_catalog()
-        
+
         if not catalog:
             return "(No skills available)"
-        
+
         lines = [
             "SKILLS",
             "======",
@@ -227,11 +265,11 @@ class Agent:
             catalog,
             "",
             "To activate a skill, use:",
-            '  <function_calls>',
+            "  <function_calls>",
             '    <invoke name="skill">',
             '      <parameter name="name">skill-name</parameter>',
-            '    </invoke>',
-            '  </function_calls>',
+            "    </invoke>",
+            "  </function_calls>",
         ]
         return "\n".join(lines)
 
@@ -240,7 +278,7 @@ class Agent:
         # Check if we're resuming from a pending confirmation
         if self.pending_confirmation:
             return self._handle_confirmation_response(user_input)
-        
+
         # Add user message
         self.messages.append({"role": "user", "content": user_input})
 
@@ -253,12 +291,25 @@ class Agent:
 
         # Run the conversation loop
         return self._run_conversation_loop()
-    
+
     def _handle_confirmation_response(self, user_input: str) -> str:
         """Handle user response to a pending confirmation."""
         confirmation = self.pending_confirmation
         self.pending_confirmation = None
-        
+
+        if confirmation and confirmation.confirmation_type == "policy_approval":
+            normalized = user_input.strip().lower()
+            if self._is_approval_response(normalized):
+                output = self._execute_regular_tool(
+                    confirmation.tool_name,
+                    confirmation.tool_input,
+                    skip_policy_check=True,
+                )
+                if self.pending_confirmation:
+                    return self._format_confirmation_prompt()
+                return output
+            return f"Skipped {confirmation.tool_name}: approval not granted."
+
         # Add the user's choice to the conversation
         context = (
             f"[Previous high-risk operation failed: {confirmation.tool_name}]\n"
@@ -267,7 +318,7 @@ class Agent:
             f"Please proceed based on the user's decision above."
         )
         self.messages.append({"role": "user", "content": context})
-        
+
         # Continue the conversation
         return self._run_conversation_loop()
 
@@ -284,7 +335,7 @@ class Agent:
                     system=self.system_prompt,
                     max_tokens=64000,
                 )
-                
+
                 # Track token usage
                 if "usage" in response:
                     usage = response["usage"]
@@ -300,12 +351,15 @@ class Agent:
 
             # Debug: log response (uncomment for debugging)
             # print(f"[DEBUG] Response stop_reason: {response.get('stop_reason')}")
-            # print(f"[DEBUG] Response content blocks: {[b.get('type') for b in response.get('content', [])]}")
+            # print(
+            #     f"[DEBUG] Response content blocks: "
+            #     f"{[b.get('type') for b in response.get('content', [])]}"
+            # )
 
             # Check if response contains tool calls
             has_tool_calls = response["stop_reason"] == "tool_use"
             tool_use_blocks = [b for b in response["content"] if b.get("type") == "tool_use"]
-            
+
             if not has_tool_calls and tool_use_blocks:
                 # Sometimes stop_reason is not tool_use but we have tool_use blocks
                 has_tool_calls = True
@@ -317,52 +371,57 @@ class Agent:
             if not has_tool_calls:
                 # Extract and return text response
                 text_parts = [
-                    block["text"]
-                    for block in response["content"]
-                    if block.get("type") == "text"
+                    block["text"] for block in response["content"] if block.get("type") == "text"
                 ]
                 return "".join(text_parts)
 
             # Execute tools
             if tool_use_blocks:
                 tool_results = self._execute_tools(tool_use_blocks)
-                
+
                 # Check if we have a pending confirmation (high-risk error)
                 if self.pending_confirmation:
                     # Return confirmation prompt to user
                     return self._format_confirmation_prompt()
-                
+
                 # Add tool results to history
                 self.messages.append({"role": "user", "content": tool_results})
             else:
                 # No actual tool_use blocks found despite stop_reason
                 print("[DEBUG] stop_reason was tool_use but no tool_use blocks found!")
                 text_parts = [
-                    block["text"]
-                    for block in response["content"]
-                    if block.get("type") == "text"
+                    block["text"] for block in response["content"] if block.get("type") == "text"
                 ]
                 return "".join(text_parts)
-            
+
             tool_round += 1
 
-        return "[Reached maximum tool execution rounds. Providing final response based on what was learned.]"
-    
+        return (
+            "[Reached maximum tool execution rounds. "
+            "Providing final response based on what was learned.]"
+        )
+
     def _format_confirmation_prompt(self) -> str:
         """Format pending confirmation for display to user."""
         if not self.pending_confirmation:
             return ""
-        
+
         conf = self.pending_confirmation
+        if conf.confirmation_type == "policy_approval":
+            title = "APPROVAL REQUIRED"
+            description = "This operation requires approval before execution."
+        else:
+            title = "HIGH-RISK OPERATION FAILED"
+            description = "This is a high-risk operation. Please choose how to proceed:"
         lines = [
             "",
-            "⚠️  HIGH-RISK OPERATION FAILED",
+            f"⚠️  {title}",
             "━" * 50,
             f"Operation: {conf.tool_name}",
             f"Input: {conf.tool_input}",
             f"Error: {conf.error_output}",
             "",
-            "This is a high-risk operation. Please choose how to proceed:",
+            description,
             "",
         ]
         for i, option in enumerate(conf.options, 1):
@@ -370,8 +429,116 @@ class Agent:
         lines.append("  [c] Cancel this operation")
         lines.append("")
         lines.append("Enter your choice: ")
-        
+
         return "\n".join(lines)
+
+    @staticmethod
+    def _is_approval_response(user_input: str) -> bool:
+        """Return True when the user approved the pending operation."""
+        return user_input in {"1", "y", "yes"} or "approve" in user_input
+
+    def _record_policy_decision(
+        self,
+        *,
+        tool_name: str,
+        tool_input: dict,
+        decision,
+    ) -> None:
+        self.audit.record(
+            AuditEvent.policy_decision(
+                tool_name=tool_name,
+                tool_input_summary=str(tool_input)[:200],
+                decision=decision.action.value,
+                matched_rule=decision.reason,
+                capabilities_required=[
+                    capability_decision.capability.value
+                    for capability_decision in decision.decisions
+                ],
+            )
+        )
+
+    @staticmethod
+    def _format_sandbox_output(sandbox_result) -> str:
+        """Convert sandbox stdout/stderr into legacy bash-tool output."""
+        if sandbox_result.timed_out:
+            return f"Error: Timeout ({sandbox_result.resource_usage.cpu_time:.0f}s)"
+
+        output = f"{sandbox_result.stdout}{sandbox_result.stderr}".strip()
+        return output or "(no output)"
+
+    def _execute_regular_tool(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        *,
+        skip_policy_check: bool = False,
+    ) -> str:
+        """Execute one tool call with policy, audit, and sandbox integration."""
+        tool_handler_fn = handler(tool_name)
+        tool_metadata = get_tool_with_metadata(tool_name)
+
+        if not skip_policy_check:
+            decision = self.access_controller.evaluate(tool_name, tool_input)
+            self._record_policy_decision(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                decision=decision,
+            )
+
+            if decision.action == PolicyAction.DENY:
+                return f"Denied: {decision.reason}"
+
+            if decision.action == PolicyAction.NEED_APPROVAL:
+                self.pending_confirmation = PendingConfirmation(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    error_output=f"Requires approval: {decision.reason}",
+                    options=["Approve and execute", "Skip this operation"],
+                    confirmation_type="policy_approval",
+                )
+                return f"Requires approval: {decision.reason}"
+
+        if tool_handler_fn is None:
+            return f"Unknown tool: {tool_name}"
+
+        if tool_name == "bash" and getattr(self.sandbox, "enabled", False):
+            sandbox_result = self.sandbox.execute(tool_input.get("command", ""))
+            output = self._format_sandbox_output(sandbox_result)
+            self.audit.record(
+                AuditEvent.tool_call(
+                    tool_name=tool_name,
+                    tool_input_summary=str(tool_input)[:200],
+                    sandboxed=True,
+                )
+            )
+            return output
+
+        try:
+            output = tool_handler_fn(**tool_input)
+        except Exception as e:
+            return f"Error executing {tool_name}: {e}"
+
+        self.audit.record(
+            AuditEvent.tool_call(
+                tool_name=tool_name,
+                tool_input_summary=str(tool_input)[:200],
+            )
+        )
+
+        if (
+            tool_metadata
+            and output.startswith("Error")
+            and tool_metadata.is_high_risk_operation(tool_input)
+        ):
+            self.pending_confirmation = PendingConfirmation(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                error_output=output,
+                options=self._generate_options(tool_name, tool_input, output),
+                confirmation_type="high_risk_failure",
+            )
+
+        return output
 
     def _execute_tools(self, tool_use_blocks: list[dict]) -> list[dict]:
         """Execute tool calls.
@@ -417,101 +584,82 @@ class Agent:
                 except Exception as e:
                     output = f"Error activating skill '{skill_name}': {e}"
             else:
-                # Execute regular tool
-                tool_handler = handler(tool_name)
-                tool_metadata = get_tool_with_metadata(tool_name)
-                
-                if tool_handler:
-                    try:
-                        output = tool_handler(**tool_input)
-                        
-                        # Check for high-risk operation failure
-                        if (
-                            tool_metadata
-                            and output.startswith("Error")
-                            and tool_metadata.is_high_risk_operation(tool_input)
-                        ):
-                            # Store pending confirmation and stop tool execution
-                            self.pending_confirmation = PendingConfirmation(
-                                tool_name=tool_name,
-                                tool_input=tool_input,
-                                error_output=output,
-                                options=self._generate_options(tool_name, tool_input, output),
-                            )
-                            
-                            if self.on_tool_end:
-                                self.on_tool_end(tool_name, output)
-                            
-                            # Return partial results with error marker
-                            results.append({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": str(output)[:50000],
-                            })
-                            return results
-                            
-                    except Exception as e:
-                        output = f"Error executing {tool_name}: {e}"
-                else:
-                    output = f"Unknown tool: {tool_name}"
+                output = self._execute_regular_tool(tool_name, tool_input)
+                if self.pending_confirmation:
+                    if self.on_tool_end:
+                        self.on_tool_end(tool_name, output)
+
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": str(output)[:50000],
+                        }
+                    )
+                    return results
 
             # Notify end of tool execution
             if self.on_tool_end:
                 self.on_tool_end(tool_name, output)
 
-            results.append({
-                "type": "tool_result",
-                "tool_use_id": tool_id,
-                "content": str(output)[:50000],
-            })
+            results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": str(output)[:50000],
+                }
+            )
 
         # Todo nag
         self._rounds_without_todo = 0 if used_todo else self._rounds_without_todo + 1
         if self.todos.has_open_items() and self._rounds_without_todo >= 3:
-            results.insert(0, {
-                "type": "text",
-                "text": "<reminder>You have open todos. Consider updating them.</reminder>",
-            })
+            results.insert(
+                0,
+                {
+                    "type": "text",
+                    "text": "<reminder>You have open todos. Consider updating them.</reminder>",
+                },
+            )
 
         if manual_compact:
             self._manual_compact()
 
         return results
-    
+
     def _generate_options(self, tool_name: str, tool_input: dict, error_output: str) -> list[str]:
         """Generate options for user based on the failed operation."""
         options = []
-        
+
         if tool_name == "bash":
             command = tool_input.get("command", "")
-            
+
             # Package installation errors
             if "pip install" in command or "pip3 install" in command:
                 options.append("Try installing the latest version")
                 options.append("Show available versions and let me choose")
-            
+
             # apt/yum errors
             elif "apt " in command or "apt-get " in command or "yum " in command:
                 options.append("Try with sudo")
                 options.append("Search for alternative package names")
-            
+
             # rm errors
             elif command.strip().startswith("rm "):
                 options.append("Force remove with -f")
                 options.append("Remove recursively with -r")
-            
+
             else:
                 options.append("Retry the same command")
                 options.append("Try a modified version")
-        
+
         elif tool_name in ("write_file", "edit_file"):
             options.append("Retry with different permissions")
             options.append("Try writing to a different location")
-        
+
         if not options:
             options.append("Retry")
             options.append("Skip this operation")
-        
+
         return options
 
     def _auto_compact(self) -> None:
@@ -529,7 +677,7 @@ class Agent:
     def clear_history(self) -> None:
         """Clear conversation history."""
         self.messages = []
-    
+
     def reset_token_usage(self) -> None:
         """Reset token usage counters."""
         self.token_usage = {
@@ -537,7 +685,7 @@ class Agent:
             "output_tokens": 0,
             "total_tokens": 0,
         }
-    
+
     def get_token_usage(self) -> dict:
         """Get current token usage."""
         return self.token_usage.copy()

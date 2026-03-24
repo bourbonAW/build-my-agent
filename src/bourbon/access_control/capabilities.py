@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from dataclasses import field
-from enum import Enum
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
 
 
-class CapabilityType(str, Enum):
+class CapabilityType(StrEnum):
     FILE_READ = "file_read"
     FILE_WRITE = "file_write"
     EXEC = "exec"
@@ -44,8 +43,25 @@ _BASH_NET_PATTERNS = (
     "git pull ",
     "git push ",
 )
-_BASH_FILE_READ_PATTERNS = ("cat ", "less ", "head ", "tail ", "grep ", "rg ", "sed ", "find ", "ls ")
-_BASH_FILE_WRITE_PATTERNS = (">", "tee ", "touch ", "mkdir ", "cp ", "mv ")
+_BASH_FILE_READ_PATTERNS = (
+    "cat ",
+    "less ",
+    "head ",
+    "tail ",
+    "grep ",
+    "rg ",
+    "sed ",
+    "find ",
+    "ls ",
+)
+_BASH_FILE_WRITE_PATTERNS = (
+    ">",
+    "tee ",
+    "touch ",
+    "mkdir ",
+    "cp ",
+    "mv ",
+)
 
 
 def infer_capabilities(

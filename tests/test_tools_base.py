@@ -1,6 +1,5 @@
 """Tests for base tools."""
 
-import os
 import tempfile
 from pathlib import Path
 
@@ -23,7 +22,7 @@ class TestSafePath:
         with tempfile.TemporaryDirectory() as tmpdir:
             workdir = Path(tmpdir)
             result = safe_path("src/main.py", workdir)
-            assert result == workdir / "src" / "main.py"
+            assert result == (workdir / "src" / "main.py").resolve()
 
     def test_path_escapes_workspace(self):
         """Test path escaping workspace is rejected."""
@@ -38,7 +37,7 @@ class TestSafePath:
             workdir = Path(tmpdir)
             # Absolute path within workspace should work
             result = safe_path(f"{tmpdir}/file.txt", workdir)
-            assert result == workdir / "file.txt"
+            assert result == (workdir / "file.txt").resolve()
 
 
 class TestRunBash:
@@ -161,6 +160,6 @@ class TestEditFile:
             test_file = Path(tmpdir) / "test.txt"
             test_file.write_text("foo bar foo")
 
-            result = edit_file("test.txt", "foo", "baz", workdir=Path(tmpdir))
+            edit_file("test.txt", "foo", "baz", workdir=Path(tmpdir))
 
             assert test_file.read_text() == "baz bar foo"

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Types of audit events."""
 
     POLICY_DECISION = "POLICY_DECISION"
@@ -36,9 +36,7 @@ class AuditEvent:
         }
         collision_keys = reserved_keys.intersection(self.extra)
         if collision_keys:
-            raise ValueError(
-                f"extra contains reserved audit field(s): {sorted(collision_keys)}"
-            )
+            raise ValueError(f"extra contains reserved audit field(s): {sorted(collision_keys)}")
 
         payload: dict[str, object] = {
             "timestamp": self.timestamp.isoformat(),
@@ -56,7 +54,7 @@ class AuditEvent:
         tool_name: str,
         tool_input_summary: str,
         **extra: object,
-    ) -> "AuditEvent":
+    ) -> AuditEvent:
         return cls(
             timestamp=datetime.now(UTC),
             event_type=EventType.POLICY_DECISION,
@@ -72,7 +70,7 @@ class AuditEvent:
         tool_name: str,
         tool_input_summary: str,
         **extra: object,
-    ) -> "AuditEvent":
+    ) -> AuditEvent:
         return cls(
             timestamp=datetime.now(UTC),
             event_type=EventType.SANDBOX_EXEC,
@@ -88,7 +86,7 @@ class AuditEvent:
         tool_name: str,
         tool_input_summary: str,
         **extra: object,
-    ) -> "AuditEvent":
+    ) -> AuditEvent:
         return cls(
             timestamp=datetime.now(UTC),
             event_type=EventType.SANDBOX_VIOLATION,
@@ -104,7 +102,7 @@ class AuditEvent:
         tool_name: str,
         tool_input_summary: str,
         **extra: object,
-    ) -> "AuditEvent":
+    ) -> AuditEvent:
         return cls(
             timestamp=datetime.now(UTC),
             event_type=EventType.TOOL_CALL,

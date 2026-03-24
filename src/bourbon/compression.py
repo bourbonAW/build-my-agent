@@ -10,7 +10,6 @@ Includes protection for skill content per Agent Skills specification.
 import json
 import time
 from pathlib import Path
-from typing import Any
 
 
 class ContextCompressor:
@@ -59,7 +58,7 @@ class ContextCompressor:
 
         # If we have more than keep_tool_results, clear the older ones
         if len(tool_results) > self.keep_tool_results:
-            for part in tool_results[:-self.keep_tool_results]:
+            for part in tool_results[: -self.keep_tool_results]:
                 if isinstance(part.get("content"), str) and len(part["content"]) > 100:
                     part["content"] = "[cleared]"
 
@@ -86,20 +85,20 @@ class ContextCompressor:
 
     def _extract_skill_content(self, messages: list[dict]) -> list[dict]:
         """Extract skill content that should be preserved during compression.
-        
-        Per Agent Skills specification, skill instructions are durable 
+
+        Per Agent Skills specification, skill instructions are durable
         behavioral guidance and should not be compressed mid-conversation.
-        
+
         Returns:
             List of skill content messages to preserve
         """
         skill_messages = []
         for msg in messages:
             content = msg.get("content", "")
-            if isinstance(content, str):
-                # Check for skill content markers
-                if "<skill_content" in content or "[User activated skill:" in content:
-                    skill_messages.append(msg)
+            if isinstance(content, str) and (
+                "<skill_content" in content or "[User activated skill:" in content
+            ):
+                skill_messages.append(msg)
         return skill_messages
 
     def compact(self, messages: list[dict]) -> list[dict]:
@@ -130,23 +129,30 @@ class ContextCompressor:
         compressed: list[dict] = [
             {
                 "role": "user",
-                "content": f"[Context compressed. Transcript: {transcript_path}]\n\nConversation summary:\n{summary}",
+                "content": (
+                    f"[Context compressed. Transcript: {transcript_path}]\n\n"
+                    f"Conversation summary:\n{summary}"
+                ),
             },
         ]
-        
+
         # Preserve skill content (per Agent Skills specification)
         if skill_messages:
-            compressed.append({
-                "role": "user",
-                "content": "[Preserved skill instructions:]\n\n" + 
-                          "\n\n".join(m.get("content", "") for m in skill_messages)
-            })
-        
-        compressed.append({
-            "role": "assistant",
-            "content": "Understood. Continuing with summary context.",
-        })
-        
+            compressed.append(
+                {
+                    "role": "user",
+                    "content": "[Preserved skill instructions:]\n\n"
+                    + "\n\n".join(m.get("content", "") for m in skill_messages),
+                }
+            )
+
+        compressed.append(
+            {
+                "role": "assistant",
+                "content": "Understood. Continuing with summary context.",
+            }
+        )
+
         return compressed
 
     def _generate_summary(self, messages: list[dict]) -> str:

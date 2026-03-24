@@ -6,8 +6,11 @@ from bourbon.sandbox.providers.local import LocalProvider
 from bourbon.sandbox.runtime import SandboxProvider
 
 
-class SandboxProviderNotFound(ValueError):
+class SandboxProviderNotFoundError(ValueError):
     """Raised when a sandbox provider name is not recognized."""
+
+
+SandboxProviderNotFound = SandboxProviderNotFoundError
 
 
 def select_provider(name: str) -> SandboxProvider:
@@ -18,4 +21,9 @@ def select_provider(name: str) -> SandboxProvider:
     raise SandboxProviderNotFound(f"Sandbox provider not found: {name}")
 
 
-__all__ = ["SandboxProviderNotFound", "select_provider", "LocalProvider"]
+__all__ = [
+    "SandboxProviderNotFound",
+    "SandboxProviderNotFoundError",
+    "select_provider",
+    "LocalProvider",
+]
