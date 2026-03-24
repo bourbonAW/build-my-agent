@@ -35,6 +35,16 @@
 - Sandbox 即使没有 access control 也有意义（命令被允许执行，但限制爆炸半径）
 - 研究报告指出"只做执行隔离，不做输入治理"和"只做策略检查，不做执行隔离"都是常见陷阱
 
+### 与 Input Governance 的关系
+
+本 spec 聚焦 Access Control + Sandbox Runtime。Input Governance（输入验证、prompt 注入防护）由 Bourbon 的现有机制（提示工程、工具参数 schema 校验）覆盖，不在本 sandbox 构建范围内。三层关系：
+
+- **Input Governance**：确保 LLM 输出有效的工具调用（防止间接提示注入诱导无效调用）
+- **Access Control**：检查工具调用是否被允许（"该不该做"）
+- **Sandbox Runtime**：限制被允许调用的执行环境（"在哪里做"）
+
+研究报告中的三个陷阱对应三层缺失：只做 Input Governance 不做后两层、只做 Access Control 不做隔离、只做隔离不做前两层。完整的安全体系需要三层协同。
+
 ### 工具分流
 
 ```
@@ -342,7 +352,7 @@ bwrap \
 
 - 文件系统：规则过滤，deny 的路径访问返回 EPERM
 - 网络：(deny network*) 规则级断网
-- 违规可见性：系统日志原生记录 violation
+- 违规可见性：可通过配置 SBPL trace 规则或 syslog 捕获 violation（需额外配置，非默认可见）
 - 隔离强度：中，OS 原语级别
 - 学习价值：seatbelt 是"看得到但不让碰"，与 namespace "看不到"是两种不同隔离哲学
 
@@ -362,7 +372,7 @@ bwrap \
 | 隔离机制 | mount/PID/net namespace | SBPL profile 规则过滤 |
 | 文件系统 | 新 mount namespace，只 bind 需要的 | 进程能看到完整 FS，内核拦截违规访问 |
 | 网络 | `--unshare-net` 完全断网 | `(deny network*)` 规则级断网 |
-| 违规可见性 | 需要 strace 辅助 | 系统日志原生记录 violation |
+| 违规可见性 | 需要 strace 辅助 | 需配置 SBPL trace 规则捕获 |
 | 核心哲学 | **看不到** | **看得到但不让碰** |
 
 ### 平台自动选择
