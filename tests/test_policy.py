@@ -62,6 +62,42 @@ def test_relative_file_path_is_resolved_against_workdir():
     assert decision.denied_capability is None
 
 
+def test_traversal_relative_file_path_is_denied():
+    engine = make_engine(
+        default_action=PolicyAction.DENY,
+        file_rules={"allow": ["{workdir}/**"]},
+    )
+
+    decision = engine.evaluate(
+        "read_file",
+        InferredContext(
+            capabilities=[CapabilityType.FILE_READ],
+            file_paths=["../secret.txt"],
+        ),
+    )
+
+    assert decision.action == PolicyAction.DENY
+    assert decision.denied_capability == CapabilityType.FILE_READ
+
+
+def test_traversal_absolute_file_path_is_denied():
+    engine = make_engine(
+        default_action=PolicyAction.DENY,
+        file_rules={"allow": ["{workdir}/**"]},
+    )
+
+    decision = engine.evaluate(
+        "read_file",
+        InferredContext(
+            capabilities=[CapabilityType.FILE_READ],
+            file_paths=["/workspace/../secret.txt"],
+        ),
+    )
+
+    assert decision.action == PolicyAction.DENY
+    assert decision.denied_capability == CapabilityType.FILE_READ
+
+
 def test_file_deny_outside_workspace():
     engine = make_engine(
         default_action=PolicyAction.DENY,

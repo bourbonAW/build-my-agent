@@ -27,7 +27,11 @@ _FILE_TOOL_CAPABILITIES = {
     "read_file": CapabilityType.FILE_READ,
     "write_file": CapabilityType.FILE_WRITE,
     "edit_file": CapabilityType.FILE_WRITE,
+    "rg_search": CapabilityType.FILE_READ,
+    "ast_grep_search": CapabilityType.FILE_READ,
 }
+
+_SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH = {"rg_search", "ast_grep_search"}
 
 _BASH_NET_PATTERNS = (
     "curl ",
@@ -65,6 +69,8 @@ def infer_capabilities(
         path = _extract_path(tool_input)
         if path is not None:
             file_paths.append(path)
+        elif tool_name in _SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH:
+            file_paths.append(".")
     else:
         return InferredContext(capabilities, file_paths)
 

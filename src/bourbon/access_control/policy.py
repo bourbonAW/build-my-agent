@@ -138,24 +138,31 @@ class PolicyEngine:
         return str(Path(pattern.replace("{workdir}", str(self.workdir))).expanduser())
 
     def _check_file_path(self, path: str, capability: CapabilityType) -> CapabilityDecision:
-        resolved = Path(path).expanduser()
-        if not resolved.is_absolute():
-            resolved = self.workdir / resolved
-        resolved_path = str(resolved)
+        input_path = Path(path).expanduser()
+        if input_path.is_absolute():
+            resolved_path = str(input_path.resolve(strict=False))
+        else:
+            resolved_path = str((self.workdir / input_path).resolve(strict=False))
+        if not input_path.is_absolute() and resolved_path == str(self.workdir):
+            resolved_path = f"{resolved_path}/"
 
         for pattern in self.file_mandatory_deny:
-            if fnmatch(resolved_path, self._resolve_pattern(pattern)):
+            if self._path_matches_pattern(resolved_path, pattern):
                 return CapabilityDecision(capability, PolicyAction.DENY, f"file.mandatory_deny: {pattern}")
 
         for pattern in self.file_deny:
-            if fnmatch(resolved_path, self._resolve_pattern(pattern)):
+            if self._path_matches_pattern(resolved_path, pattern):
                 return CapabilityDecision(capability, PolicyAction.DENY, f"file.deny: {pattern}")
 
         for pattern in self.file_allow:
-            if fnmatch(resolved_path, self._resolve_pattern(pattern)):
+            if self._path_matches_pattern(resolved_path, pattern):
                 return CapabilityDecision(capability, PolicyAction.ALLOW, f"file.allow: {pattern}")
 
         return CapabilityDecision(capability, self.default_action, "default")
+
+    def _path_matches_pattern(self, resolved_path: str, pattern: str) -> bool:
+        resolved_pattern = self._resolve_pattern(pattern)
+        return fnmatch(resolved_path, resolved_pattern) or fnmatch(f"{resolved_path}/", resolved_pattern)
 
     @staticmethod
     def _command_matches(command: str, pattern: str) -> bool:
