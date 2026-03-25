@@ -7,6 +7,54 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+class BoundedOutput:
+    """Capture stream output without retaining more than max_output bytes.
+
+    Used by all sandbox providers to limit subprocess output size.
+    """
+
+    def __init__(self, max_output: int) -> None:
+        self.max_output = max_output
+        self._chunks: list[bytes] = []
+        self._captured_bytes = 0
+        self._truncated = False
+
+    def append(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        if self.max_output <= 0:
+            self._chunks.append(chunk)
+            return
+
+        remaining = self.max_output - self._captured_bytes
+        if remaining > 0:
+            kept = chunk[:remaining]
+            self._chunks.append(kept)
+            self._captured_bytes += len(kept)
+
+        if len(chunk) > max(remaining, 0):
+            self._truncated = True
+
+    def render(self) -> str:
+        data = b"".join(self._chunks)
+        if self.max_output > 0 and self._truncated:
+            marker = "..."
+            if self.max_output <= len(marker):
+                return marker[: self.max_output]
+            visible_bytes = max(self.max_output - len(marker), 0)
+            prefix = data[:visible_bytes].decode("utf-8", errors="replace")
+            return f"{prefix}{marker}"
+        return data.decode("utf-8", errors="replace")
+
+
+@dataclass(slots=True)
+class Violation:
+    """A sandbox violation detected during execution."""
+
+    type: str    # "path_denied" / "net_denied" / "exec_denied" / "oom_killed" / "cap_denied"
+    detail: str  # Human-readable description
+
+
 @dataclass(slots=True)
 class ResourceUsage:
     """Resource usage reported by a sandbox execution."""
@@ -41,6 +89,7 @@ class SandboxResult:
     exit_code: int
     timed_out: bool
     resource_usage: ResourceUsage
+    violations: list[Violation] = field(default_factory=list)
 
 
 class SandboxProvider(ABC):
@@ -53,3 +102,8 @@ class SandboxProvider(ABC):
     @abstractmethod
     def get_isolation_level(self) -> str:
         """Return a human-readable description of the isolation level."""
+
+    @classmethod
+    def is_available(cls) -> bool:
+        """Check if this provider is available on the current system."""
+        return True

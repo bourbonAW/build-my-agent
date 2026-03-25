@@ -8,48 +8,12 @@ from threading import Thread
 from typing import BinaryIO
 
 from bourbon.sandbox.runtime import (
+    BoundedOutput,
     ResourceUsage,
     SandboxContext,
     SandboxProvider,
     SandboxResult,
 )
-
-
-class _BoundedOutput:
-    """Capture stream output without retaining more than max_output bytes."""
-
-    def __init__(self, max_output: int) -> None:
-        self.max_output = max_output
-        self._chunks: list[bytes] = []
-        self._captured_bytes = 0
-        self._truncated = False
-
-    def append(self, chunk: bytes) -> None:
-        if not chunk:
-            return
-        if self.max_output <= 0:
-            self._chunks.append(chunk)
-            return
-
-        remaining = self.max_output - self._captured_bytes
-        if remaining > 0:
-            kept = chunk[:remaining]
-            self._chunks.append(kept)
-            self._captured_bytes += len(kept)
-
-        if len(chunk) > max(remaining, 0):
-            self._truncated = True
-
-    def render(self) -> str:
-        data = b"".join(self._chunks)
-        if self.max_output > 0 and self._truncated:
-            marker = "..."
-            if self.max_output <= len(marker):
-                return marker[: self.max_output]
-            visible_bytes = max(self.max_output - len(marker), 0)
-            prefix = data[:visible_bytes].decode("utf-8", errors="replace")
-            return f"{prefix}{marker}"
-        return data.decode("utf-8", errors="replace")
 
 
 class LocalProvider(SandboxProvider):
@@ -68,8 +32,8 @@ class LocalProvider(SandboxProvider):
         assert process.stdout is not None
         assert process.stderr is not None
 
-        stdout_buffer = _BoundedOutput(context.max_output)
-        stderr_buffer = _BoundedOutput(context.max_output)
+        stdout_buffer = BoundedOutput(context.max_output)
+        stderr_buffer = BoundedOutput(context.max_output)
         stdout_thread = Thread(
             target=self._drain_stream,
             args=(process.stdout, stdout_buffer),
@@ -126,7 +90,7 @@ class LocalProvider(SandboxProvider):
         return "local (no OS isolation)"
 
     @staticmethod
-    def _drain_stream(stream: BinaryIO, buffer: _BoundedOutput) -> None:
+    def _drain_stream(stream: BinaryIO, buffer: BoundedOutput) -> None:
         try:
             while chunk := stream.read(4096):
                 buffer.append(chunk)
