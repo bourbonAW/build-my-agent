@@ -151,6 +151,11 @@ class Config:
                 "clean_env": True,
                 "passthrough_vars": ["PATH", "HOME", "LANG"],
             },
+            "docker": {
+                "image": "python:3.11-slim",
+                "pull_policy": "if-not-present",
+                "user": "nobody",
+            },
         }
     )
     audit: dict = field(

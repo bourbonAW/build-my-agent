@@ -62,6 +62,27 @@ class TestSelectProvider:
             select_provider("missing")
 
 
+class TestSelectProviderDocker:
+    def test_select_docker_explicit(self) -> None:
+        from bourbon.sandbox.providers.docker import DockerProvider
+
+        if not DockerProvider.is_available():
+            with pytest.raises(SandboxProviderNotFound, match="docker"):
+                select_provider("docker")
+        else:
+            provider = select_provider("docker")
+            assert isinstance(provider, DockerProvider)
+
+    def test_select_docker_with_config(self) -> None:
+        from bourbon.sandbox.providers.docker import DockerProvider
+
+        if not DockerProvider.is_available():
+            pytest.skip("Docker not available")
+
+        provider = select_provider("docker", docker_config={"image": "python:3.11-slim", "user": "nobody"})
+        assert isinstance(provider, DockerProvider)
+
+
 class TestSelectProviderPhase2:
     def test_select_bubblewrap_explicit(self) -> None:
         """Explicit 'bubblewrap' selects BwrapProvider if available."""

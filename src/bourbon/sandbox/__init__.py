@@ -41,7 +41,8 @@ class SandboxManager:
         self.provider = None
         if self.enabled:
             provider_name = config.get("provider", "auto")
-            self.provider = select_provider(provider_name)
+            docker_cfg = config.get("docker", {})
+            self.provider = select_provider(provider_name, docker_config=docker_cfg)
 
         self.credential_mgr = CredentialManager()
         self._fs = config.get("filesystem", {})

@@ -15,11 +15,15 @@ class SandboxProviderNotFoundError(ValueError):
 SandboxProviderNotFound = SandboxProviderNotFoundError
 
 
-def select_provider(name: str) -> SandboxProvider:
+def select_provider(
+    name: str,
+    docker_config: dict | None = None,
+) -> SandboxProvider:
     """Return a sandbox provider by name.
 
     Args:
-        name: Provider name: "local", "bubblewrap", "seatbelt", "auto"
+        name: Provider name: "local", "bubblewrap", "seatbelt", "docker", "auto"
+        docker_config: Optional config dict for DockerProvider (image, pull_policy, user)
     """
     normalized = name.lower()
 
@@ -40,6 +44,15 @@ def select_provider(name: str) -> SandboxProvider:
                 'seatbelt requires macOS. Set provider = "auto"'
             )
         return SeatbeltProvider()
+
+    if normalized == "docker":
+        from bourbon.sandbox.providers.docker import DockerProvider
+
+        if not DockerProvider.is_available():
+            raise SandboxProviderNotFound(
+                'docker daemon not available. Ensure Docker is running or set provider = "auto"'
+            )
+        return DockerProvider(config=docker_config)
 
     if normalized == "local":
         return LocalProvider()
