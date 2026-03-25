@@ -35,7 +35,21 @@ class Tool:
     required_capabilities: list[str] | None = None
 
     def __post_init__(self):
-        """Initialize default risk patterns based on risk level."""
+        """Initialize default risk patterns and validate capability declarations."""
+        # Validate and normalise required_capabilities at construction time so
+        # typos in @register_tool decorators are caught at import, not at runtime.
+        if self.required_capabilities is not None:
+            from bourbon.access_control.capabilities import CapabilityType
+
+            try:
+                self.required_capabilities = [
+                    CapabilityType(cap) for cap in self.required_capabilities
+                ]
+            except ValueError as exc:
+                raise ValueError(
+                    f"Tool '{self.name}' declared an unknown capability: {exc}"
+                ) from exc
+
         if self.risk_patterns is None:
             if self.risk_level == RiskLevel.HIGH:
                 # Default high-risk patterns for bash-like tools

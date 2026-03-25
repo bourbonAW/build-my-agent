@@ -32,13 +32,19 @@ class AuditLogger:
             return
 
         payload = json.dumps(event.to_dict(), sort_keys=True)
-        assert self.log_file is not None
+        if self.log_file is None:
+            raise RuntimeError(
+                "AuditLogger: log_file is None but enabled is True — "
+                "this indicates a construction bug"
+            )
         with self.log_file.open("a", encoding="utf-8") as handle:
             handle.write(payload)
             handle.write("\n")
         self.events.append(event)
 
     def query(self, **filters: object) -> list[AuditEvent]:
+        # NOTE: queries in-memory events only (current session).
+        # Cross-session queries require reading the JSONL file directly.
         if not self.enabled:
             return []
 

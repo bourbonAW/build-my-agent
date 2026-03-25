@@ -502,7 +502,9 @@ class Agent:
             return f"Unknown tool: {tool_name}"
 
         if tool_name == "bash" and getattr(self.sandbox, "enabled", False):
-            sandbox_result = self.sandbox.execute(tool_input.get("command", ""))
+            sandbox_result = self.sandbox.execute(
+                tool_input.get("command", ""), tool_name=tool_name
+            )
             output = self._format_sandbox_output(sandbox_result)
             self.audit.record(
                 AuditEvent.tool_call(
@@ -514,7 +516,10 @@ class Agent:
             return output
 
         try:
-            output = tool_handler_fn(**tool_input)
+            call_input = dict(tool_input)
+            if tool_name in {"bash", "read_file", "write_file", "edit_file"}:
+                call_input.setdefault("workdir", self.workdir)
+            output = tool_handler_fn(**call_input)
         except Exception as e:
             return f"Error executing {tool_name}: {e}"
 

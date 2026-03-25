@@ -10,10 +10,10 @@ from enum import StrEnum
 class EventType(StrEnum):
     """Types of audit events."""
 
-    POLICY_DECISION = "POLICY_DECISION"
-    SANDBOX_EXEC = "SANDBOX_EXEC"
-    SANDBOX_VIOLATION = "SANDBOX_VIOLATION"
-    TOOL_CALL = "TOOL_CALL"
+    POLICY_DECISION = "policy_decision"
+    SANDBOX_EXEC = "sandbox_exec"
+    SANDBOX_VIOLATION = "sandbox_violation"
+    TOOL_CALL = "tool_call"
 
 
 @dataclass(slots=True)

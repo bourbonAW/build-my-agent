@@ -55,6 +55,10 @@ _BASH_FILE_READ_PATTERNS = (
     "ls ",
 )
 _BASH_FILE_WRITE_PATTERNS = (
+    # NOTE: bare ">" is a substring match, so it will flag shell arithmetic like
+    # `[ $x > 0 ]` as FILE_WRITE.  This produces false positives but is acceptable
+    # for Phase 1 (over-approximation of capabilities is safe; under-approximation
+    # would be a security gap).  Phase 2 can switch to a real shell parser.
     ">",
     "tee ",
     "touch ",

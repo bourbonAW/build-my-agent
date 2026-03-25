@@ -2,8 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+
 from bourbon.access_control import AccessController
 from bourbon.access_control.policy import PolicyAction
+from bourbon.tools import RiskLevel, Tool
 
 
 def make_controller(
@@ -51,6 +54,16 @@ def test_allow_read_file_in_workspace() -> None:
     decision = make_controller().evaluate("read_file", {"path": "/workspace/src/main.py"})
 
     assert decision.action == PolicyAction.ALLOW
+
+
+def test_deny_read_file_outside_allowed_workspace() -> None:
+    decision = make_controller(default_action="allow").evaluate(
+        "read_file",
+        {"path": "/etc/passwd"},
+    )
+
+    assert decision.action == PolicyAction.DENY
+    assert decision.reason == "file_read: deny (default)"
 
 
 def test_allow_rg_search_in_workspace_with_default_deny() -> None:
@@ -155,3 +168,15 @@ def test_unknown_tool_uses_default_action() -> None:
     decision = make_controller().evaluate("some_mcp_tool", {"query": "hello"})
 
     assert decision.action == PolicyAction.ALLOW
+
+
+def test_tool_required_capabilities_rejects_invalid_value() -> None:
+    with pytest.raises(ValueError, match="invalid_cap_xyz"):
+        Tool(
+            name="bad_tool",
+            description="a test tool",
+            input_schema={},
+            handler=lambda: "ok",
+            risk_level=RiskLevel.LOW,
+            required_capabilities=["invalid_cap_xyz"],
+        )

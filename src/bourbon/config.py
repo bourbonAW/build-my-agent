@@ -118,7 +118,16 @@ class Config:
                 "mandatory_deny": ["~/.ssh/**"],
             },
             "command": {
-                "deny_patterns": ["rm -rf /", "sudo *"],
+                # Keep in sync with run_bash()'s `dangerous` list in tools/base.py,
+                # which acts as a safety-net fallback when sandbox is disabled.
+                "deny_patterns": [
+                    "rm -rf /",
+                    "sudo *",
+                    "shutdown",
+                    "reboot",
+                    "> /dev/sda",
+                    "mkfs.",
+                ],
                 "need_approval_patterns": ["pip install *", "apt *"],
             },
         }

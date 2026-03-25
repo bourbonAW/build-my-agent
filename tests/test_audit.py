@@ -21,7 +21,7 @@ def test_policy_decision_event_to_dict_flattens_extra():
     payload = event.to_dict()
 
     assert event.event_type == EventType.POLICY_DECISION
-    assert payload["event_type"] == "POLICY_DECISION"
+    assert payload["event_type"] == "policy_decision"
     assert payload["tool_name"] == "bash"
     assert payload["tool_input_summary"] == "rm -rf /"
     assert payload["decision"] == "deny"
@@ -51,7 +51,7 @@ def test_sandbox_exec_event_classmethod_sets_fields():
     payload = event.to_dict()
 
     assert event.event_type == EventType.SANDBOX_EXEC
-    assert payload["event_type"] == "SANDBOX_EXEC"
+    assert payload["event_type"] == "sandbox_exec"
     assert payload["command"] == "echo hello"
     assert payload["exit_code"] == 0
 
@@ -66,7 +66,7 @@ def test_tool_call_event_classmethod_sets_fields():
     payload = event.to_dict()
 
     assert event.event_type == EventType.TOOL_CALL
-    assert payload["event_type"] == "TOOL_CALL"
+    assert payload["event_type"] == "tool_call"
     assert payload["arguments"] == {"query": "main.py"}
 
 
@@ -80,7 +80,7 @@ def test_sandbox_violation_event_classmethod_sets_fields():
     payload = event.to_dict()
 
     assert event.event_type == EventType.SANDBOX_VIOLATION
-    assert payload["event_type"] == "SANDBOX_VIOLATION"
+    assert payload["event_type"] == "sandbox_violation"
     assert payload["violation"] == "path outside workspace"
 
 
@@ -121,9 +121,9 @@ def test_logger_record_query_and_jsonl(tmp_path: Path):
     first_payload = json.loads(lines[0])
     second_payload = json.loads(lines[1])
 
-    assert first_payload["event_type"] == "POLICY_DECISION"
+    assert first_payload["event_type"] == "policy_decision"
     assert first_payload["tool_name"] == "bash"
-    assert second_payload["event_type"] == "SANDBOX_EXEC"
+    assert second_payload["event_type"] == "sandbox_exec"
     assert second_payload["command"] == "echo hello"
 
 
@@ -176,6 +176,15 @@ def test_query_returns_isolated_list(tmp_path: Path):
 
     assert logger.events == [event]
     assert logger.query() == [event]
+
+
+def test_record_raises_runtime_error_when_log_file_is_none(tmp_path: Path):
+    logger = AuditLogger(log_dir=tmp_path)
+    logger.log_file = None  # force the invalid state
+    event = AuditEvent.tool_call(tool_name="bash", tool_input_summary="echo hi")
+
+    with pytest.raises(RuntimeError, match="log_file is None"):
+        logger.record(event)
 
 
 def test_disabled_logger_does_nothing(tmp_path: Path):

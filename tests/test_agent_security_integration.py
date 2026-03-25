@@ -193,3 +193,17 @@ def test_bash_uses_sandbox_when_enabled(monkeypatch) -> None:
     assert agent.sandbox.execute.call_count == 1
     event_types = [call.args[0].event_type for call in agent.audit.record.call_args_list]
     assert event_types == [EventType.POLICY_DECISION, EventType.TOOL_CALL]
+
+
+def test_read_file_tool_uses_agent_workdir(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("hello from workdir")
+
+    agent = make_agent_stub()
+    agent.workdir = tmp_path
+    agent.sandbox = MagicMock(enabled=False)
+    agent.access_controller.evaluate.return_value = allow_decision()
+
+    output = agent._execute_regular_tool("read_file", {"path": "note.txt"})
+
+    assert output == "hello from workdir"

@@ -128,6 +128,12 @@ class PolicyEngine:
                 else:
                     decisions.append(CapabilityDecision(capability, self.default_action, "default"))
             elif capability == CapabilityType.NET:
+                # NET is always-ALLOW at the access-control layer.
+                # Rationale: network policy is enforced by the sandbox provider
+                # (LocalProvider: pattern-based; Bubblewrap/Seatbelt: kernel-level).
+                # Phase 1 has no TOML-level net deny rule.  If you need to block all
+                # outbound traffic regardless of command patterns, set
+                # sandbox.network.enabled = false in config.toml instead.
                 decisions.append(
                     CapabilityDecision(capability, PolicyAction.ALLOW, "net deferred to sandbox")
                 )
@@ -190,6 +196,9 @@ class PolicyEngine:
                     PolicyAction.ALLOW,
                     f"file.allow: {pattern}",
                 )
+
+        if self.file_allow:
+            return CapabilityDecision(capability, PolicyAction.DENY, "default")
 
         return CapabilityDecision(capability, self.default_action, "default")
 

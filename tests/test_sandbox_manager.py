@@ -139,3 +139,46 @@ class TestSandboxManagerEnabled:
         assert env_vars["CUSTOM_FLAG"] == "enabled"
         assert "PATH" in env_vars
         assert "OPENAI_API_KEY" not in env_vars
+
+    def test_execute_tool_name_is_reflected_in_audit_event(
+        self,
+        mock_audit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mgr = SandboxManager(
+            config={"enabled": True, "provider": "local"},
+            workdir=tmp_path,
+            audit=mock_audit,
+        )
+        mgr.provider = RecordingProvider()
+
+        mgr.execute("echo hello", tool_name="code_execute")
+
+        mock_audit.record.assert_called_once()
+        event = mock_audit.record.call_args.args[0]
+        assert event.tool_name == "code_execute"
+
+    def test_execute_blocks_network_commands_when_network_disabled(
+        self,
+        mock_audit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mgr = SandboxManager(
+            config={
+                "enabled": True,
+                "provider": "local",
+                "network": {"enabled": False, "allow_domains": []},
+            },
+            workdir=tmp_path,
+            audit=mock_audit,
+        )
+        provider = RecordingProvider()
+        mgr.provider = provider
+
+        result = mgr.execute("curl https://example.com")
+
+        assert result.exit_code != 0
+        assert result.stdout == ""
+        assert "network" in result.stderr.lower()
+        assert provider.calls == []
+        mock_audit.record.assert_called_once()

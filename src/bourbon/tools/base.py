@@ -50,7 +50,12 @@ def run_bash(
     """
     cwd = workdir or Path.cwd()
 
-    # Security checks
+    # Safety-net for the sandbox-DISABLED path only.
+    # When Agent.sandbox.enabled is True, bash is routed through SandboxManager and
+    # never reaches this function, so this list is not the primary security gate.
+    # When sandbox is disabled (CI, explicit opt-out), these patterns act as a last-
+    # resort hard block.  Keep this list in sync with config.py's default deny_patterns
+    # so the two mechanisms agree when sandbox is off.
     dangerous = ["rm -rf /", "sudo ", "shutdown", "reboot", "> /dev/sda", "mkfs."]
     for d in dangerous:
         if d in command:
@@ -218,9 +223,9 @@ def edit_file(
     risk_level=RiskLevel.HIGH,
     required_capabilities=["exec"],
 )
-def bash_tool(command: str) -> str:
+def bash_tool(command: str, workdir: Path | None = None) -> str:
     """Tool handler for bash."""
-    return run_bash(command)
+    return run_bash(command, workdir=workdir)
 
 
 @register_tool(
@@ -243,9 +248,13 @@ def bash_tool(command: str) -> str:
     risk_level=RiskLevel.LOW,
     required_capabilities=["file_read"],
 )
-def read_file_tool(path: str, limit: int | None = None) -> str:
+def read_file_tool(
+    path: str,
+    limit: int | None = None,
+    workdir: Path | None = None,
+) -> str:
     """Tool handler for read_file."""
-    return read_file(path, limit=limit)
+    return read_file(path, workdir=workdir, limit=limit)
 
 
 @register_tool(
@@ -268,9 +277,13 @@ def read_file_tool(path: str, limit: int | None = None) -> str:
     risk_level=RiskLevel.MEDIUM,
     required_capabilities=["file_write"],
 )
-def write_file_tool(path: str, content: str) -> str:
+def write_file_tool(
+    path: str,
+    content: str,
+    workdir: Path | None = None,
+) -> str:
     """Tool handler for write_file."""
-    return write_file(path, content)
+    return write_file(path, content, workdir=workdir)
 
 
 @register_tool(
@@ -297,6 +310,11 @@ def write_file_tool(path: str, content: str) -> str:
     risk_level=RiskLevel.MEDIUM,
     required_capabilities=["file_write"],
 )
-def edit_file_tool(path: str, old_text: str, new_text: str) -> str:
+def edit_file_tool(
+    path: str,
+    old_text: str,
+    new_text: str,
+    workdir: Path | None = None,
+) -> str:
     """Tool handler for edit_file."""
-    return edit_file(path, old_text, new_text)
+    return edit_file(path, old_text, new_text, workdir=workdir)
