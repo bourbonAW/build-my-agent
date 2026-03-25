@@ -163,22 +163,25 @@ class TestSandboxManagerEnabled:
         mock_audit: MagicMock,
         tmp_path: Path,
     ) -> None:
+        # Network keyword scan only triggers for LocalProvider (real providers
+        # use OS-level isolation and don't need the keyword heuristic).
+        from bourbon.sandbox.providers.local import LocalProvider
+
         mgr = SandboxManager(
             config={
                 "enabled": True,
                 "provider": "local",
                 "network": {"enabled": False, "allow_domains": []},
+                "credentials": {"clean_env": False, "passthrough_vars": ["PATH"]},
             },
             workdir=tmp_path,
             audit=mock_audit,
         )
-        provider = RecordingProvider()
-        mgr.provider = provider
+        assert isinstance(mgr.provider, LocalProvider)
 
         result = mgr.execute("curl https://example.com")
 
         assert result.exit_code != 0
         assert result.stdout == ""
         assert "network" in result.stderr.lower()
-        assert provider.calls == []
         mock_audit.record.assert_called_once()

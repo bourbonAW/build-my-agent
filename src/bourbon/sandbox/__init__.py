@@ -9,6 +9,7 @@ from bourbon.audit import AuditLogger
 from bourbon.audit.events import AuditEvent
 from bourbon.sandbox.credential import CredentialManager
 from bourbon.sandbox.providers import SandboxProviderNotFound, select_provider
+from bourbon.sandbox.providers.local import LocalProvider
 from bourbon.sandbox.runtime import ResourceUsage, SandboxContext, SandboxResult
 
 __all__ = [
@@ -81,7 +82,11 @@ class SandboxManager:
             env_vars=env_vars,
         )
 
-        if not context.network_enabled and self._contains_network_activity(command):
+        if (
+            not context.network_enabled
+            and isinstance(self.provider, LocalProvider)
+            and self._contains_network_activity(command)
+        ):
             self.audit.record(
                 AuditEvent.sandbox_violation(
                     tool_name=tool_name,
@@ -102,6 +107,14 @@ class SandboxManager:
             )
 
         result = self.provider.execute(command, context)
+        for v in result.violations:
+            self.audit.record(
+                AuditEvent.sandbox_violation(
+                    tool_name=tool_name,
+                    tool_input_summary=command[:200],
+                    reason=f"{v.type}: {v.detail}",
+                )
+            )
         self.audit.record(
             AuditEvent.sandbox_exec(
                 tool_name=tool_name,

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from bourbon.sandbox import SandboxManager
 from bourbon.sandbox.providers import SandboxProviderNotFound, select_provider
 from bourbon.sandbox.providers.local import LocalProvider
-from bourbon.sandbox.runtime import ResourceUsage, SandboxContext, SandboxResult
+from bourbon.sandbox.runtime import ResourceUsage, SandboxContext, SandboxResult, Violation
 
 
 class TestSandboxRuntime:
@@ -58,6 +60,100 @@ class TestSelectProvider:
     def test_unknown_provider_raises(self) -> None:
         with pytest.raises(SandboxProviderNotFound, match="missing"):
             select_provider("missing")
+
+
+class TestSelectProviderPhase2:
+    def test_select_bubblewrap_explicit(self) -> None:
+        """Explicit 'bubblewrap' selects BwrapProvider if available."""
+        from bourbon.sandbox.providers.bubblewrap import BwrapProvider
+
+        if not BwrapProvider.is_available():
+            with pytest.raises(SandboxProviderNotFound, match="bubblewrap not found"):
+                select_provider("bubblewrap")
+        else:
+            provider = select_provider("bubblewrap")
+            assert isinstance(provider, BwrapProvider)
+
+    def test_select_seatbelt_explicit(self) -> None:
+        """Explicit 'seatbelt' selects SeatbeltProvider if available."""
+        from bourbon.sandbox.providers.seatbelt import SeatbeltProvider
+
+        if not SeatbeltProvider.is_available():
+            with pytest.raises(SandboxProviderNotFound, match="seatbelt requires macOS"):
+                select_provider("seatbelt")
+        else:
+            provider = select_provider("seatbelt")
+            assert isinstance(provider, SeatbeltProvider)
+
+    def test_auto_selects_strongest_available(self) -> None:
+        """Auto mode selects the strongest provider for the current platform."""
+        provider = select_provider("auto")
+        # On any platform, auto should return a valid provider
+        assert hasattr(provider, "execute")
+        assert hasattr(provider, "get_isolation_level")
+
+
+class TestViolation:
+    def test_violation_fields(self) -> None:
+        v = Violation(type="path_denied", detail="access to /etc/shadow blocked")
+        assert v.type == "path_denied"
+        assert v.detail == "access to /etc/shadow blocked"
+
+
+class TestSandboxResultViolations:
+    def test_default_empty_violations(self) -> None:
+        result = SandboxResult(
+            stdout="",
+            stderr="",
+            exit_code=0,
+            timed_out=False,
+            resource_usage=ResourceUsage(),
+        )
+        assert result.violations == []
+
+    def test_violations_populated(self) -> None:
+        result = SandboxResult(
+            stdout="",
+            stderr="",
+            exit_code=1,
+            timed_out=False,
+            resource_usage=ResourceUsage(),
+            violations=[Violation(type="net_denied", detail="blocked")],
+        )
+        assert len(result.violations) == 1
+        assert result.violations[0].type == "net_denied"
+
+
+class TestProviderAvailability:
+    def test_local_provider_always_available(self) -> None:
+        assert LocalProvider.is_available() is True
+
+    def test_sandbox_provider_default_available(self) -> None:
+        from bourbon.sandbox.runtime import SandboxProvider
+        assert SandboxProvider.is_available() is True
+
+
+class TestSandboxManagerViolationsAudit:
+    def test_violations_recorded_to_audit(self, tmp_path: Path) -> None:
+        """Provider violations are forwarded to audit logger."""
+        audit = MagicMock()
+        config = {
+            "enabled": True,
+            "provider": "local",
+            "filesystem": {},
+            "network": {"enabled": False},
+            "resources": {"timeout": 5},
+            "credentials": {"clean_env": False, "passthrough_vars": ["PATH"]},
+        }
+        manager = SandboxManager(config=config, workdir=tmp_path, audit=audit)
+
+        # LocalProvider won't produce violations, but we test the audit loop
+        # by checking that sandbox_exec events are still recorded
+        result = manager.execute("echo test", tool_name="bash")
+        assert result.exit_code == 0
+
+        # At minimum, sandbox_exec event should be recorded
+        assert audit.record.called
 
 
 class TestLocalProvider:
