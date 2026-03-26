@@ -153,7 +153,7 @@ workdir/
 
 #### 2.2.2 Evaluator Skill 系统
 
-Evaluator Skills 存放在 `~/.bourbon/skills/evaluators/`：
+Evaluator Skills 存放在 `~/.bourbon/skills/evaluators/`，由 Evaluator Agent 按需调用：
 
 ```
 ~/.bourbon/skills/evaluators/
@@ -167,6 +167,25 @@ Evaluator Skills 存放在 `~/.bourbon/skills/evaluators/`：
 │       └── report-schema.json
 └── security-evaluator/
     └── SKILL.md           # 可选：安全合规验证
+```
+
+**调用机制:**
+
+1. **用例只声明关注维度** - 通过 `focus` 字段指定（如 `["correctness", "quality"]`）
+2. **Evaluator Agent 内部协调** - 单个 Agent 进程根据 focus 自动发现并调用对应 Skills
+3. **维度到 Skill 的映射** - 内置默认映射（如 `correctness` → `correctness-evaluator`）
+4. **可扩展** - 未来支持自定义映射（如 `"custom_dim": "my-custom-evaluator"`）
+
+**示例流程:**
+```
+用例配置: focus=["correctness", "quality"]
+         ↓
+Evaluator Agent 启动
+         ↓
+内部调用: skill("correctness-evaluator") → 评估 correctness 维度
+         skill("quality-evaluator") → 评估 quality 维度  
+         ↓
+聚合结果 → 生成 Validation Report
 ```
 
 **SKILL.md 示例 (correctness-evaluator):**
@@ -218,10 +237,12 @@ Return a JSON object:
 
 **工作流程:**
 1. 读取 `artifact/` 目录下的所有文件
-2. 根据配置加载指定的 Evaluator Skills
-3. 依次执行每个 Skill 的验证逻辑
-4. 聚合多维度结果，生成最终报告
+2. 解析用例的 `focus` 字段（如 `["correctness", "quality"]`）
+3. **单个 Agent 内部**按需调用对应 Evaluator Skills
+4. 聚合各维度结果，生成最终报告
 5. 写入 `validation/report.json`
+
+**关键设计:** Evaluator 作为单一 Agent 运行，而非为每个 skill 启动独立进程。Agent 使用 `skill()` 工具动态加载验证逻辑，保持架构简洁。
 
 #### 2.2.4 Validation Report（详细分析）
 
@@ -243,7 +264,8 @@ Return a JSON object:
 {
   "version": "1.0",
   "timestamp": "2026-03-26T21:01:00Z",
-  "evaluator_skills": ["correctness-evaluator", "quality-evaluator"],
+  "evaluator_focus": ["correctness", "quality"],
+  "skills_used": ["correctness-evaluator", "quality-evaluator"],
   "dimensions": [
     {
       "name": "correctness",
@@ -302,9 +324,10 @@ Return a JSON object:
 #### 2.2.6 其他设计决策
 
 **并发执行 (Phase 1):**
-- Phase 1 采用顺序执行各 Evaluator Skill
-- 原因：简化实现，避免资源竞争，便于调试
-- 未来可扩展为并行执行（各 Skill 独立读取 Artifact，无状态冲突）
+- Phase 1 采用**单个 Evaluator Agent** 顺序调用各 Skills
+- 原因：简化架构，减少进程开销，便于调试
+- Agent 内部通过 `skill()` 工具按需加载验证逻辑
+- 未来可优化为 Agent 内部并行调用 Skills（异步执行，统一聚合）
 
 **Artifact 生命周期:**
 - 默认：验证完成后立即清理
@@ -368,7 +391,7 @@ def run_single(self, case: dict, run_number: int = 1) -> EvalResult:
   "prompt": "Extract the sorting logic into a separate function",
   "evaluator": {
     "enabled": true,
-    "skills": ["correctness-evaluator", "quality-evaluator"],
+    "focus": ["correctness", "quality"],
     "threshold": 8.0,
     "timeout": 120,
     "dimensions": {
@@ -405,6 +428,14 @@ patterns = [".git/", "node_modules/", "__pycache__/", "*.pyc", ".venv/"]
 [evaluator.default_dimensions]
 correctness = { weight = 0.7, threshold = 8.0 }
 quality = { weight = 0.3, threshold = 7.0 }
+
+[evaluator.dimension_to_skill]
+# 维度到 Skill 的默认映射
+correctness = "correctness-evaluator"
+quality = "quality-evaluator"
+security = "security-evaluator"
+# 可扩展自定义映射
+# custom_dim = "my-custom-evaluator"
 ```
 
 ---
@@ -449,9 +480,9 @@ quality = { weight = 0.3, threshold = 7.0 }
 
 ```
 [EVALUATOR] Starting validation for case=code-refactor-001
-[EVALUATOR] Loading skills: ['correctness-evaluator', 'quality-evaluator']
-[EVALUATOR] Running correctness-evaluator... score=8.5, threshold=9.0, passed=false
-[EVALUATOR] Running quality-evaluator... score=8.0, threshold=7.0, passed=true
+[EVALUATOR] Focus dimensions: ['correctness', 'quality']
+[EVALUATOR] Loading skill: correctness-evaluator... score=8.5, threshold=9.0, passed=false
+[EVALUATOR] Loading skill: quality-evaluator... score=8.0, threshold=7.0, passed=true
 [EVALUATOR] Overall: score=8.3, threshold=8.0, passed=true, duration=2345ms
 [EVALUATOR] Validation completed
 ```
@@ -464,7 +495,8 @@ Validation Report 自动包含遥测信息：
 {
   "telemetry": {
     "evaluator_version": "1.0.0",
-    "skills_used": ["correctness-evaluator@1.0", "quality-evaluator@1.0"],
+    "focus_dimensions": ["correctness", "quality"],
+    "skills_invoked": ["correctness-evaluator@1.0", "quality-evaluator@1.0"],
     "duration_ms": 2345,
     "token_usage": {"input": 2000, "output": 500}
   }
@@ -498,7 +530,7 @@ Validation Report 自动包含遥测信息：
   "prompt": "Create a simple function that...",
   "evaluator": {
     "enabled": true,
-    "skills": ["correctness-evaluator"],
+    "focus": ["correctness"],
     "threshold": 9.0
   }
 }
@@ -527,7 +559,7 @@ Validation Report 自动包含遥测信息：
 
 ## 8. 附录
 
-### 7.1 文件结构
+### 8.1 文件结构
 
 ```
 evals/
@@ -546,7 +578,7 @@ evals/
     └── example.json       # 示例用例配置
 ```
 
-### 7.2 参考实现
+### 8.2 参考实现
 
 - Harness Design Philosophy: `docs/harness-design-philosophy.md`
 - 现有 Runner: `evals/runner.py`
