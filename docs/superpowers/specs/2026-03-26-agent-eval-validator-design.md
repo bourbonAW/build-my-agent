@@ -19,23 +19,36 @@
 
 ### 1.2 设计目标
 
-基于 Harness 设计哲学（生成与评估分离、文件化交接、可量化维度），为 Eval 框架引入独立的验证层：
+基于 Harness 设计哲学（生成与评估分离、文件化交接、可量化维度），为 Eval 框架引入独立的验证层。
 
+**分阶段实现：**
+- **Phase 1 (Plumbing Only)**: 搭建完整的基础设施框架（Artifact、Report、Evaluator Agent），使用模拟技能响应验证 pipeline 工作
+- **Phase 2 (Real Skills)**: 接入真实的 Bourbon Agent skill 调用，实现真正的 LLM-based 评估
+
+本设计文档涵盖两阶段的完整架构，但 Phase 1 仅实现基础设施（带模拟响应）。
+
+**Phase 1 目标：**
 1. **生成与评估分离** - Evaluator Agent 作为独立进程验证 Generator Agent 的输出
 2. **文件化交接** - 通过结构化的 Output Artifact 传递状态
 3. **可量化维度** - 将"好"拆解为可测量的子指标
-4. **Skill 化扩展** - 验证逻辑作为可插拔的 Evaluator Skills
+4. **Skill 化扩展** - 验证逻辑作为可插拔的 Evaluator Skills（Phase 1 模拟，Phase 2 真实）
 5. **硬失败策略** - 验证不通过则测试用例失败
+6. **项目资产** - Evaluator skills 作为项目级 hermetic assets，版本控制并保证 CI 可复现性
 
 ### 1.3 非目标（边界）
 
-以下特性**不在**本设计范围内：
+以下特性**不在 Phase 1 范围内**：
 
-1. **不替代现有断言** - 传统断言继续保留，Evaluator 验证作为增强层
-2. **不实现实时验证** - 仅支持事后验证（Agent 执行完成后），不涉及执行过程中的干预
-3. **不支持非 LLM Evaluator** - Phase 1 仅支持基于 LLM 的 Evaluator Agent，暂不支持规则引擎或其他评估方式
+1. **真实 Skill 调用** - Phase 1 使用模拟响应，Phase 2 实现真正的 `skill()` 工具调用
+2. **不替代现有断言** - 传统断言继续保留，Evaluator 验证作为增强层
+3. **不实现实时验证** - 仅支持事后验证（Agent 执行完成后），不涉及执行过程中的干预
 4. **不做跨用例分析** - 单次验证仅针对单个用例的输出，不做历史趋势分析或横向对比
 5. **不修改 Agent 核心逻辑** - 验证层是 Eval 框架的增强，不改动 Bourbon Agent 的执行逻辑
+
+**Phase 2 规划：**
+- 真实的 Evaluator skill 调用（通过 Bourbon Agent framework）
+- LLM-based 评分和推理
+- 可选：规则引擎作为 fast-path 评估
 
 ---
 
@@ -153,42 +166,42 @@ workdir/
 
 #### 2.2.2 Evaluator Skill 系统
 
-Evaluator Skills 是普通的 Bourbon Skills，使用 `eval-` 前缀命名，存放在标准 skill 目录：
+**Hermetic 项目资产策略：**
+
+Evaluator Skills 是项目级资产（与代码库版本同步），而非用户级全局状态：
 
 ```
-~/.bourbon/skills/
-├── eval-correctness/      # 验证功能正确性的 evaluator skill
-│   └── SKILL.md
-├── eval-quality/          # 验证代码质量的 evaluator skill  
-│   └── SKILL.md
-└── eval-security/         # 可选：安全合规验证
-    └── SKILL.md
+evals/validator/skills/        # 项目级（版本控制）
+├── eval-correctness/
+│   └── SKILL.md              # 验证功能正确性
+├── eval-quality/
+│   └── SKILL.md              # 验证代码质量
+└── eval-security/
+    └── SKILL.md              # 可选：安全合规
+         ↓ 复制/挂载到
+~/.bourbon/skills/            # 运行时（CI/本地）
+├── eval-correctness/
+├── eval-quality/
+└── eval-security/
 ```
+
+**为什么项目资产？**
+- **CI 可复现性**: 相同代码版本始终使用相同验证逻辑
+- **版本同步**: Eval skill 更新与 eval case 更新同步 PR
+- **环境无关**: 不依赖用户是否正确安装/更新全局 skills
+
+**运行时机制:**
+1. 项目 skills 在启动时复制/挂载到 `~/.bourbon/skills/`（或临时目录）
+2. SkillScanner 从标准位置发现（与常规 skills 统一）
+3. 用户级同名 skills 被项目级覆盖（hermetic 优先）
+
+**Phase 1 vs Phase 2:**
+- **Phase 1**: Skills 仅作为文档/合约存在，Evaluator 返回模拟响应
+- **Phase 2**: Evaluator Agent 通过 `skill("eval-correctness")` 真实调用
 
 **命名约定:**
-- Evaluator skills 使用 `eval-{dimension}` 命名格式
-- 这是普通 skills，遵循相同的发现和加载机制
-- 避免使用子目录（`evaluators/`），因为 SkillScanner 不会递归扫描
-
-**调用机制:**
-
-1. **用例声明关注维度** - 通过 `focus` 字段指定（如 `["correctness", "quality"]`）
-2. **维度到 Skill 映射** - 系统自动映射 `correctness` → `eval-correctness`
-3. **Evaluator Agent 调用** - 单个 Agent 进程使用 `skill("eval-correctness")` 调用
-4. **Skill 执行验证** - 每个 skill 返回该维度的评分和详细分析
-5. **聚合结果** - Evaluator Agent 聚合各维度结果生成 Validation Report
-
-**示例流程:**
-```
-用例配置: focus=["correctness", "quality"]
-         ↓
-Evaluator Agent 启动
-         ↓
-调用: skill("eval-correctness") → 返回 correctness 维度评分
-      skill("eval-quality") → 返回 quality 维度评分  
-         ↓
-加权聚合 → 生成 Validation Report
-```
+- Evaluator skills 使用 `eval-{dimension}` 格式（如 `eval-correctness`）
+- 避免子目录结构，SkillScanner 只扫描直接子目录
 
 **SKILL.md 示例 (correctness-evaluator):**
 ```yaml

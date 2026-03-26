@@ -2,9 +2,21 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement an independent validation layer for Bourbon Eval framework using Generator-Evaluator separation architecture.
+**Goal:** Implement Phase 1 (Plumbing Only) of the independent validation layer for Bourbon Eval framework.
 
-**Architecture:** Single Evaluator Agent process that internally invokes evaluator skills via `skill()` tool. Phase 1 uses simulated skill responses; Phase 2 will implement actual skill invocation via Bourbon Agent framework. Output Artifacts pass state between Generator (Runner) and Evaluator via filesystem.
+**Phase 1 Scope:** 
+- Complete infrastructure framework (Artifact, Report, Evaluator Agent subprocess)
+- Hermetic project-level evaluator skills (version controlled)
+- Simulated skill responses for pipeline validation
+
+**Phase 2 (Future):** Replace simulation with real `skill()` tool invocation via Bourbon Agent framework.
+
+**Architecture:** Single Evaluator Agent subprocess that will (Phase 2) invoke evaluator skills via `skill()` tool. Output Artifacts pass state via filesystem.
+
+**Hermetic Skills Strategy:**
+- Skills live in `evals/validator/skills/` (project assets, version controlled)
+- At runtime, copied to `~/.bourbon/skills/` for discovery
+- Guarantees CI reproducibility and version consistency
 
 **Tech Stack:** Python 3.8+, subprocess, existing Bourbon Agent framework, Skill system
 
@@ -1391,6 +1403,24 @@ git commit -m "feat(eval): integrate validation into EvalRunner
 
 ## Task 5: Create Evaluator Skills
 
+**Design Principle: Hermetic Project Assets**
+
+Evaluator skills are **project-level assets** (version controlled in repo), NOT user-installed global state. This ensures:
+- **CI Reproducibility**: Same code version = same validation logic
+- **Version Consistency**: Skill updates are code-reviewed with eval cases
+- **No Environment Dependency**: Works on fresh CI runners without manual setup
+
+**Runtime Flow:**
+```
+Build/CI Time:                      Runtime:
+evals/validator/skills/            ~/.bourbon/skills/
+├── eval-correctness/    ────────>  ├── eval-correctness/  (copied/mounted)
+└── eval-quality/        ────────>  └── eval-quality/
+     (version controlled)                 (discovered by SkillScanner)
+```
+
+**Phase 1 Note:** Skills exist as documentation/contracts only. Evaluator returns simulated responses (infrastructure validation).
+
 **Files:**
 - Create: `evals/validator/skills/eval-correctness/SKILL.md`
 - Create: `evals/validator/skills/eval-quality/SKILL.md`
@@ -1698,73 +1728,202 @@ git commit -m "docs(eval): add validation configuration and documentation
 **Files:**
 - Create: `evals/validator/install_skills.py`
 
+**Purpose:** Implement hermetic skill deployment - copy project-level skills to user directory for runtime discovery.
+
+**Why not use directly from project?**
+- Bourbon's SkillScanner discovers from standard locations only
+- Copying ensures consistent discovery behavior
+- Project skills override user skills (hermetic > global)
+
 - [ ] **Step 1: Create skills installation script**
 
 ```python
 # evals/validator/install_skills.py
-"""Install built-in evaluator skills to user's skill directory."""
+"""Hermetic evaluator skill installation.
+
+Copies project-level evaluator skills to user's skill directory for runtime discovery.
+This ensures CI reproducibility while maintaining compatibility with Bourbon's SkillScanner.
+
+Usage:
+    python -m evals.validator.install_skills  # Install all
+    
+Design:
+    - Source: evals/validator/skills/eval-*/ (project assets, version controlled)
+    - Target: ~/.bourbon/skills/eval-*/ (runtime discovery location)
+    - Behavior: Project skills overwrite user skills (hermetic priority)
+"""
 
 import shutil
 from pathlib import Path
 
 
-def install_skills():
-    """Copy built-in evaluator skills to ~/.bourbon/skills/evaluators/."""
-    builtin_dir = Path(__file__).parent / "skills"
-    user_dir = Path.home() / ".bourbon" / "skills" / "evaluators"
+# Note: Skills go directly to ~/.bourbon/skills/, NOT a subdirectory
+# SkillScanner only scans direct children of the skills directory
+BUILTIN_DIR = Path(__file__).parent / "skills"
+USER_DIR = Path.home() / ".bourbon" / "skills"
+
+
+def install_skills(force: bool = False):
+    """Copy project evaluator skills to user directory.
     
-    user_dir.mkdir(parents=True, exist_ok=True)
+    Args:
+        force: If True, overwrite existing skills. Use for updates.
+    """
+    USER_DIR.mkdir(parents=True, exist_ok=True)
     
-    for skill_dir in builtin_dir.iterdir():
-        if skill_dir.is_dir():
-            target = user_dir / skill_dir.name
-            if target.exists():
-                print(f"Skipping {skill_dir.name} (already exists)")
-            else:
+    installed = []
+    skipped = []
+    
+    for skill_dir in BUILTIN_DIR.iterdir():
+        if not skill_dir.is_dir():
+            continue
+        if not skill_dir.name.startswith("eval-"):
+            continue
+            
+        target = USER_DIR / skill_dir.name
+        
+        if target.exists():
+            if force:
+                shutil.rmtree(target)
                 shutil.copytree(skill_dir, target)
-                print(f"Installed {skill_dir.name}")
+                installed.append(skill_dir.name)
+            else:
+                skipped.append(skill_dir.name)
+        else:
+            shutil.copytree(skill_dir, target)
+            installed.append(skill_dir.name)
     
-    print(f"Skills installed to {user_dir}")
+    print(f"Skills installed: {len(installed)}")
+    for name in installed:
+        print(f"  ✓ {name}")
+    
+    if skipped:
+        print(f"Skills skipped (use --force to update): {len(skipped)}")
+        for name in skipped:
+            print(f"  • {name}")
+    
+    print(f"\nLocation: {USER_DIR}")
+    return installed
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Install hermetic evaluator skills")
+    parser.add_argument("--force", action="store_true", 
+                       help="Overwrite existing skills")
+    args = parser.parse_args()
+    
+    install_skills(force=args.force)
 
 
 if __name__ == "__main__":
-    install_skills()
+    main()
 ```
 
 - [ ] **Step 2: Test installation**
 
 ```bash
+# First install
 python evals/validator/install_skills.py
 ```
 Expected output:
 ```
-Installed correctness-evaluator
-Installed quality-evaluator
-Skills installed to /Users/.../.bourbon/skills/evaluators
+Skills installed: 2
+  ✓ eval-correctness
+  ✓ eval-quality
+
+Location: /Users/.../.bourbon/skills
 ```
 
-- [ ] **Step 3: Commit**
+```bash
+# Second install (should skip)
+python evals/validator/install_skills.py
+```
+Expected output:
+```
+Skills installed: 0
+Skills skipped (use --force to update): 2
+  • eval-correctness
+  • eval-quality
+
+Location: /Users/.../.bourbon/skills
+```
+
+- [ ] **Step 3: Add to EvalRunner initialization**
+
+Modify `EvalRunner.__init__` to auto-install skills on first run:
+
+```python
+# evals/runner.py - in EvalRunner.__init__
+
+def __init__(self, ...):
+    # ... existing init code ...
+    
+    # Auto-install hermetic evaluator skills
+    self._ensure_evaluator_skills()
+
+def _ensure_evaluator_skills(self):
+    """Ensure project evaluator skills are installed for discovery."""
+    try:
+        from evals.validator.install_skills import install_skills
+        # Silent install - only installs if missing
+        install_skills(force=False)
+    except Exception:
+        # Non-fatal: skills may already be installed or not needed
+        pass
+```
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add evals/validator/install_skills.py
-git commit -m "feat(eval): add skill installation script
+git add evals/validator/install_skills.py evals/runner.py
+git commit -m "feat(eval): add hermetic skill installation
 
-- Script to copy built-in skills to user's skill directory
-- Idempotent: skips existing skills
-- Run once after setup or when skills are updated"
+- Project-level evaluator skills (evals/validator/skills/)
+- Install script copies to ~/.bourbon/skills/ for discovery
+- Auto-install on EvalRunner init (silent, idempotent)
+- --force flag for updates
+- Hermetic > global: project skills take priority"
 ```
 
 ---
 
 ## Summary
 
-This plan implements Phase 1 of the Agent Eval Validator:
+This plan implements **Phase 1 (Plumbing Only)** of the Agent Eval Validator:
 
-1. **Artifact System** - Structured output for Generator-Evaluator handoff
-2. **Report System** - Validation results with weighted scoring
-3. **Evaluator Agent** - Subprocess-based independent validation
-4. **Runner Integration** - Seamless integration with existing evals
-5. **Evaluator Skills** - correctness-evaluator and quality-evaluator
-6. **Configuration** - Per-case and global config options
+### Phase 1 Deliverables (Infrastructure)
+
+1. **Artifact System** - Structured output for Generator-Evaluator handoff with size limits
+2. **Report System** - Validation results with weighted scoring and detailed breakdowns
+3. **Evaluator Agent** - Subprocess-based independent validation pipeline
+4. **Runner Integration** - Seamless integration with hard failure policy
+5. **Hermetic Skills** - Project-level eval-correctness and eval-quality skills (as contracts)
+6. **Skill Installation** - Auto-deployment of project skills to user directory
+7. **Configuration** - Per-case and global config with dimension-level control
+
+### Phase 1 Limitations (Explicit)
+
+- **Simulated Evaluation**: `_simulate_skill_evaluation()` returns placeholder scores
+  - Purpose: Validate infrastructure pipeline works end-to-end
+  - Phase 2 will replace with actual `skill()` tool invocation
+- **No Real LLM Judging**: Scores are fixed (8.5) for testing purposes
+
+### Phase 2 Roadmap (Future)
+
+1. Replace `_simulate_skill_evaluation()` with actual Bourbon Agent skill invocation
+2. Implement `skill()` tool in Evaluator Agent subprocess
+3. Parse skill outputs for real LLM-based scoring
+4. Add more evaluator dimensions (performance, security, etc.)
+
+### Design Decisions Locked
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Phase Scope | Plumbing only | Infrastructure first, intelligence second |
+| Skill Ownership | Project assets | CI reproducibility, version control |
+| Skill Discovery | Copy to ~/.bourbon/skills/ | Compatible with SkillScanner |
+| Failure Policy | Hard failure | Validation failures fail the test |
+| Architecture | Subprocess isolation | Clean separation per Harness philosophy |
 
 All tasks include tests and follow TDD approach with frequent commits.
