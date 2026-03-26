@@ -128,21 +128,38 @@ class EvalRunner:
                 raise
         return self.bourbon_config
     
-    def load_cases(self, category: str = None) -> list[dict]:
-        """加载评测用例"""
-        cases_dir = Path("evals/cases")
+    def load_cases(self, category: str = None, cases_dir: Path = None) -> list[dict]:
+        """加载评测用例，支持 category/subcategory 语法。
+
+        Args:
+            category: Optional filter. "sandbox" filters by category.
+                      "sandbox/exfiltration" filters by category AND subcategory.
+            cases_dir: Override the default cases directory (used in tests).
+        """
+        cases_dir = cases_dir or Path("evals/cases")
         cases = []
-        
+
+        # Parse optional subcategory from "category/subcategory" syntax
+        main_category = category
+        sub_category = None
+        if category and "/" in category:
+            main_category, sub_category = category.split("/", 1)
+
         for case_file in cases_dir.rglob("*.json"):
             if "trigger" in case_file.name:
                 continue
-                
+
             with open(case_file) as f:
                 case = json.load(f)
                 case["_file"] = str(case_file)
-                if category is None or case.get("category") == category:
-                    cases.append(case)
-        
+
+                if main_category is not None and case.get("category") != main_category:
+                    continue
+                if sub_category is not None and case.get("subcategory") != sub_category:
+                    continue
+
+                cases.append(case)
+
         return cases
     
     def _setup_workspace(self, case: dict) -> Path:
