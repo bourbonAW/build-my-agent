@@ -9,8 +9,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from evals.validator.install_skills import install_skills
 from evals.runner import EvalRunner
+from evals.validator.install_skills import install_skills
 
 
 def test_install_skills_copies_and_overwrites_eval_skill_directories(tmp_path: Path) -> None:

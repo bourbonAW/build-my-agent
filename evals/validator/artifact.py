@@ -88,8 +88,16 @@ class OutputArtifact:
         if (total_size / (1024 * 1024)) <= max_size_mb:
             return
 
-        warnings.warn("Artifact snapshot exceeded max_size_mb; truncating large files.")
-        for file_path, _file_size in sorted(candidate_files, key=lambda item: item[1], reverse=True):
+        warnings.warn(
+            "Artifact snapshot exceeded max_size_mb; truncating large files.",
+            stacklevel=2,
+        )
+        largest_files = sorted(
+            candidate_files,
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        for file_path, _file_size in largest_files:
             if (total_size / (1024 * 1024)) <= max_size_mb:
                 break
             lines = file_path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -104,7 +112,7 @@ class OutputArtifact:
             total_size += file_path.stat().st_size
 
     @classmethod
-    def load(cls, artifact_dir: Path) -> "OutputArtifact":
+    def load(cls, artifact_dir: Path) -> OutputArtifact:
         return cls(
             case_id=json.loads((artifact_dir / "meta.json").read_text(encoding="utf-8"))["case_id"],
             workdir=artifact_dir / "workspace",
@@ -126,19 +134,19 @@ class ArtifactBuilder:
         self._output: dict = {}
         self._exclude_patterns: set[str] = {"artifact", "__pycache__"}
 
-    def set_meta(self, **kwargs) -> "ArtifactBuilder":
+    def set_meta(self, **kwargs) -> ArtifactBuilder:
         self._meta.update(kwargs)
         return self
 
-    def set_context(self, **kwargs) -> "ArtifactBuilder":
+    def set_context(self, **kwargs) -> ArtifactBuilder:
         self._context.update(kwargs)
         return self
 
-    def set_output(self, **kwargs) -> "ArtifactBuilder":
+    def set_output(self, **kwargs) -> ArtifactBuilder:
         self._output.update(kwargs)
         return self
 
-    def add_exclude_patterns(self, patterns: list[str]) -> "ArtifactBuilder":
+    def add_exclude_patterns(self, patterns: list[str]) -> ArtifactBuilder:
         self._exclude_patterns.update(patterns)
         return self
 

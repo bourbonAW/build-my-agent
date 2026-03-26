@@ -5,7 +5,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-
 DEFAULT_BUILTIN_DIR = Path(__file__).parent / "skills"
 DEFAULT_USER_DIR = Path.home() / ".bourbon" / "skills"
 

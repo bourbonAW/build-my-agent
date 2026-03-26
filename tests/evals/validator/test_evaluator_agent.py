@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -11,7 +10,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from evals.validator.artifact import ArtifactBuilder
-from evals.validator.evaluator_agent import EvaluatorAgentRunner, EvaluatorConfig, run_evaluator_agent
+from evals.validator.evaluator_agent import (
+    EvaluatorAgentRunner,
+    EvaluatorConfig,
+    run_evaluator_agent,
+)
 from evals.validator.report import ValidationReport
 
 

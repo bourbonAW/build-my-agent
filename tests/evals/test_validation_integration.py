@@ -15,7 +15,15 @@ from evals.runner import EvalRunner
 class _FakeAgent:
     def __init__(self, *_args, **_kwargs) -> None:
         self.audit = type("Audit", (), {"enabled": False})()
-        self.skills = type("_Skills", (), {"_skills": {}, "_discover": lambda self: None, "activate": lambda self, _name: ""})()
+        self.skills = type(
+            "_Skills",
+            (),
+            {
+                "_skills": {},
+                "_discover": lambda self: None,
+                "activate": lambda self, _name: "",
+            },
+        )()
         self.system_prompt = ""
 
     def reset_token_usage(self) -> None:

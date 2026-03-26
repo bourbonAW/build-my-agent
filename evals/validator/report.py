@@ -41,7 +41,7 @@ class ValidationDimension:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ValidationDimension":
+    def from_dict(cls, data: dict) -> ValidationDimension:
         return cls(**data)
 
 
@@ -77,7 +77,7 @@ class ValidationReport:
         path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
 
     @classmethod
-    def load(cls, path: Path) -> "ValidationReport":
+    def load(cls, path: Path) -> ValidationReport:
         data = json.loads(path.read_text(encoding="utf-8"))
         return cls(
             dimensions=[ValidationDimension.from_dict(item) for item in data["dimensions"]],
