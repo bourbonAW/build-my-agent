@@ -191,11 +191,29 @@ class EvalRunner:
         if workdir.exists():
             shutil.rmtree(workdir)
     
+    def _load_audit_events(self, workdir: Path) -> list[dict]:
+        """Read JSONL audit log from workdir. Returns [] if file missing."""
+        audit_file = workdir / "audit.jsonl"
+        if not audit_file.exists():
+            return []
+        events = []
+        with open(audit_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        return events
+
     def _execute_assertions(self, case: dict, output: str, workdir: Path) -> list[dict]:
         """执行断言验证"""
         assertions = case.get("assertions", [])
         results = []
         prompt = case.get("prompt", "")
+        # Load audit events once for this assertion pass
+        audit_events = self._load_audit_events(workdir)
         
         for assertion in assertions:
             check = assertion.get("check", "")
@@ -277,6 +295,21 @@ class EvalRunner:
                         passed = False
                         evidence = "Invalid regex pattern"
                     
+                elif check.startswith("audit_event_exists:"):
+                    # Format: audit_event_exists:event_type=sandbox_violation
+                    # Multi-criteria: audit_event_exists:event_type=policy_decision,decision=deny
+                    criteria_str = check[len("audit_event_exists:"):]
+                    criteria = dict(item.split("=", 1) for item in criteria_str.split(","))
+                    passed = any(
+                        all(str(event.get(k)) == v for k, v in criteria.items())
+                        for event in audit_events
+                    )
+                    matched_count = sum(
+                        1 for e in audit_events
+                        if all(str(e.get(k)) == v for k, v in criteria.items())
+                    )
+                    evidence = f"Found {matched_count} matching audit event(s)"
+
                 elif assertion.get("type") == "llm_judge":
                     if self.fast_mode:
                         passed = True
@@ -322,6 +355,14 @@ class EvalRunner:
             bourbon_config = self._load_bourbon_config()
             agent = Agent(config=bourbon_config, workdir=workdir)
             agent.reset_token_usage()
+
+            # Redirect audit log to workdir so _execute_assertions can read it.
+            # Guard: only redirect if audit is enabled; if disabled, audit_event_exists
+            # assertions will correctly return False (no events written).
+            if agent.audit.enabled:
+                audit_log_path = workdir / "audit.jsonl"
+                audit_log_path.touch(exist_ok=True)
+                agent.audit.log_file = audit_log_path
             
             # 根据测试用例决定是否启用 skills
             required_skill = case.get("skill")
