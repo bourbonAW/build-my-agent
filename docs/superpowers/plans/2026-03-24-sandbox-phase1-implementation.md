@@ -56,7 +56,7 @@
 - Create: `src/bourbon/access_control/capabilities.py`
 - Test: `tests/test_capabilities.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_capabilities.py
@@ -126,19 +126,19 @@ class TestInferCapabilities:
         assert ctx.file_paths == []
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_capabilities.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'bourbon.access_control'`
 
-- [ ] **Step 3: Create the package init**
+- [x] **Step 3: Create the package init**
 
 ```python
 # src/bourbon/access_control/__init__.py
 """Access control for Bourbon agent tools."""
 ```
 
-- [ ] **Step 4: Implement capabilities.py**
+- [x] **Step 4: Implement capabilities.py**
 
 ```python
 # src/bourbon/access_control/capabilities.py
@@ -216,12 +216,12 @@ def infer_capabilities(
     return InferredContext(capabilities=caps, file_paths=file_paths)
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_capabilities.py -v`
 Expected: All PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/access_control/__init__.py src/bourbon/access_control/capabilities.py tests/test_capabilities.py
@@ -236,7 +236,7 @@ git commit -m "feat(access_control): Add CapabilityType enum and infer_capabilit
 - Create: `src/bourbon/access_control/policy.py`
 - Test: `tests/test_policy.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_policy.py
@@ -365,12 +365,12 @@ class TestPolicyDecisionMerge:
         assert merged.action == PolicyAction.ALLOW
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_policy.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'bourbon.access_control.policy'`
 
-- [ ] **Step 3: Implement policy.py**
+- [x] **Step 3: Implement policy.py**
 
 ```python
 # src/bourbon/access_control/policy.py
@@ -540,12 +540,12 @@ class PolicyEngine:
         return pattern in command
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_policy.py -v`
 Expected: All PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bourbon/access_control/policy.py tests/test_policy.py
@@ -560,7 +560,7 @@ git commit -m "feat(access_control): Add PolicyEngine with file and command rule
 - Modify: `src/bourbon/access_control/__init__.py`
 - Test: `tests/test_access_controller.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_access_controller.py
@@ -618,12 +618,12 @@ class TestAccessController:
         assert decision.action == PolicyAction.ALLOW
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_access_controller.py -v`
 Expected: FAIL — `ImportError: cannot import name 'AccessController'`
 
-- [ ] **Step 3: Implement AccessController**
+- [x] **Step 3: Implement AccessController**
 
 ```python
 # src/bourbon/access_control/__init__.py
@@ -679,12 +679,12 @@ class AccessController:
             return self.engine.evaluate(tool_name, context)
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_access_controller.py -v`
 Expected: All PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bourbon/access_control/__init__.py tests/test_access_controller.py
@@ -702,7 +702,7 @@ git commit -m "feat(access_control): Add AccessController facade"
 - Create: `src/bourbon/audit/events.py`
 - Test: `tests/test_audit.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_audit.py
@@ -804,12 +804,12 @@ class TestAuditLogger:
             assert logger.query() == []
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_audit.py -v`
 Expected: FAIL — `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement events.py**
+- [x] **Step 3: Implement events.py**
 
 ```python
 # src/bourbon/audit/events.py
@@ -925,7 +925,7 @@ class AuditEvent:
         )
 ```
 
-- [ ] **Step 4: Implement AuditLogger**
+- [x] **Step 4: Implement AuditLogger**
 
 ```python
 # src/bourbon/audit/__init__.py
@@ -981,12 +981,12 @@ class AuditLogger:
         }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_audit.py -v`
 Expected: All PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/audit/__init__.py src/bourbon/audit/events.py tests/test_audit.py
@@ -1004,7 +1004,7 @@ git commit -m "feat(audit): Add AuditLogger with JSONL events"
 - Create: `src/bourbon/sandbox/credential.py`
 - Test: `tests/test_credential.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_credential.py
@@ -1054,12 +1054,12 @@ class TestCredentialManager:
         assert "PATH" in clean
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_credential.py -v`
 Expected: FAIL — `ModuleNotFoundError`
 
-- [ ] **Step 3: Create package init and implement credential.py**
+- [x] **Step 3: Create package init and implement credential.py**
 
 ```python
 # src/bourbon/sandbox/__init__.py
@@ -1124,12 +1124,12 @@ class CredentialManager:
         return result
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_credential.py -v`
 Expected: All PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bourbon/sandbox/__init__.py src/bourbon/sandbox/credential.py tests/test_credential.py
@@ -1146,7 +1146,7 @@ git commit -m "feat(sandbox): Add CredentialManager for env var cleaning"
 - Create: `src/bourbon/sandbox/providers/local.py`
 - Test: `tests/test_sandbox_local.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_sandbox_local.py
@@ -1225,12 +1225,12 @@ class TestLocalProvider:
             assert not result.timed_out
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_sandbox_local.py -v`
 Expected: FAIL — `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement runtime.py**
+- [x] **Step 3: Implement runtime.py**
 
 ```python
 # src/bourbon/sandbox/runtime.py
@@ -1289,7 +1289,7 @@ class SandboxProvider(ABC):
         """Human-readable description of isolation provided."""
 ```
 
-- [ ] **Step 4: Implement providers/__init__.py**
+- [x] **Step 4: Implement providers/__init__.py**
 
 ```python
 # src/bourbon/sandbox/providers/__init__.py
@@ -1339,7 +1339,7 @@ def _auto_select() -> SandboxProvider:
     return LocalProvider()
 ```
 
-- [ ] **Step 5: Implement providers/local.py**
+- [x] **Step 5: Implement providers/local.py**
 
 ```python
 # src/bourbon/sandbox/providers/local.py
@@ -1415,12 +1415,12 @@ class LocalProvider(SandboxProvider):
         return "local (no OS isolation)"
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_sandbox_local.py -v`
 Expected: All PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/bourbon/sandbox/runtime.py src/bourbon/sandbox/providers/__init__.py src/bourbon/sandbox/providers/local.py tests/test_sandbox_local.py
@@ -1435,7 +1435,7 @@ git commit -m "feat(sandbox): Add SandboxProvider interface and LocalProvider"
 - Modify: `src/bourbon/sandbox/__init__.py`
 - Create: `tests/test_sandbox_manager.py`
 
-- [ ] **Step 1: Write failing tests for SandboxManager**
+- [x] **Step 1: Write failing tests for SandboxManager**
 
 ```python
 # tests/test_sandbox_manager.py
@@ -1488,12 +1488,12 @@ class TestSandboxManagerEnabled:
         assert isinstance(result, SandboxResult)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_sandbox_manager.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'bourbon.sandbox'`
 
-- [ ] **Step 3: Implement SandboxManager**
+- [x] **Step 3: Implement SandboxManager**
 
 ```python
 # src/bourbon/sandbox/__init__.py
@@ -1578,12 +1578,12 @@ class SandboxManager:
         return result
 ```
 
-- [ ] **Step 4: Run all sandbox tests**
+- [x] **Step 4: Run all sandbox tests**
 
 Run: `uv run pytest tests/test_credential.py tests/test_sandbox_local.py tests/test_sandbox_manager.py -v`
 Expected: All PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bourbon/sandbox/__init__.py tests/test_sandbox_manager.py
@@ -1599,7 +1599,7 @@ git commit -m "feat(sandbox): Add SandboxManager coordinator"
 **Files:**
 - Modify: `src/bourbon/config.py:43-51,94-131`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 ```python
 # Add to tests/test_config.py (append to existing file)
@@ -1654,12 +1654,12 @@ class TestSandboxConfig:
         assert config.sandbox["filesystem"]["writable"] == ["{workdir}"]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_config.py::TestSandboxConfig -v`
 Expected: FAIL — `AttributeError: Config has no attribute 'access_control'`
 
-- [ ] **Step 3: Add sandbox config fields to Config**
+- [x] **Step 3: Add sandbox config fields to Config**
 
 Modify `src/bourbon/config.py` — add three dict fields to `Config` with sensible defaults, and update `from_dict()` and `to_dict()`:
 
@@ -1724,12 +1724,12 @@ In `to_dict()`, add:
             "audit": self.audit,
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_config.py -v`
 Expected: All PASS (including existing tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bourbon/config.py tests/test_config.py
@@ -1744,7 +1744,7 @@ git commit -m "feat(config): Add access_control, sandbox, audit config sections"
 - Modify: `src/bourbon/tools/__init__.py:24-33,120-159`
 - Modify: `src/bourbon/tools/base.py:208-301`
 
-- [ ] **Step 1: Add required_capabilities to Tool dataclass**
+- [x] **Step 1: Add required_capabilities to Tool dataclass**
 
 In `src/bourbon/tools/__init__.py`, add import and field:
 
@@ -1773,7 +1773,7 @@ def register_tool(
 
 Pass it through to `Tool(...)` in the decorator.
 
-- [ ] **Step 2: Add capabilities to tool registrations in base.py**
+- [x] **Step 2: Add capabilities to tool registrations in base.py**
 
 ```python
 # bash tool:
@@ -1805,12 +1805,12 @@ Pass it through to `Tool(...)` in the decorator.
 )
 ```
 
-- [ ] **Step 3: Run existing tests to verify nothing breaks**
+- [x] **Step 3: Run existing tests to verify nothing breaks**
 
 Run: `uv run pytest tests/test_tools_registry.py tests/test_risk_level.py tests/test_tools_base.py -v`
 Expected: All PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/bourbon/tools/__init__.py src/bourbon/tools/base.py
@@ -1826,7 +1826,7 @@ git commit -m "feat(tools): Add required_capabilities field to Tool"
 
 This is the final integration step — wiring AccessController, SandboxManager, and AuditLogger into `Agent.__init__()` and `_execute_tools()`.
 
-- [ ] **Step 1: Add imports to agent.py**
+- [x] **Step 1: Add imports to agent.py**
 
 At top of `src/bourbon/agent.py`, add:
 
@@ -1838,7 +1838,7 @@ from bourbon.audit.events import AuditEvent
 from bourbon.sandbox import SandboxManager
 ```
 
-- [ ] **Step 2: Initialize components in Agent.__init__()**
+- [x] **Step 2: Initialize components in Agent.__init__()**
 
 After `self._max_tool_rounds = ...` add:
 
@@ -1855,7 +1855,7 @@ After `self._max_tool_rounds = ...` add:
         self.sandbox = SandboxManager(config=sandbox_config, workdir=self.workdir, audit=self.audit)
 ```
 
-- [ ] **Step 3: Modify _execute_tools() to use access control and sandbox**
+- [x] **Step 3: Modify _execute_tools() to use access control and sandbox**
 
 In the `else:` branch of `_execute_tools()` (the regular tool execution path, around line 420), replace the existing logic with:
 
@@ -1939,19 +1939,19 @@ In the `else:` branch of `_execute_tools()` (the regular tool execution path, ar
                     output = f"Unknown tool: {tool_name}"
 ```
 
-- [ ] **Step 4: Run all tests**
+- [x] **Step 4: Run all tests**
 
 Run: `uv run pytest -v`
 Expected: All PASS (existing tests + all new tests)
 
-- [ ] **Step 5: Manual smoke test**
+- [x] **Step 5: Manual smoke test**
 
 Run: `uv run python -m bourbon` and try:
 1. Type a question → should work normally
 2. Ask agent to run `ls -la` → should execute through sandbox, audit log created in `~/.bourbon/audit/`
 3. Check `~/.bourbon/audit/` for JSONL file with events
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/agent.py
@@ -1962,12 +1962,12 @@ git commit -m "feat(agent): Integrate AccessController, SandboxManager, and Audi
 
 ### Task 11: Run full test suite + lint
 
-- [ ] **Step 1: Run all tests**
+- [x] **Step 1: Run all tests**
 
 Run: `uv run pytest -v`
 Expected: All PASS
 
-- [ ] **Step 2: Run linter**
+- [x] **Step 2: Run linter**
 
 Run: `uv run ruff check src tests && uv run ruff format src tests`
 Expected: No errors
@@ -1977,7 +1977,7 @@ Expected: No errors
 Run: `uv run mypy src`
 Expected: No new errors
 
-- [ ] **Step 4: Fix any issues found**
+- [x] **Step 4: Fix any issues found**
 
 - [ ] **Step 5: Final commit**
 
