@@ -203,7 +203,7 @@ evals/validator/skills/        # 项目级（版本控制）
 - Evaluator skills 使用 `eval-{dimension}` 格式（如 `eval-correctness`）
 - 避免子目录结构，SkillScanner 只扫描直接子目录
 
-**SKILL.md 示例 (correctness-evaluator):**
+**SKILL.md 示例 (eval-correctness):**
 ```yaml
 ---
 name: eval-correctness
@@ -253,11 +253,11 @@ Return a JSON object:
 **工作流程:**
 1. 读取 `artifact/` 目录下的所有文件
 2. 解析用例的 `focus` 字段（如 `["correctness", "quality"]`）
-3. **单个 Agent 内部**按需调用对应 Evaluator Skills
+3. **Phase 1** 使用模拟技能响应；**Phase 2** 才在单个 Agent 内部按需调用对应 Evaluator Skills
 4. 聚合各维度结果，生成最终报告
 5. 写入 `validation/report.json`
 
-**关键设计:** Evaluator 作为单一 Agent 运行，而非为每个 skill 启动独立进程。Agent 使用 `skill()` 工具动态加载验证逻辑，保持架构简洁。
+**关键设计:** Evaluator 作为单一 Agent 运行，而非为每个 skill 启动独立进程。Phase 1 仅验证 subprocess + artifact + report 基础设施；Phase 2 再引入 Agent 内部 `skill()` 调用。
 
 #### 2.2.4 Validation Report（详细分析）
 
@@ -346,7 +346,7 @@ Return a JSON object:
 
 **Artifact 生命周期:**
 - 默认：验证完成后立即清理
-- 调试模式（`--keep-artifacts`）：保留到指定目录
+- 调试模式（`EVAL_KEEP_ARTIFACTS=1`）：保留临时目录供检查
 - CI 环境：可通过环境变量配置保留策略
 
 **Skill 版本控制:**
@@ -497,8 +497,8 @@ security = "eval-security"
 ```
 [EVALUATOR] Starting validation for case=code-refactor-001
 [EVALUATOR] Focus dimensions: ['correctness', 'quality']
-[EVALUATOR] Loading skill: correctness-evaluator... score=8.5, threshold=9.0, passed=false
-[EVALUATOR] Loading skill: quality-evaluator... score=8.0, threshold=7.0, passed=true
+[EVALUATOR] Loading skill: eval-correctness... score=8.5, threshold=9.0, passed=false
+[EVALUATOR] Loading skill: eval-quality... score=8.0, threshold=7.0, passed=true
 [EVALUATOR] Overall: score=8.3, threshold=8.0, passed=true, duration=2345ms
 [EVALUATOR] Validation completed
 ```
@@ -512,7 +512,7 @@ Validation Report 自动包含遥测信息：
   "telemetry": {
     "evaluator_version": "1.0.0",
     "focus_dimensions": ["correctness", "quality"],
-    "skills_invoked": ["correctness-evaluator@1.0", "quality-evaluator@1.0"],
+    "skills_invoked": ["eval-correctness@1.0", "eval-quality@1.0"],
     "duration_ms": 2345,
     "token_usage": {"input": 2000, "output": 500}
   }
@@ -561,10 +561,10 @@ Validation Report 自动包含遥测信息：
 2. Evaluator Agent 进程管理 (`evaluator_agent.py`)
 3. Runner 集成
 
-### 7.2 Phase 2: Evaluator Skills
-1. `correctness-evaluator` Skill
-2. `quality-evaluator` Skill
-3. Skill 发现与加载机制
+### 7.2 Phase 2: Real Skill Invocation
+1. `eval-correctness` / `eval-quality` 的真实 `skill()` 调用
+2. LLM 输出解析与评分校准
+3. 更多 evaluator 维度与扩展机制
 
 ### 7.3 Phase 3: 报告与可视化
 1. Validation Report 生成
@@ -585,10 +585,10 @@ evals/
 │   ├── artifact.py        # Output Artifact 生成与管理
 │   ├── evaluator_agent.py # Evaluator Agent 进程管理
 │   ├── report.py          # Validation Report 解析与合并
-│   └── skills/            # 内置 Evaluator Skills
-│       ├── correctness/
+│   └── skills/            # 内置 Evaluator Skills（项目资产）
+│       ├── eval-correctness/
 │       │   └── SKILL.md
-│       └── quality/
+│       └── eval-quality/
 │           └── SKILL.md
 └── cases/
     └── example.json       # 示例用例配置

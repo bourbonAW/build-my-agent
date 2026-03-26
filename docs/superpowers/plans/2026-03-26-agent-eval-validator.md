@@ -131,7 +131,7 @@ class OutputArtifact:
     def artifact_dir(self) -> Path:
         return self.workdir / "artifact"
     
-    def save(self, exclude_patterns: set = None) -> Path:
+    def save(self, exclude_patterns: set = None, max_size_mb: float = 100.0) -> Path:
         """Save all artifact components to disk."""
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
         
@@ -160,6 +160,7 @@ class OutputArtifact:
         if self.workdir.exists():
             ignore_func = self._make_ignore_func(exclude_patterns)
             shutil.copytree(self.workdir, workspace_dir, ignore=ignore_func)
+            self._truncate_snapshot_if_needed(workspace_dir, exclude_patterns, max_size_mb)
         
         return self.artifact_dir
     
@@ -185,6 +186,67 @@ class OutputArtifact:
             return result
         
         return ignore_func
+
+    def _truncate_snapshot_if_needed(
+        self,
+        workspace_dir: Path,
+        exclude_patterns: set,
+        max_size_mb: float,
+    ) -> None:
+        """Truncate large files inside the copied snapshot only."""
+        import warnings
+
+        excludes = exclude_patterns or set()
+        total_size = 0
+        large_files = []
+
+        for f in workspace_dir.rglob('*'):
+            if not f.is_file():
+                continue
+            rel_path = f.relative_to(workspace_dir)
+            if self._matches_excludes(rel_path, excludes):
+                continue
+
+            size = f.stat().st_size
+            total_size += size
+            if size > 1024 * 1024:
+                large_files.append((f, size))
+
+        size_mb = total_size / (1024 * 1024)
+        if size_mb <= max_size_mb:
+            return
+
+        warnings.warn(
+            f"Artifact snapshot size {size_mb:.1f}MB exceeds limit {max_size_mb}MB. "
+            "Truncating copied large files to continue."
+        )
+        for f, size in large_files:
+            try:
+                lines = f.read_text(encoding='utf-8', errors='ignore').split('\n')
+                if len(lines) > 1000:
+                    truncated = '\n'.join(lines[:1000])
+                    f.write_text(
+                        truncated + '\n\n[TRUNCATED: snapshot exceeded size limit]',
+                        encoding='utf-8',
+                    )
+                    print(f"  Truncated snapshot: {f.name} ({size/1024/1024:.1f}MB -> ~1000 lines)")
+            except Exception as e:
+                warnings.warn(f"Could not truncate snapshot file {f}: {e}")
+
+    def _matches_excludes(self, path: Path, excludes: set) -> bool:
+        """Check whether a copied path matches exclusion patterns."""
+        path_str = str(path)
+        for pattern in excludes:
+            if pattern.endswith('/'):
+                if pattern.rstrip('/') in path_str:
+                    return True
+            elif pattern.startswith('*'):
+                if path_str.endswith(pattern.lstrip('*')):
+                    return True
+            else:
+                if pattern in path_str:
+                    return True
+        return False
     
     @classmethod
     def load(cls, artifact_dir: Path) -> "OutputArtifact":
@@ -251,9 +313,6 @@ class ArtifactBuilder:
     
     def build(self) -> Path:
         """Build and save the artifact."""
-        # Check and enforce size limit before copying
-        self._enforce_size_limit()
-        
         artifact = OutputArtifact(
             case_id=self.case_id,
             workdir=self.workdir,
@@ -265,49 +324,11 @@ class ArtifactBuilder:
             output=self._output
         )
         
-        # Pass exclusion patterns to save method
-        return artifact.save(exclude_patterns=self._excludes)
-    
-    def _enforce_size_limit(self) -> None:
-        """Check size and truncate large files if needed."""
-        import warnings
-        
-        total_size = 0
-        large_files = []
-        
-        for f in self.workdir.rglob('*'):
-            if not f.is_file():
-                continue
-            # Skip excluded patterns
-            rel_path = f.relative_to(self.workdir)
-            if self._is_excluded(rel_path):
-                continue
-            
-            size = f.stat().st_size
-            total_size += size
-            
-            # Track large files (>1MB)
-            if size > 1024 * 1024:
-                large_files.append((f, size))
-        
-        size_mb = total_size / (1024 * 1024)
-        
-        if size_mb > self.max_size_mb:
-            warnings.warn(
-                f"Workdir size {size_mb:.1f}MB exceeds limit {self.max_size_mb}MB. "
-                f"Truncating large files to continue."
-            )
-            # Truncate large files to first 1000 lines
-            for f, size in large_files:
-                try:
-                    lines = f.read_text(encoding='utf-8', errors='ignore').split('\n')
-                    if len(lines) > 1000:
-                        truncated = '\n'.join(lines[:1000])
-                        f.write_text(truncated + '\n\n[TRUNCATED: file exceeded size limit]', 
-                                   encoding='utf-8')
-                        print(f"  Truncated: {f.name} ({size/1024/1024:.1f}MB -> ~1000 lines)")
-                except Exception as e:
-                    warnings.warn(f"Could not truncate {f}: {e}")
+        # Enforce size limit on the copied snapshot, never on the live workdir
+        return artifact.save(
+            exclude_patterns=self._excludes,
+            max_size_mb=self.max_size_mb,
+        )
     
     def _is_excluded(self, path: Path) -> bool:
         """Check if path matches exclusion patterns."""
@@ -1007,11 +1028,13 @@ def main():
     focus = json.loads(args.focus)
     
     # Load config if provided
+    dimensions_config = {}
     dimension_to_skill = DEFAULT_DIMENSION_TO_SKILL.copy()
     if args.config:
         config_path = Path(args.config)
         if config_path.exists():
             config_data = json.loads(config_path.read_text())
+            dimensions_config = config_data.get("dimensions", {})
             dimension_to_skill.update(config_data.get("dimension_to_skill", {}))
     
     # Create config
@@ -1020,13 +1043,15 @@ def main():
         focus=focus,
         threshold=args.threshold,
         timeout=300,  # Default timeout for agent itself
+        dimensions_config=dimensions_config,
         dimension_to_skill=dimension_to_skill
     )
     
     # Run evaluation
     try:
-        report = run_evaluator_agent(config)
-        sys.exit(0 if report.passed else 1)
+        run_evaluator_agent(config)
+        # Report pass/fail is communicated via report.json, not subprocess exit code.
+        sys.exit(0)
     except Exception as e:
         print(f"[EVALUATOR] Error: {e}", file=sys.stderr)
         sys.exit(2)
