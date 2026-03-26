@@ -46,3 +46,20 @@ format = ["json", "markdown"]
 output_dir = "evals/results"
 # 是否上传对比基准
 upload_baseline = false
+
+[evaluator]
+enabled = false
+default_threshold = 8.0
+default_timeout = 60
+max_artifact_size_mb = 100
+
+[evaluator.exclude_patterns]
+patterns = [".git/", "node_modules/", "__pycache__/", "*.pyc", ".venv/"]
+
+[evaluator.default_dimensions]
+correctness = { weight = 0.7, threshold = 8.0 }
+quality = { weight = 0.3, threshold = 7.0 }
+
+[evaluator.dimension_to_skill]
+correctness = "eval-correctness"
+quality = "eval-quality"

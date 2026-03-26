@@ -110,6 +110,7 @@ class EvalRunner:
         self.timeout = self.config.get("runner", {}).get("timeout", 60)
         self.bourbon_config = None
         self.case_results: list[CaseResult] = []
+        self._ensure_evaluator_skills()
         
     def _load_config(self) -> dict:
         """加载评测配置文件"""
@@ -128,6 +129,16 @@ class EvalRunner:
                 print(f"Error: Bourbon config not found. Run 'bourbon --init' first.")
                 raise
         return self.bourbon_config
+
+    def _ensure_evaluator_skills(self) -> None:
+        """Install hermetic evaluator skills so SkillScanner can discover them."""
+        try:
+            from evals.validator.install_skills import install_skills
+
+            install_skills(force=True)
+        except Exception:
+            # Non-fatal: validation will surface a clearer error later if this fails.
+            pass
     
     def load_cases(self, category: str = None, cases_dir: Path = None) -> list[dict]:
         """加载评测用例，支持 category/subcategory 语法。

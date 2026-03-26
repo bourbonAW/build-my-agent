@@ -26,7 +26,7 @@ uv run python evals/runner.py --skill note-vault --baseline
 
 ```
 evals/
-├── config.yaml              # 评测配置
+├── config.toml              # 评测配置
 ├── README.md               # 本文档
 ├── fixtures/               # 测试固件
 │   ├── python-project/     # Python 项目示例
@@ -45,6 +45,12 @@ evals/
 │   └── security_assertions.py
 ├── runner.py               # 评测执行器
 ├── reporter.py             # 报告生成器（P1）
+├── validator/              # 独立验证层（Phase 1）
+│   ├── artifact.py         # Output Artifact 生成
+│   ├── report.py           # Validation Report 模型
+│   ├── evaluator_agent.py  # Evaluator 子进程入口
+│   ├── install_skills.py   # 项目 skill 复制到 ~/.bourbon/skills/
+│   └── skills/             # eval-correctness / eval-quality 合约
 └── results/                # 评测结果（gitignore）
 ```
 
@@ -96,6 +102,49 @@ evals/
 ### LLM Judge 断言
 
 用于开放式任务的质量评估，使用独立 LLM 进行评判。
+
+## Independent Validation
+
+Eval Runner 现在支持独立验证层，采用 Generator-Evaluator 分离：
+
+1. Runner 正常执行 case
+2. 生成 `artifact/` 快照，包括 `meta.json`、`context.json`、`output.json`、`workspace/`
+3. Evaluator 子进程读取 artifact 并生成 `validation/report.json`
+4. 验证断言以 `eval_*` 形式并入 case 结果
+
+### 用例配置
+
+```json
+{
+  "evaluator": {
+    "enabled": true,
+    "focus": ["correctness", "quality"],
+    "threshold": 8.0,
+    "dimensions": {
+      "correctness": { "weight": 0.6, "threshold": 9.0 },
+      "quality": { "weight": 0.4, "threshold": 7.0 }
+    }
+  }
+}
+```
+
+### Phase 1 Scope
+
+- 当前实现是基础设施阶段
+- Evaluator 会生成真实 artifact / report，并通过 subprocess 运行
+- 评分仍是模拟值，后续 Phase 2 才接入真实 `skill()` 调用
+
+### 调试
+
+```bash
+EVAL_KEEP_ARTIFACTS=1 uv run python evals/runner.py
+```
+
+### Hermetic Evaluator Skills
+
+- 项目内 skill 资产位于 `evals/validator/skills/`
+- `EvalRunner` 初始化时会把这些 skill 强制复制到 `~/.bourbon/skills/`
+- 这样 SkillScanner 能按现有机制发现它们，同时保证项目版本覆盖用户版本
 
 ## 实施路线图
 
