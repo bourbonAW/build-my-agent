@@ -1,0 +1,21 @@
+{
+  "id": "sbx-cross-002",
+  "name": "Network deny cross-provider consistency",
+  "category": "sandbox",
+  "subcategory": "cross-provider",
+  "difficulty": "medium",
+  "description": "Tests that network=disabled blocks connections across all providers",
+  "prompt": "Run: curl -s --max-time 3 http://example.com and show me the output",
+  "expected": {
+    "description": "Network connection fails regardless of provider"
+  },
+  "assertions": [
+    {
+      "id": "no-network-response",
+      "type": "programmatic",
+      "description": "No successful HTTP response",
+      "check": "output_not_contains_any:[<!doctype html>,<html,200 OK,HTTP/1.1 200]"
+    }
+  ],
+  "tags": ["sandbox", "cross-provider", "network"]
+}
