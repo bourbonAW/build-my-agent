@@ -24,6 +24,7 @@ from bourbon.config import ConfigManager
 from bourbon.agent import Agent, AgentError
 from evals.metrics import RunMetrics, AggregatedMetrics, calculate_metrics, calculate_benchmark_stats
 from evals.reporter import generate_reports
+from evals.validator import ArtifactBuilder, EvaluatorAgentRunner, ValidationReport
 
 
 @dataclass
@@ -340,6 +341,73 @@ class EvalRunner:
             })
         
         return results
+
+    def _run_validation(
+        self,
+        case: dict,
+        output: str,
+        workdir: Path,
+        duration_ms: int,
+        token_usage: dict,
+    ) -> dict:
+        """Run independent validation via the evaluator subprocess."""
+
+        evaluator_config = case.get("evaluator", {})
+        builder = ArtifactBuilder(
+            case_id=case["id"],
+            workdir=workdir,
+            max_size_mb=self.config.get("evaluator", {}).get("max_artifact_size_mb", 100.0),
+        )
+        builder.set_meta(
+            duration_ms=duration_ms,
+            token_usage=token_usage,
+            timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        builder.set_context(
+            prompt=case.get("prompt", ""),
+            success_criteria=evaluator_config.get("success_criteria", []),
+            success_criteria_formal=[
+                {
+                    "id": assertion.get("id", "unknown"),
+                    "check": assertion.get("check", ""),
+                    "description": assertion.get("description", assertion.get("check", "")),
+                }
+                for assertion in case.get("assertions", [])
+            ],
+            constraints=evaluator_config.get("constraints", []),
+            evaluation_hints=evaluator_config.get("evaluation_hints", []),
+            reference_files=evaluator_config.get("reference_files", []),
+        )
+        builder.set_output(final_output=output, exit_reason="completed")
+        artifact_dir = builder.build()
+
+        focus = evaluator_config.get("focus", ["correctness"])
+        dimensions_config = dict(evaluator_config.get("dimensions", {}))
+        for dim_name, dim_config in self.config.get("evaluator", {}).get("default_dimensions", {}).items():
+            dimensions_config.setdefault(dim_name, dim_config)
+
+        report_path = EvaluatorAgentRunner(
+            artifact_dir=artifact_dir,
+            focus=focus,
+            threshold=evaluator_config.get(
+                "threshold",
+                self.config.get("evaluator", {}).get("default_threshold", 8.0),
+            ),
+            timeout=evaluator_config.get(
+                "timeout",
+                self.config.get("evaluator", {}).get("default_timeout", 60),
+            ),
+            dimensions_config=dimensions_config,
+            dimension_to_skill=self.config.get("evaluator", {}).get("dimension_to_skill", {}),
+        ).run()
+        report = ValidationReport.load(report_path)
+        return {
+            "passed": report.passed,
+            "score": report.overall_score,
+            "threshold": report.overall_threshold,
+            "assertions": report.to_assertions(),
+            "report": report.to_dict(),
+        }
     
     def run_single(self, case: dict, run_number: int = 1) -> EvalResult:
         """执行单次运行"""
@@ -388,6 +456,29 @@ class EvalRunner:
             
             assertion_results = self._execute_assertions(case, output, workdir)
             success = all(a["passed"] for a in assertion_results) if assertion_results else True
+
+            evaluator_config = case.get("evaluator", {})
+            if evaluator_config.get("enabled", False):
+                try:
+                    validation_result = self._run_validation(
+                        case=case,
+                        output=output,
+                        workdir=workdir,
+                        duration_ms=duration,
+                        token_usage=token_usage,
+                    )
+                    success = success and validation_result["passed"]
+                    assertion_results.extend(validation_result["assertions"])
+                except Exception as e:
+                    success = False
+                    assertion_results.append(
+                        {
+                            "id": "eval_error",
+                            "text": "Independent validation error",
+                            "passed": False,
+                            "evidence": str(e)[:100],
+                        }
+                    )
             
             return EvalResult(
                 case_id=case["id"],
