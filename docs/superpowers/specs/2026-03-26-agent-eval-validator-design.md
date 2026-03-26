@@ -153,28 +153,30 @@ workdir/
 
 #### 2.2.2 Evaluator Skill 系统
 
-Evaluator Skills 存放在 `~/.bourbon/skills/evaluators/`，由 Evaluator Agent 按需调用：
+Evaluator Skills 是普通的 Bourbon Skills，使用 `eval-` 前缀命名，存放在标准 skill 目录：
 
 ```
-~/.bourbon/skills/evaluators/
-├── correctness-evaluator/
-│   ├── SKILL.md           # 验证功能正确性的指令
-│   └── schemas/
-│       └── report-schema.json
-├── quality-evaluator/
-│   ├── SKILL.md           # 验证代码/响应质量的指令
-│   └── schemas/
-│       └── report-schema.json
-└── security-evaluator/
-    └── SKILL.md           # 可选：安全合规验证
+~/.bourbon/skills/
+├── eval-correctness/      # 验证功能正确性的 evaluator skill
+│   └── SKILL.md
+├── eval-quality/          # 验证代码质量的 evaluator skill  
+│   └── SKILL.md
+└── eval-security/         # 可选：安全合规验证
+    └── SKILL.md
 ```
+
+**命名约定:**
+- Evaluator skills 使用 `eval-{dimension}` 命名格式
+- 这是普通 skills，遵循相同的发现和加载机制
+- 避免使用子目录（`evaluators/`），因为 SkillScanner 不会递归扫描
 
 **调用机制:**
 
-1. **用例只声明关注维度** - 通过 `focus` 字段指定（如 `["correctness", "quality"]`）
-2. **Evaluator Agent 内部协调** - 单个 Agent 进程根据 focus 自动发现并调用对应 Skills
-3. **维度到 Skill 的映射** - 内置默认映射（如 `correctness` → `correctness-evaluator`）
-4. **可扩展** - 未来支持自定义映射（如 `"custom_dim": "my-custom-evaluator"`）
+1. **用例声明关注维度** - 通过 `focus` 字段指定（如 `["correctness", "quality"]`）
+2. **维度到 Skill 映射** - 系统自动映射 `correctness` → `eval-correctness`
+3. **Evaluator Agent 调用** - 单个 Agent 进程使用 `skill("eval-correctness")` 调用
+4. **Skill 执行验证** - 每个 skill 返回该维度的评分和详细分析
+5. **聚合结果** - Evaluator Agent 聚合各维度结果生成 Validation Report
 
 **示例流程:**
 ```
@@ -182,16 +184,16 @@ Evaluator Skills 存放在 `~/.bourbon/skills/evaluators/`，由 Evaluator Agent
          ↓
 Evaluator Agent 启动
          ↓
-内部调用: skill("correctness-evaluator") → 评估 correctness 维度
-         skill("quality-evaluator") → 评估 quality 维度  
+调用: skill("eval-correctness") → 返回 correctness 维度评分
+      skill("eval-quality") → 返回 quality 维度评分  
          ↓
-聚合结果 → 生成 Validation Report
+加权聚合 → 生成 Validation Report
 ```
 
 **SKILL.md 示例 (correctness-evaluator):**
 ```yaml
 ---
-name: correctness-evaluator
+name: eval-correctness
 description: Evaluate whether the agent output correctly fulfills the task requirements
 metadata:
   version: "1.0"
@@ -265,11 +267,11 @@ Return a JSON object:
   "version": "1.0",
   "timestamp": "2026-03-26T21:01:00Z",
   "evaluator_focus": ["correctness", "quality"],
-  "skills_used": ["correctness-evaluator", "quality-evaluator"],
+  "skills_used": ["eval-correctness", "eval-quality"],
   "dimensions": [
     {
       "name": "correctness",
-      "skill": "correctness-evaluator",
+      "skill": "eval-correctness",
       "score": 8.5,
       "weight": 0.6,
       "threshold": 9.0,
@@ -291,7 +293,7 @@ Return a JSON object:
     },
     {
       "name": "quality",
-      "skill": "quality-evaluator", 
+      "skill": "eval-quality", 
       "score": 8.0,
       "weight": 0.4,
       "threshold": 7.0,
@@ -430,10 +432,10 @@ correctness = { weight = 0.7, threshold = 8.0 }
 quality = { weight = 0.3, threshold = 7.0 }
 
 [evaluator.dimension_to_skill]
-# 维度到 Skill 的默认映射
-correctness = "correctness-evaluator"
-quality = "quality-evaluator"
-security = "security-evaluator"
+# 维度到 Skill 的默认映射（使用 eval- 前缀）
+correctness = "eval-correctness"
+quality = "eval-quality"
+security = "eval-security"
 # 可扩展自定义映射
 # custom_dim = "my-custom-evaluator"
 ```
