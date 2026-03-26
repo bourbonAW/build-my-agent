@@ -13,10 +13,10 @@
 
 **Architecture:** Single Evaluator Agent subprocess that will (Phase 2) invoke evaluator skills via `skill()` tool. Output Artifacts pass state via filesystem.
 
-**Hermetic Skills Strategy:**
+**Hermetic Skills Strategy (强制覆盖):**
 - Skills live in `evals/validator/skills/` (project assets, version controlled)
-- At runtime, copied to `~/.bourbon/skills/` for discovery
-- Guarantees CI reproducibility and version consistency
+- At runtime, **强制覆盖**复制到 `~/.bourbon/skills/` 以保证项目版本生效
+- Guarantees CI reproducibility - project decides runtime environment
 
 **Tech Stack:** Python 3.8+, subprocess, existing Bourbon Agent framework, Skill system
 
@@ -295,8 +295,19 @@ class ArtifactBuilder:
         if size_mb > self.max_size_mb:
             warnings.warn(
                 f"Workdir size {size_mb:.1f}MB exceeds limit {self.max_size_mb}MB. "
-                f"Large files will be truncated."
+                f"Truncating large files to continue."
             )
+            # Truncate large files to first 1000 lines
+            for f, size in large_files:
+                try:
+                    lines = f.read_text(encoding='utf-8', errors='ignore').split('\n')
+                    if len(lines) > 1000:
+                        truncated = '\n'.join(lines[:1000])
+                        f.write_text(truncated + '\n\n[TRUNCATED: file exceeded size limit]', 
+                                   encoding='utf-8')
+                        print(f"  Truncated: {f.name} ({size/1024/1024:.1f}MB -> ~1000 lines)")
+                except Exception as e:
+                    warnings.warn(f"Could not truncate {f}: {e}")
     
     def _is_excluded(self, path: Path) -> bool:
         """Check if path matches exclusion patterns."""
@@ -789,7 +800,7 @@ class EvaluatorConfig:
     focus: list[str]
     threshold: float  # Overall threshold
     timeout: int
-    dimensions_config: dict  # Per-dimension config: {name: {weight, threshold}}
+    dimensions_config: dict = None  # Per-dimension config: {name: {weight, threshold}}
     dimension_to_skill: dict[str, str] = None
     
     def __post_init__(self):
@@ -812,12 +823,15 @@ class EvaluatorAgentRunner:
     
     def __init__(self, artifact_dir: Path, focus: list[str], 
                  threshold: float = 8.0, timeout: int = 60,
-                 dimensions_config: dict = None):
+                 dimensions_config: dict = None,
+                 dimension_to_skill: dict = None):
         self.artifact_dir = artifact_dir
         self.focus = focus
         self.threshold = threshold
         self.timeout = timeout
         self.dimensions_config = dimensions_config or {}
+        # Merge provided mapping with defaults
+        self.dimension_to_skill = {**DEFAULT_DIMENSION_TO_SKILL, **(dimension_to_skill or {})}
     
     def run(self) -> Path:
         """Run evaluator agent in subprocess and return report path."""
@@ -827,7 +841,7 @@ class EvaluatorAgentRunner:
         config_data = {
             "threshold": self.threshold,
             "dimensions": self.dimensions_config,
-            "dimension_to_skill": DEFAULT_DIMENSION_TO_SKILL,
+            "dimension_to_skill": self.dimension_to_skill,  # Use merged mapping
         }
         config_path = self.artifact_dir.parent / "evaluator_config.json"
         config_path.write_text(json.dumps(config_data), encoding="utf-8")
@@ -1303,12 +1317,16 @@ def _run_validation(self, case: dict, output: str, workdir: Path,
         if dim_name not in dimensions_config and dim_name in global_dims:
             dimensions_config[dim_name] = global_dims[dim_name]
     
+    # Get dimension-to-skill mapping from global config
+    dimension_to_skill = self.config.get("evaluator", {}).get("dimension_to_skill", {})
+    
     runner = EvaluatorAgentRunner(
         artifact_dir=artifact_dir,
         focus=focus,
         threshold=threshold,
         timeout=timeout,
-        dimensions_config=dimensions_config
+        dimensions_config=dimensions_config,
+        dimension_to_skill=dimension_to_skill
     )
     
     report_path = runner.run()
@@ -1509,9 +1527,9 @@ Return ONLY a JSON object:
 - Be calibrated: Reserve 9-10 for truly excellent work, 5 for mediocre, 0-2 for broken
 ```
 
-- [ ] **Step 2: Create quality-evaluator skill**
+- [ ] **Step 2: Create eval-quality skill**
 
-Create file: `evals/validator/skills/quality-evaluator/SKILL.md`
+Create file: `evals/validator/skills/eval-quality/SKILL.md`
 
 ```markdown
 ---
@@ -1728,12 +1746,12 @@ git commit -m "docs(eval): add validation configuration and documentation
 **Files:**
 - Create: `evals/validator/install_skills.py`
 
-**Purpose:** Implement hermetic skill deployment - copy project-level skills to user directory for runtime discovery.
+**Purpose:** Implement hermetic skill deployment with forced override.
 
-**Why not use directly from project?**
-- Bourbon's SkillScanner discovers from standard locations only
-- Copying ensures consistent discovery behavior
-- Project skills override user skills (hermetic > global)
+**Hermetic Principle:**
+- Project-level skills **必须**覆盖用户同名 skills
+- 这是 reproducible build 的核心：项目决定运行时环境，不受用户环境影响
+- 不遵循 "skip if exists"，而是 "always use project version"
 
 - [ ] **Step 1: Create skills installation script**
 
@@ -1763,16 +1781,21 @@ BUILTIN_DIR = Path(__file__).parent / "skills"
 USER_DIR = Path.home() / ".bourbon" / "skills"
 
 
-def install_skills(force: bool = False):
-    """Copy project evaluator skills to user directory.
+def install_skills(force: bool = True):
+    """Copy project evaluator skills to user directory (hermetic override).
     
     Args:
-        force: If True, overwrite existing skills. Use for updates.
+        force: If True (default), overwrite existing skills with project version.
+               Set to False only for manual "skip if exists" behavior.
+    
+    Hermetic Principle:
+        Project-level skills always override user-level skills to ensure
+        reproducible builds. The project decides the runtime environment.
     """
     USER_DIR.mkdir(parents=True, exist_ok=True)
     
     installed = []
-    skipped = []
+    overwritten = []
     
     for skill_dir in BUILTIN_DIR.iterdir():
         if not skill_dir.is_dir():
@@ -1786,34 +1809,36 @@ def install_skills(force: bool = False):
             if force:
                 shutil.rmtree(target)
                 shutil.copytree(skill_dir, target)
-                installed.append(skill_dir.name)
+                overwritten.append(skill_dir.name)
             else:
-                skipped.append(skill_dir.name)
+                # Skip only when explicitly requested (non-hermetic mode)
+                continue
         else:
             shutil.copytree(skill_dir, target)
             installed.append(skill_dir.name)
     
-    print(f"Skills installed: {len(installed)}")
-    for name in installed:
-        print(f"  ✓ {name}")
+    if installed:
+        print(f"Skills installed: {len(installed)}")
+        for name in installed:
+            print(f"  ✓ {name}")
     
-    if skipped:
-        print(f"Skills skipped (use --force to update): {len(skipped)}")
-        for name in skipped:
-            print(f"  • {name}")
+    if overwritten:
+        print(f"Skills overwritten with project version: {len(overwritten)}")
+        for name in overwritten:
+            print(f"  ↻ {name}")
     
     print(f"\nLocation: {USER_DIR}")
-    return installed
+    return installed + overwritten
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Install hermetic evaluator skills")
-    parser.add_argument("--force", action="store_true", 
-                       help="Overwrite existing skills")
+    parser.add_argument("--no-force", action="store_true", 
+                       help="Skip existing skills (breaks hermetic guarantee)")
     args = parser.parse_args()
     
-    install_skills(force=args.force)
+    install_skills(force=not args.no_force)
 
 
 if __name__ == "__main__":
@@ -1823,7 +1848,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Test installation**
 
 ```bash
-# First install
+# First install (默认强制覆盖)
 python evals/validator/install_skills.py
 ```
 Expected output:
@@ -1836,17 +1861,21 @@ Location: /Users/.../.bourbon/skills
 ```
 
 ```bash
-# Second install (should skip)
+# Second install (默认会覆盖，保证项目版本生效)
 python evals/validator/install_skills.py
 ```
 Expected output:
 ```
-Skills installed: 0
-Skills skipped (use --force to update): 2
-  • eval-correctness
-  • eval-quality
+Skills overwritten with project version: 2
+  ↻ eval-correctness
+  ↻ eval-quality
 
 Location: /Users/.../.bourbon/skills
+```
+
+```bash
+# 使用 --no-force 跳过已存在的（不推荐，会破坏 hermetic 保证）
+python evals/validator/install_skills.py --no-force
 ```
 
 - [ ] **Step 3: Add to EvalRunner initialization**
@@ -1863,13 +1892,16 @@ def __init__(self, ...):
     self._ensure_evaluator_skills()
 
 def _ensure_evaluator_skills(self):
-    """Ensure project evaluator skills are installed for discovery."""
+    """Ensure project evaluator skills are installed (hermetic override).
+    
+    Always overwrites with project version to guarantee reproducible builds.
+    """
     try:
         from evals.validator.install_skills import install_skills
-        # Silent install - only installs if missing
-        install_skills(force=False)
+        # Force=True ensures project version always wins (hermetic)
+        install_skills(force=True)
     except Exception:
-        # Non-fatal: skills may already be installed or not needed
+        # Non-fatal: validation will fail later if skills missing
         pass
 ```
 

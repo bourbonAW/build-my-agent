@@ -339,9 +339,9 @@ Return a JSON object:
 #### 2.2.6 其他设计决策
 
 **并发执行 (Phase 1):**
-- Phase 1 采用**单个 Evaluator Agent** 顺序调用各 Skills
-- 原因：简化架构，减少进程开销，便于调试
-- Agent 内部通过 `skill()` 工具按需加载验证逻辑
+- Phase 1 采用**单个 Evaluator Agent** 顺序处理各维度
+- 使用**模拟技能响应**验证 pipeline（`_simulate_skill_evaluation`）
+- Phase 2 将改为 Agent 内部通过 `skill()` 工具真实调用
 - 未来可优化为 Agent 内部并行调用 Skills（异步执行，统一聚合）
 
 **Artifact 生命周期:**
@@ -351,13 +351,14 @@ Return a JSON object:
 
 **Skill 版本控制:**
 - Evaluator Skills 遵循 Bourbon Skill 系统的版本管理
-- 可指定 Skill 版本：`"skills": ["correctness-evaluator@1.0"]`
-- 未指定版本时使用最新版本，但会记录实际使用的版本到 Report
+- Skill 名使用 `eval-` 前缀（如 `eval-correctness@1.0`）
+- Hermetic 保证：项目版本始终覆盖用户版本
+- Report 记录实际使用的 skill 版本
 
-**Skill 发现路径:**
-- 用户级：`~/.bourbon/skills/evaluators/`
-- 项目级：`{workdir}/.bourbon/skills/evaluators/`（优先级更高）
-- 与常规 Skill 系统保持一致
+**Skill 发现路径 (Hermetic):**
+- **运行时**：`~/.bourbon/skills/eval-*/`（项目 skills 复制到这里）
+- **项目资产**：`evals/validator/skills/eval-*/`（版本控制，强制覆盖）
+- SkillScanner 从 `~/.bourbon/skills/` 直接子目录发现
 
 **Artifact 大小限制:**
 - 默认最大大小：100MB
