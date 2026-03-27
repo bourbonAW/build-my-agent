@@ -43,6 +43,7 @@ class TestAgentSyncMCPInitialization(unittest.TestCase):
         agent.mcp.connect_all_sync.return_value = results
         agent.mcp.get_connection_summary.return_value = {"total_tools": 2}
         agent._build_system_prompt = MagicMock(return_value="updated prompt")
+        agent._custom_system_prompt = None
         agent.system_prompt = "old prompt"
 
         returned = Agent.initialize_mcp_sync(agent, timeout=60.0)

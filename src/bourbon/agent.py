@@ -44,6 +44,7 @@ class Agent:
         workdir: Path | None = None,
         on_tool_start: Callable[[str, dict], None] | None = None,
         on_tool_end: Callable[[str, str], None] | None = None,
+        system_prompt: str | None = None,
     ):
         """Initialize agent."""
         self.config = config
@@ -72,7 +73,8 @@ class Agent:
         )
 
         # Build system prompt (will be updated after MCP connect)
-        self.system_prompt = self._build_system_prompt()
+        self._custom_system_prompt = system_prompt
+        self.system_prompt = system_prompt or self._build_system_prompt()
 
         # Message history
         self.messages: list[dict] = []
@@ -130,7 +132,7 @@ class Agent:
 
     def _finalize_mcp_initialization(self, results: dict) -> dict:
         """Update prompt state after MCP initialization."""
-        if results:
+        if results and not self._custom_system_prompt:
             summary = self.mcp.get_connection_summary()
             if summary["total_tools"] > 0:
                 self.system_prompt = self._build_system_prompt()
