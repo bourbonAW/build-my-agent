@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from evals.runner import EvalRunner
+from evals.validator.report import ValidationDimension, ValidationReport
 
 
 class _FakeAgent:
@@ -39,6 +40,38 @@ class _FakeAgent:
         return "prompt"
 
 
+def _fake_evaluator_run(runner_self) -> Path:
+    """Simulate EvaluatorAgentRunner.run() without subprocess or real LLM.
+
+    Returns a report with score 8.5 for each dimension (same as old Phase 1).
+    """
+    dimensions = []
+    for dim_name in runner_self.focus:
+        dim_config = runner_self.dimensions_config.get(dim_name, {})
+        threshold = dim_config.get("threshold", runner_self.threshold)
+        weight = dim_config.get("weight", 1.0 / len(runner_self.focus))
+        dimensions.append(
+            ValidationDimension(
+                name=dim_name,
+                score=8.5,
+                weight=weight,
+                threshold=threshold,
+                skill=runner_self.dimension_to_skill.get(dim_name, ""),
+                reasoning="mocked evaluation",
+                evidence=["mocked"],
+            )
+        )
+    report = ValidationReport(
+        dimensions=dimensions,
+        overall_threshold=runner_self.threshold,
+        summary="mocked validation",
+    )
+    report_path = runner_self.artifact_dir.parent / "validation" / "report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report.save(report_path)
+    return report_path
+
+
 def test_run_validation_executes_evaluator_and_returns_assertions(tmp_path: Path) -> None:
     runner = EvalRunner.__new__(EvalRunner)
     runner.config = {
@@ -55,22 +88,26 @@ def test_run_validation_executes_evaluator_and_returns_assertions(tmp_path: Path
     workdir.mkdir()
     (workdir / "main.py").write_text("print('hello')\n", encoding="utf-8")
 
-    result = runner._run_validation(
-        case={
-            "id": "validation-case",
-            "prompt": "write code",
-            "assertions": [{"id": "file_exists", "check": "file_exists:main.py"}],
-            "evaluator": {
-                "enabled": True,
-                "focus": ["correctness"],
-                "threshold": 9.0,
+    with patch(
+        "evals.validator.evaluator_agent.EvaluatorAgentRunner.run",
+        _fake_evaluator_run,
+    ):
+        result = runner._run_validation(
+            case={
+                "id": "validation-case",
+                "prompt": "write code",
+                "assertions": [{"id": "file_exists", "check": "file_exists:main.py"}],
+                "evaluator": {
+                    "enabled": True,
+                    "focus": ["correctness"],
+                    "threshold": 9.0,
+                },
             },
-        },
-        output="done",
-        workdir=workdir,
-        duration_ms=10,
-        token_usage={"total_tokens": 1},
-    )
+            output="done",
+            workdir=workdir,
+            duration_ms=10,
+            token_usage={"total_tokens": 1},
+        )
 
     assert result["passed"] is False
     assert {assertion["id"] for assertion in result["assertions"]} == {
@@ -114,7 +151,10 @@ def test_run_single_merges_validation_failure_into_result(tmp_path: Path) -> Non
         },
     }
 
-    with patch("evals.runner.Agent", _FakeAgent):
+    with patch("evals.runner.Agent", _FakeAgent), patch(
+        "evals.validator.evaluator_agent.EvaluatorAgentRunner.run",
+        _fake_evaluator_run,
+    ):
         result = runner.run_single(case)
 
     assert result.success is False
