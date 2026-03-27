@@ -51,8 +51,10 @@ def test_run_evaluator_agent_calls_agent_step(tmp_path: Path):
 
     mock_agent = MagicMock()
     mock_agent.messages = []
+
     def fake_step(prompt):
         from evals.validator.submit_tool import handle_submit
+
         handle_submit(score=8.0, reasoning="Good", evidence=["file.py works"])
         return "Evaluation complete"
 
@@ -140,6 +142,7 @@ def test_run_evaluator_agent_multiple_dimensions(tmp_path: Path):
     def fake_step(prompt):
         nonlocal call_count
         from evals.validator.submit_tool import handle_submit
+
         call_count += 1
         if "correctness" in prompt:
             handle_submit(score=9.0, reasoning="Correct", evidence=["all criteria met"])

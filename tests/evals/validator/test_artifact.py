@@ -50,9 +50,7 @@ def test_artifact_builder_respects_additional_exclude_patterns(tmp_path: Path) -
     (workdir / "ignore.log").write_text("ignore\n", encoding="utf-8")
 
     artifact_dir = (
-        ArtifactBuilder(case_id="case-003", workdir=workdir)
-        .add_exclude_patterns(["*.log"])
-        .build()
+        ArtifactBuilder(case_id="case-003", workdir=workdir).add_exclude_patterns(["*.log"]).build()
     )
 
     assert (artifact_dir / "workspace" / "keep.txt").exists()

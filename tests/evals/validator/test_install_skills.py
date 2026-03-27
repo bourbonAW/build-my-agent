@@ -42,10 +42,13 @@ def test_eval_runner_ensure_evaluator_skills_forces_project_install() -> None:
 def test_eval_runner_init_calls_skill_install_helper(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
 
-    with patch.object(EvalRunner, "_load_config", return_value={}), patch.object(
-        EvalRunner,
-        "_ensure_evaluator_skills",
-    ) as ensure_mock:
+    with (
+        patch.object(EvalRunner, "_load_config", return_value={}),
+        patch.object(
+            EvalRunner,
+            "_ensure_evaluator_skills",
+        ) as ensure_mock,
+    ):
         EvalRunner(config_path=config_path)
 
     ensure_mock.assert_called_once()
