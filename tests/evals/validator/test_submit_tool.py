@@ -80,6 +80,18 @@ def test_handle_submit_rejects_invalid_score():
     assert get_result() == {}
 
 
+def test_tool_handler_dispatches_kwargs():
+    """_tool_handler unpacks kwargs and delegates to handle_submit."""
+    from evals.validator.submit_tool import _tool_handler, clear_result, get_result
+
+    clear_result()
+    output = _tool_handler(score=6.0, reasoning="via handler", evidence=["e1"])
+    result = get_result()
+    assert result["score"] == 6.0
+    assert result["reasoning"] == "via handler"
+    assert "已提交" in output or "submitted" in output.lower()
+
+
 def test_tool_registered_in_registry():
     """submit_evaluation tool is registered in the global ToolRegistry."""
     import evals.validator.submit_tool  # noqa: F401 — triggers registration
