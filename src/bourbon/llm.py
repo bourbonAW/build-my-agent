@@ -2,6 +2,7 @@
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Generator
 
 from bourbon.config import Config
 
@@ -35,6 +36,24 @@ class LLMClient(ABC):
         max_tokens: int = 8000,
     ) -> dict:
         """Send chat completion request."""
+        pass
+
+    @abstractmethod
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        system: str | None = None,
+        max_tokens: int = 8000,
+    ) -> Generator[dict, None, None]:
+        """Stream chat completion.
+
+        Yields events:
+        - {"type": "text", "text": "chunk"} - Text token
+        - {"type": "tool_use", "id": "...", "name": "...", "input": {...}} - Tool call
+        - {"type": "usage", "input_tokens": N, "output_tokens": N} - Final usage
+        - {"type": "stop", "stop_reason": "..."} - Stream end
+        """
         pass
 
 
