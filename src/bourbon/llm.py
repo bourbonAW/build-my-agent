@@ -117,6 +117,68 @@ class AnthropicLLMClient(LLMClient):
         except Exception as e:
             raise LLMError(f"Anthropic API error: {e}") from e
 
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        system: str | None = None,
+        max_tokens: int = 8000,
+    ) -> Generator[dict, None, None]:
+        """Stream chat request to Anthropic."""
+        try:
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+            }
+            if system:
+                kwargs["system"] = system
+            if tools:
+                kwargs["tools"] = tools
+
+            with self.client.messages.stream(**kwargs) as stream:
+                current_tool = None
+                tool_json = ""
+
+                for event in stream:
+                    if event.type == "content_block_delta":
+                        if event.delta.type == "text_delta":
+                            yield {"type": "text", "text": event.delta.text}
+                        elif event.delta.type == "input_json_delta":
+                            tool_json += event.delta.partial_json
+                    elif event.type == "content_block_start":
+                        if event.content_block.type == "tool_use":
+                            current_tool = {
+                                "id": event.content_block.id,
+                                "name": event.content_block.name,
+                            }
+                            tool_json = ""
+                    elif event.type == "content_block_stop" and current_tool is not None:
+                        try:
+                            current_tool["input"] = json.loads(tool_json)
+                        except json.JSONDecodeError:
+                            current_tool["input"] = {}
+                        yield {
+                            "type": "tool_use",
+                            "id": current_tool["id"],
+                            "name": current_tool["name"],
+                            "input": current_tool["input"],
+                        }
+                        current_tool = None
+
+                final_message = stream.get_final_message()
+                yield {
+                    "type": "usage",
+                    "input_tokens": final_message.usage.input_tokens,
+                    "output_tokens": final_message.usage.output_tokens,
+                }
+                yield {
+                    "type": "stop",
+                    "stop_reason": final_message.stop_reason,
+                }
+        except Exception as e:
+            raise LLMError(f"Anthropic API error: {e}") from e
+
 
 class OpenAILLMClient(LLMClient):
     """OpenAI-compatible client (works with OpenAI, Kimi, and others)."""
