@@ -279,6 +279,117 @@ class OpenAILLMClient(LLMClient):
         except Exception as e:
             raise LLMError(f"OpenAI API error: {e}") from e
 
+    def chat_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        system: str | None = None,
+        max_tokens: int = 8000,
+    ) -> Generator[dict, None, None]:
+        """Stream chat request to OpenAI-compatible API."""
+        try:
+            # Build messages inline (same logic as chat() — no helper exists)
+            openai_messages = []
+            if system:
+                openai_messages.append({"role": "system", "content": system})
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif part.get("type") == "tool_result":
+                            text_parts.append(str(part.get("content", "")))
+                    content = "\n".join(text_parts)
+                openai_messages.append({"role": role, "content": content})
+
+            kwargs = {
+                "model": self.model,
+                "messages": openai_messages,
+                "max_tokens": max_tokens,
+                "stream": True,
+                # Required for usage data on the final chunk
+                "stream_options": {"include_usage": True},
+            }
+
+            if tools:
+                # Normalize tools inline (same logic as chat())
+                openai_tools = []
+                for tool in tools:
+                    openai_tools.append(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": tool["name"],
+                                "description": tool["description"],
+                                "parameters": tool["input_schema"],
+                            },
+                        }
+                    )
+                kwargs["tools"] = openai_tools
+                kwargs["tool_choice"] = "auto"
+
+            stream = self.client.chat.completions.create(**kwargs)
+            current_tool_calls: dict[int, dict] = {}
+            input_tokens = 0
+            output_tokens = 0
+            finish_reason = None
+
+            for chunk in stream:
+                # Guard: the usage-only final chunk may have empty choices
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if chunk.choices[0].finish_reason:
+                        finish_reason = chunk.choices[0].finish_reason
+
+                    if delta.content:
+                        yield {"type": "text", "text": delta.content}
+
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in current_tool_calls:
+                                current_tool_calls[idx] = {
+                                    "id": tc.id or "",
+                                    "name": tc.function.name or "",
+                                    "arguments": "",
+                                }
+                            if tc.function and tc.function.arguments:
+                                current_tool_calls[idx]["arguments"] += tc.function.arguments
+                            if tc.id and not current_tool_calls[idx]["id"]:
+                                current_tool_calls[idx]["id"] = tc.id
+
+                # Usage appears on the final chunk (with include_usage=True)
+                if chunk.usage:
+                    input_tokens = chunk.usage.prompt_tokens
+                    output_tokens = chunk.usage.completion_tokens
+
+            # After consuming the full stream, emit tool calls, usage, and stop
+            for idx in sorted(current_tool_calls.keys()):
+                tc = current_tool_calls[idx]
+                try:
+                    args = json.loads(tc["arguments"])
+                except json.JSONDecodeError:
+                    args = {}
+                yield {
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "input": args,
+                }
+
+            stop_reason = "tool_use" if finish_reason == "tool_calls" else "end_turn"
+            yield {
+                "type": "usage",
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            }
+            yield {"type": "stop", "stop_reason": stop_reason}
+        except Exception as e:
+            raise LLMError(f"OpenAI API error: {e}") from e
+
 
 def create_client(config: Config) -> LLMClient:
     """Create LLM client from configuration."""
