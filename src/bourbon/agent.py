@@ -696,3 +696,7 @@ class Agent:
     def get_token_usage(self) -> dict:
         """Get current token usage."""
         return self.token_usage.copy()
+
+    def get_session_tokens(self) -> int:
+        """Estimate current session token count."""
+        return self.compressor.estimate_tokens(self.messages)
