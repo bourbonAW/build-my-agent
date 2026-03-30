@@ -44,3 +44,4 @@ env/
 # Eval results
 evals/results/
 .DS_Store
+.worktrees/
