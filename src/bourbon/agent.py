@@ -294,6 +294,142 @@ class Agent:
         # Run the conversation loop
         return self._run_conversation_loop()
 
+    def step_stream(
+        self,
+        user_input: str,
+        on_text_chunk: Callable[[str], None],
+    ) -> str:
+        """Process user input with streaming text output.
+
+        Args:
+            user_input: User's message
+            on_text_chunk: Callback invoked for each text chunk (for real-time display).
+                          The callback should handle immediate UI updates.
+
+        Returns:
+            Complete response text (for history and optional markdown re-rendering)
+        """
+        # Check if we're resuming from a pending confirmation
+        if self.pending_confirmation:
+            return self._handle_confirmation_response(user_input)
+
+        # Add user message
+        self.messages.append({"role": "user", "content": user_input})
+
+        # Pre-process: micro-compact
+        self.compressor.microcompact(self.messages)
+
+        # Check if we need full compression
+        if self.compressor.should_compact(self.messages):
+            self._auto_compact()
+
+        # Run the streaming conversation loop
+        return self._run_conversation_loop_stream(on_text_chunk)
+
+    def _run_conversation_loop_stream(
+        self,
+        on_text_chunk: Callable[[str], None],
+    ) -> str:
+        """Run conversation loop with streaming output."""
+        import logging
+
+        tool_round = 0
+        accumulated_text = ""
+
+        while tool_round < self._max_tool_rounds:
+            # Call LLM with streaming
+            try:
+                event_stream = self.llm.chat_stream(
+                    messages=self.messages,
+                    tools=definitions(),
+                    system=self.system_prompt,
+                    max_tokens=64000,
+                )
+
+                current_text = ""
+                has_tool_calls = False
+                # Collect ALL tool_use events (model may return multiple per turn)
+                tool_use_blocks: list[dict] = []
+
+                for event in event_stream:
+                    if event["type"] == "text":
+                        text_chunk = event["text"]
+                        current_text += text_chunk
+                        accumulated_text += text_chunk
+                        # Protect callback — log and continue on error (per design spec)
+                        try:
+                            on_text_chunk(text_chunk)
+                        except Exception:
+                            logging.getLogger(__name__).warning(
+                                "on_text_chunk callback error", exc_info=True
+                            )
+
+                    elif event["type"] == "tool_use":
+                        has_tool_calls = True
+                        tool_use_blocks.append(event)
+
+                    elif event["type"] == "usage":
+                        usage = event
+                        self.token_usage["input_tokens"] += usage.get("input_tokens", 0)
+                        self.token_usage["output_tokens"] += usage.get("output_tokens", 0)
+                        self.token_usage["total_tokens"] = (
+                            self.token_usage["input_tokens"] + self.token_usage["output_tokens"]
+                        )
+
+                    elif event["type"] == "stop":
+                        stop_reason = event.get("stop_reason", "end_turn")
+                        has_tool_calls = stop_reason == "tool_use" or has_tool_calls
+
+                # Build assistant response content
+                content = []
+                if current_text:
+                    content.append({"type": "text", "text": current_text})
+                for tool_data in tool_use_blocks:
+                    content.append(
+                        {
+                            "type": "tool_use",
+                            "id": tool_data["id"],
+                            "name": tool_data["name"],
+                            "input": tool_data["input"],
+                        }
+                    )
+
+                # Add assistant response to history
+                self.messages.append({"role": "assistant", "content": content})
+
+                if not has_tool_calls or not tool_use_blocks:
+                    # Final response - return accumulated text
+                    return accumulated_text
+
+                # Execute ALL tool calls (matches sync _run_conversation_loop behavior)
+                tool_results = self._execute_tools(tool_use_blocks)
+
+                # Check if we have a pending confirmation
+                if self.pending_confirmation:
+                    return accumulated_text + "\n" + self._format_confirmation_prompt()
+
+                # Add tool results to history
+                self.messages.append({"role": "user", "content": tool_results})
+
+            except LLMError as e:
+                # Fallback: retry once with non-streaming API (per design spec)
+                logging.getLogger(__name__).warning(
+                    f"Streaming API error, falling back to non-streaming: {e}"
+                )
+                try:
+                    return self._run_conversation_loop()
+                except Exception:
+                    error_msg = f"LLM Error: {e}"
+                    self.messages.append({"role": "assistant", "content": error_msg})
+                    return accumulated_text + error_msg
+
+            tool_round += 1
+
+        return (
+            accumulated_text + "\n[Reached maximum tool execution rounds. "
+            "Providing final response based on what was learned.]"
+        )
+
     def _handle_confirmation_response(self, user_input: str) -> str:
         """Handle user response to a pending confirmation."""
         confirmation = self.pending_confirmation

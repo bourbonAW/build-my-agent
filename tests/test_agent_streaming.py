@@ -1,15 +1,12 @@
 """Tests for Agent streaming support."""
 
-import pytest
 from pathlib import Path
 
 
 def test_get_session_tokens_returns_estimate():
     """get_session_tokens returns estimated token count."""
     from bourbon.agent import Agent
-    from bourbon.config import Config
 
-    config = Config()
     agent = object.__new__(Agent)
     agent.messages = [{"role": "user", "content": "Hello world"}]
 
@@ -52,12 +49,16 @@ def test_step_stream_calls_callback_for_chunks():
 
     # Mock compressor
     class MockCompressor:
-        def microcompact(self, msgs): pass
-        def should_compact(self, msgs): return False
+        def microcompact(self, msgs):
+            pass
+
+        def should_compact(self, msgs):
+            return False
 
     agent.compressor = MockCompressor()
 
     chunks = []
+
     def on_chunk(text):
         chunks.append(text)
 
