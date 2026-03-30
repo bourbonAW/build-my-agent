@@ -91,10 +91,11 @@ def step_stream(
     
     Args:
         user_input: User's message
-        on_text_chunk: Callback for each text chunk (for real-time display)
+        on_text_chunk: Callback invoked for each text chunk (for real-time display).
+                      The callback should handle immediate UI updates.
     
     Returns:
-        Complete response text (for history and markdown rendering)
+        Complete response text (for history and optional markdown re-rendering)
     """
 ```
 
@@ -155,20 +156,22 @@ def _process_input_streaming(self, user_input: str) -> None:
     
     def on_chunk(text: str) -> None:
         chunks.append(text)
-        # Optional: Show progress indicator
+        # Real-time display: print chunk immediately without newline
+        self.console.print(text, end="", flush=True)
     
     try:
+        self.console.print()  # New line before streaming starts
         response = self.agent.step_stream(user_input, on_chunk)
     except Exception as e:
         self.console.print(f"[red]Error: {e}[/red]")
         return
     
-    # Render complete response with markdown
-    self.console.print()
+    # If response contains markdown (code blocks, etc.), re-render with proper formatting
     if "```" in response:
+        # Clear the streamed text (move up and overwrite)
+        lines_count = response.count('\n') + 1
+        self.console.print(f"\r\033[{lines_count}A", end="")
         self.console.print(Markdown(response))
-    else:
-        self.console.print(response)
     
     # Handle pending confirmation if needed
     if self.agent.pending_confirmation:
