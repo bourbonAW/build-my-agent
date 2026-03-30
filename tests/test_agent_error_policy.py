@@ -18,6 +18,12 @@ class MockLLM:
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
 
+    def chat_stream(self, **kwargs):
+        """Mock streaming for tests."""
+        yield {"type": "text", "text": "Mock response"}
+        yield {"type": "usage", "input_tokens": 10, "output_tokens": 5}
+        yield {"type": "stop", "stop_reason": "end_turn"}
+
 
 @pytest.fixture
 def mock_agent():
