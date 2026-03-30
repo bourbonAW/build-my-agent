@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -41,7 +43,7 @@ def test_validation_report_save_and_load_roundtrip(tmp_path: Path) -> None:
             ValidationDimension(
                 name="correctness",
                 score=8.5,
-                weight=0.6,
+                weight=1.0,
                 threshold=9.0,
                 reasoning="core behavior is mostly correct",
                 evidence=["src/main.py:10"],
@@ -50,6 +52,16 @@ def test_validation_report_save_and_load_roundtrip(tmp_path: Path) -> None:
         ],
         overall_threshold=8.0,
         summary="close but not fully correct",
+        version="1.0",
+        timestamp="2026-03-30T00:00:00Z",
+        evaluator_focus=["correctness"],
+        skills_used=["eval-correctness"],
+        telemetry={
+            "focus_dimensions": ["correctness"],
+            "skills_invoked": ["eval-correctness"],
+            "duration_ms": 12,
+            "token_usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+        },
     )
 
     report_path = tmp_path / "report.json"
@@ -59,6 +71,26 @@ def test_validation_report_save_and_load_roundtrip(tmp_path: Path) -> None:
     assert loaded.dimensions[0].name == "correctness"
     assert loaded.dimensions[0].evidence == ["src/main.py:10"]
     assert loaded.summary == "close but not fully correct"
+    assert loaded.version == "1.0"
+    assert loaded.timestamp == "2026-03-30T00:00:00Z"
+    assert loaded.evaluator_focus == ["correctness"]
+    assert loaded.skills_used == ["eval-correctness"]
+    assert loaded.telemetry["duration_ms"] == 12
+
+
+def test_validation_report_normalizes_weights_and_warns() -> None:
+    with pytest.warns(UserWarning, match="normalized"):
+        report = ValidationReport(
+            dimensions=[
+                ValidationDimension(name="correctness", score=9.0, weight=3.0, threshold=8.0),
+                ValidationDimension(name="quality", score=6.0, weight=1.0, threshold=7.0),
+            ],
+            overall_threshold=7.0,
+        )
+
+    assert report.dimensions[0].weight == pytest.approx(0.75)
+    assert report.dimensions[1].weight == pytest.approx(0.25)
+    assert report.overall_score == pytest.approx(8.25)
 
 
 def test_validation_report_converts_to_assertions() -> None:

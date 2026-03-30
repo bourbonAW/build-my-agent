@@ -125,6 +125,16 @@ class OutputArtifact:
 class ArtifactBuilder:
     """Convenience builder for output artifacts."""
 
+    DEFAULT_EXCLUDE_PATTERNS = {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        "*.pyc",
+        ".venv",
+        ".pytest_cache",
+        "artifact",
+    }
+
     def __init__(self, case_id: str, workdir: Path, max_size_mb: float = 100.0):
         self.case_id = case_id
         self.workdir = workdir
@@ -132,7 +142,7 @@ class ArtifactBuilder:
         self._meta: dict = {}
         self._context: dict = {}
         self._output: dict = {}
-        self._exclude_patterns: set[str] = {"artifact", "__pycache__"}
+        self._exclude_patterns: set[str] = set(self.DEFAULT_EXCLUDE_PATTERNS)
 
     def set_meta(self, **kwargs) -> ArtifactBuilder:
         self._meta.update(kwargs)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from evals.validator.artifact import ArtifactBuilder
 from evals.validator.evaluator_agent import (
     EVALUATOR_SYSTEM_PROMPT,
+    EvaluatorAgentRunner,
     EvaluatorConfig,
     build_evaluation_prompt,
     run_evaluator_agent,
@@ -51,6 +53,11 @@ def test_run_evaluator_agent_calls_agent_step(tmp_path: Path):
 
     mock_agent = MagicMock()
     mock_agent.messages = []
+    mock_agent.get_token_usage.return_value = {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "total_tokens": 3,
+    }
 
     def fake_step(prompt):
         from evals.validator.submit_tool import handle_submit
@@ -77,6 +84,9 @@ def test_run_evaluator_agent_calls_agent_step(tmp_path: Path):
     assert mock_agent.step.call_count == 1
     assert report.dimensions[0].score == 8.0
     assert report.dimensions[0].reasoning == "Good"
+    assert report.evaluator_focus == ["correctness"]
+    assert report.skills_used == ["eval-correctness"]
+    assert report.telemetry["focus_dimensions"] == ["correctness"]
 
 
 def test_run_evaluator_agent_handles_missing_submission(tmp_path: Path):
@@ -86,6 +96,11 @@ def test_run_evaluator_agent_handles_missing_submission(tmp_path: Path):
     mock_agent = MagicMock()
     mock_agent.messages = []
     mock_agent.step.return_value = "I analyzed the code but forgot to submit."
+    mock_agent.get_token_usage.return_value = {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "total_tokens": 3,
+    }
 
     with patch(
         "evals.validator.evaluator_agent.create_evaluator_agent",
@@ -112,6 +127,11 @@ def test_run_evaluator_agent_handles_step_exception(tmp_path: Path):
     mock_agent = MagicMock()
     mock_agent.messages = []
     mock_agent.step.side_effect = RuntimeError("LLM connection failed")
+    mock_agent.get_token_usage.return_value = {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "total_tokens": 3,
+    }
 
     with patch(
         "evals.validator.evaluator_agent.create_evaluator_agent",
@@ -137,6 +157,11 @@ def test_run_evaluator_agent_multiple_dimensions(tmp_path: Path):
 
     mock_agent = MagicMock()
     mock_agent.messages = []
+    mock_agent.get_token_usage.return_value = {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "total_tokens": 6,
+    }
     call_count = 0
 
     def fake_step(prompt):
@@ -174,3 +199,30 @@ def test_run_evaluator_agent_multiple_dimensions(tmp_path: Path):
     assert report.dimensions[0].score == 9.0
     assert report.dimensions[1].name == "quality"
     assert report.dimensions[1].score == 7.5
+
+
+def test_evaluator_agent_runner_writes_subprocess_config(tmp_path: Path) -> None:
+    artifact_dir = _make_artifact(tmp_path)
+    report_path = artifact_dir.parent / "validation" / "report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("{}", encoding="utf-8")
+
+    completed = MagicMock(returncode=0, stderr="")
+
+    with patch("evals.validator.evaluator_agent.subprocess.run", return_value=completed) as run_mock:
+        path = EvaluatorAgentRunner(
+            artifact_dir=artifact_dir,
+            focus=["correctness"],
+            threshold=8.0,
+            timeout=45,
+            dimensions_config={"correctness": {"weight": 1.0, "threshold": 8.0}},
+            dimension_to_skill={"correctness": "eval-correctness"},
+        ).run()
+
+    config_path = artifact_dir.parent / "evaluator_config.json"
+    config_data = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert path == report_path
+    assert config_data["dimensions"]["correctness"]["threshold"] == 8.0
+    assert config_data["dimension_to_skill"]["correctness"] == "eval-correctness"
+    run_mock.assert_called_once()

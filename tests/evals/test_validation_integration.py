@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from bourbon import __version__
 from evals.runner import EvalRunner
 from evals.validator.report import ValidationDimension, ValidationReport
 
@@ -162,3 +165,110 @@ def test_run_single_merges_validation_failure_into_result(tmp_path: Path) -> Non
         "eval_correctness",
         "eval_overall",
     }
+
+
+def test_run_validation_writes_artifact_contract_and_applies_excludes(tmp_path: Path) -> None:
+    runner = EvalRunner.__new__(EvalRunner)
+    runner.config = {
+        "evaluator": {
+            "default_threshold": 8.0,
+            "default_timeout": 30,
+            "exclude_patterns": {
+                "patterns": ["*.log"],
+            },
+            "default_dimensions": {
+                "correctness": {"weight": 1.0, "threshold": 8.0},
+            },
+        }
+    }
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "main.py").write_text("print('hello')\n", encoding="utf-8")
+    (workdir / "ignore.log").write_text("ignore me\n", encoding="utf-8")
+
+    def _asserting_run(runner_self) -> Path:
+        meta = json.loads((runner_self.artifact_dir / "meta.json").read_text(encoding="utf-8"))
+        output = json.loads((runner_self.artifact_dir / "output.json").read_text(encoding="utf-8"))
+
+        assert meta["generator_version"] == f"bourbon-{__version__}"
+        assert output["tool_calls"] == [
+            {"tool": "read_file", "args": {"path": "main.py"}, "result": "print('hello')"}
+        ]
+        assert output["errors"] == ["Denied: missing permission"]
+        assert not (runner_self.artifact_dir / "workspace" / "ignore.log").exists()
+
+        report = ValidationReport(
+            dimensions=[
+                ValidationDimension(
+                    name="correctness",
+                    score=9.0,
+                    weight=1.0,
+                    threshold=8.0,
+                    reasoning="artifact contract present",
+                    evidence=["meta.json and output.json verified"],
+                )
+            ],
+            overall_threshold=8.0,
+            summary="ok",
+        )
+        report_path = runner_self.artifact_dir.parent / "validation" / "report.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report.save(report_path)
+        return report_path
+
+    with patch("evals.validator.evaluator_agent.EvaluatorAgentRunner.run", _asserting_run):
+        result = runner._run_validation(
+            case={
+                "id": "validation-case",
+                "prompt": "write code",
+                "assertions": [],
+                "evaluator": {
+                    "enabled": True,
+                    "focus": ["correctness"],
+                },
+            },
+            output="done",
+            workdir=workdir,
+            duration_ms=10,
+            token_usage={"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+            tool_calls=[
+                {"tool": "read_file", "args": {"path": "main.py"}, "result": "print('hello')"}
+            ],
+            errors=["Denied: missing permission"],
+        )
+
+    assert result["passed"] is True
+
+
+def test_run_single_skips_cleanup_when_keep_artifacts_is_set(tmp_path: Path) -> None:
+    runner = EvalRunner.__new__(EvalRunner)
+    runner.config = {"evaluator": {}}
+    runner.fast_mode = True
+    runner.num_runs = 1
+    runner.timeout = 60
+    runner.bourbon_config = None
+    runner.case_results = []
+    runner._load_bourbon_config = lambda: {}
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    runner._setup_workspace = lambda _case: workdir
+    runner._cleanup_workspace = MagicMock()
+
+    case = {
+        "id": "keep-artifacts",
+        "prompt": "write code",
+        "assertions": [],
+    }
+
+    with patch("evals.runner.Agent", _FakeAgent), patch.dict(
+        os.environ,
+        {"EVAL_KEEP_ARTIFACTS": "1"},
+        clear=False,
+    ):
+        result = runner.run_single(case)
+
+    assert result.success is True
+    runner._cleanup_workspace.assert_not_called()

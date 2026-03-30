@@ -20,6 +20,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from bourbon import __version__
 from bourbon.config import ConfigManager
 from bourbon.agent import Agent, AgentError
 from evals.metrics import RunMetrics, AggregatedMetrics, calculate_metrics, calculate_benchmark_stats
@@ -202,6 +203,53 @@ class EvalRunner:
         """清理工作目录"""
         if workdir.exists():
             shutil.rmtree(workdir)
+
+    @staticmethod
+    def _extract_tool_execution_trace(agent: Any) -> tuple[list[dict], list[str]]:
+        """Extract executed tool calls and error outputs from agent message history."""
+        messages = getattr(agent, "messages", []) or []
+        tool_uses: dict[str, dict] = {}
+        tool_calls: list[dict] = []
+        errors: list[str] = []
+
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+
+            if message.get("role") == "assistant":
+                for block in content:
+                    if block.get("type") != "tool_use":
+                        continue
+                    tool_uses[block.get("id", "")] = {
+                        "tool": block.get("name", ""),
+                        "args": block.get("input", {}),
+                    }
+                continue
+
+            if message.get("role") != "user":
+                continue
+
+            for block in content:
+                if block.get("type") != "tool_result":
+                    continue
+                tool_use = tool_uses.get(block.get("tool_use_id", ""), {})
+                result = block.get("content", "")
+                tool_calls.append(
+                    {
+                        "tool": tool_use.get("tool", ""),
+                        "args": tool_use.get("args", {}),
+                        "result": result,
+                    }
+                )
+                if isinstance(result, str) and (
+                    result.startswith("Error")
+                    or result.startswith("Denied")
+                    or result.startswith("Requires approval")
+                ):
+                    errors.append(result)
+
+        return tool_calls, errors
     
     def _load_audit_events(self, workdir: Path) -> list[dict]:
         """Read JSONL audit log from workdir. Returns [] if file missing."""
@@ -360,6 +408,8 @@ class EvalRunner:
         workdir: Path,
         duration_ms: int,
         token_usage: dict,
+        tool_calls: list[dict] | None = None,
+        errors: list[str] | None = None,
     ) -> dict:
         """Run independent validation via the evaluator subprocess."""
 
@@ -373,7 +423,15 @@ class EvalRunner:
             duration_ms=duration_ms,
             token_usage=token_usage,
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            generator_version=f"bourbon-{__version__}",
         )
+        exclude_patterns = (
+            self.config.get("evaluator", {})
+            .get("exclude_patterns", {})
+            .get("patterns", [])
+        )
+        if exclude_patterns:
+            builder.add_exclude_patterns(exclude_patterns)
         builder.set_context(
             prompt=case.get("prompt", ""),
             success_criteria=evaluator_config.get("success_criteria", []),
@@ -389,7 +447,12 @@ class EvalRunner:
             evaluation_hints=evaluator_config.get("evaluation_hints", []),
             reference_files=evaluator_config.get("reference_files", []),
         )
-        builder.set_output(final_output=output, exit_reason="completed")
+        builder.set_output(
+            final_output=output,
+            tool_calls=tool_calls or [],
+            errors=errors or [],
+            exit_reason="completed",
+        )
         artifact_dir = builder.build()
 
         focus = evaluator_config.get("focus", ["correctness"])
@@ -464,6 +527,7 @@ class EvalRunner:
             
             duration = int((time.time() - start) * 1000)
             token_usage = agent.get_token_usage()
+            tool_calls, tool_errors = self._extract_tool_execution_trace(agent)
             
             assertion_results = self._execute_assertions(case, output, workdir)
             success = all(a["passed"] for a in assertion_results) if assertion_results else True
@@ -477,6 +541,8 @@ class EvalRunner:
                         workdir=workdir,
                         duration_ms=duration,
                         token_usage=token_usage,
+                        tool_calls=tool_calls,
+                        errors=tool_errors,
                     )
                     success = success and validation_result["passed"]
                     assertion_results.extend(validation_result["assertions"])
@@ -513,7 +579,7 @@ class EvalRunner:
         finally:
             import os
             os.chdir(original_cwd)
-            if workdir:
+            if workdir and not os.environ.get("EVAL_KEEP_ARTIFACTS"):
                 self._cleanup_workspace(workdir)
     
     def run_case(self, case: dict) -> CaseResult:

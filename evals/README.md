@@ -128,17 +128,20 @@ Eval Runner 现在支持独立验证层，采用 Generator-Evaluator 分离：
 }
 ```
 
-### Phase 1 Scope
+### Current Status
 
-- 当前实现是基础设施阶段
-- Evaluator 会生成真实 artifact / report，并通过 subprocess 运行
-- 评分仍是模拟值，后续 Phase 2 才接入真实 `skill()` 调用
+- Validator 主路径已经接入 Phase 2：Evaluator subprocess 会实例化真实 Bourbon Agent，并按维度执行评估
+- `artifact/` 快照会包含 `meta.json`、`context.json`、`output.json`、`workspace/`，`report.json` 会包含维度结果和 report metadata/telemetry
+- Evaluator skills 仍然通过项目内 `evals/validator/skills/` hermetic 安装到 `~/.bourbon/skills/`
+- 当前仍建议保留程序化 assertions 作为第一层门禁，independent validation 作为增强层
 
 ### 调试
 
 ```bash
 EVAL_KEEP_ARTIFACTS=1 uv run python evals/runner.py
 ```
+
+设置 `EVAL_KEEP_ARTIFACTS=1` 后，runner 会保留临时 workspace，便于检查 `artifact/` 和 `validation/report.json`。
 
 ### Hermetic Evaluator Skills
 

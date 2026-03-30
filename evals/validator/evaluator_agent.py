@@ -6,6 +6,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -155,6 +156,7 @@ def run_evaluator_agent(config: EvaluatorConfig) -> ValidationReport:
     # Import triggers submit_evaluation tool registration in this subprocess
     from evals.validator.submit_tool import clear_result, get_result
 
+    started_at = time.time()
     OutputArtifact.load(config.artifact_dir)
 
     agent = create_evaluator_agent(
@@ -211,6 +213,14 @@ def run_evaluator_agent(config: EvaluatorConfig) -> ValidationReport:
         dimensions=dimensions,
         overall_threshold=config.threshold,
         summary="phase 2 LLM-based validation",
+        evaluator_focus=list(config.focus),
+        skills_used=[dimension.skill for dimension in dimensions if dimension.skill],
+        telemetry={
+            "focus_dimensions": list(config.focus),
+            "skills_invoked": [dimension.skill for dimension in dimensions if dimension.skill],
+            "duration_ms": int((time.time() - started_at) * 1000),
+            "token_usage": agent.get_token_usage(),
+        },
     )
     report_path = config.artifact_dir.parent / "validation" / "report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
