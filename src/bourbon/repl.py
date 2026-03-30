@@ -5,6 +5,7 @@ from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 from rich.console import Console
@@ -66,6 +67,7 @@ class REPL:
         history_file.parent.mkdir(parents=True, exist_ok=True)
 
         self.session = PromptSession(
+            message=self._get_prompt,
             history=FileHistory(str(history_file)),
             auto_suggest=AutoSuggestFromHistory(),
             enable_history_search=True,
@@ -77,6 +79,40 @@ class REPL:
                 "prompt": "#5F9EA0 bold",  # Cadet blue
             }
         )
+
+    def _get_prompt(self) -> HTML:
+        """Generate dynamic prompt with context usage indicator."""
+        # Check if context display is disabled
+        if not getattr(self.config.ui, "show_token_count", True):
+            return HTML("🥃 bourbon >> ")
+
+        try:
+            tokens = self.agent.get_session_tokens()
+            threshold = self.agent.compressor.token_threshold
+
+            # Calculate percentage
+            percent = min(100.0, (tokens / threshold * 100) if threshold > 0 else 0)
+
+            # Format numbers
+            tokens_k = tokens / 1000
+            threshold_k = threshold / 1000
+
+            # Color coding
+            if percent < 50:
+                color = "#888888"  # gray
+            elif percent < 80:
+                color = "#FFA500"  # orange
+            else:
+                color = "#FF4444"  # red
+
+            ctx_line = (
+                f'<style fg="{color}">context: {percent:.1f}%'
+                f" ({tokens_k:.1f}k/{threshold_k:.1f}k)</style>"
+            )
+            return HTML(f"{ctx_line}\n🥃 bourbon >> ")
+        except Exception:
+            # Fallback if anything goes wrong
+            return HTML("🥃 bourbon >> ")
 
     def _on_tool_start(self, tool_name: str, tool_input: dict) -> None:
         """Callback when a tool starts executing.
@@ -118,7 +154,6 @@ class REPL:
                 try:
                     # Get user input
                     user_input = self.session.prompt(
-                        "🥃 bourbon >> ",
                         style=self.style,
                     )
 
@@ -152,20 +187,34 @@ class REPL:
         Args:
             user_input: User's message
         """
-        # Show thinking status
-        self.console.print("[dim]Thinking...[/dim]")
+        self._process_input_streaming(user_input)
+
+    def _process_input_streaming(self, user_input: str) -> None:
+        """Process user input with streaming output."""
+        chunks: list[str] = []
+
+        def on_chunk(text: str) -> None:
+            chunks.append(text)
+            # Real-time display: print chunk immediately without newline
+            self.console.print(text, end="")
 
         try:
-            response = self.agent.step(user_input)
+            self.console.print()  # New line before streaming starts
+            response = self.agent.step_stream(user_input, on_chunk)
         except Exception as e:
             self.console.print(f"[red]Error: {e}[/red]")
             return
 
-        # Print response
-        self.console.print()  # Blank line before response
-        self._print_response(response)
+        # If response contains markdown (code blocks, etc.), re-render with proper formatting
+        if "```" in response:
+            # Clear the streamed text by moving cursor up
+            lines_count = response.count("\n") + 1
+            if lines_count > 0:
+                # Use ANSI escape to clear lines (simplified approach)
+                self.console.print(f"\r\033[{lines_count}A\033[J", end="")
+            self.console.print(Markdown(response))
 
-        # Check if we have a pending confirmation (high-risk operation failed)
+        # Handle pending confirmation if needed
         if self.agent.pending_confirmation:
             self._handle_pending_confirmation()
 
