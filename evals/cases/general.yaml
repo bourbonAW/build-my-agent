@@ -1,0 +1,49 @@
+- description: "Code Analysis: identify divide-by-zero bug"
+  vars:
+    case_id: "code-analysis-001"
+    prompt: |
+      分析以下代码中的问题，解释 bug 原因并给出修复建议：
+
+      def calculate_average(numbers):
+          sum = 0
+          for n in numbers:
+              sum += n
+          return sum / len(numbers)
+
+      result = calculate_average([])
+  assert:
+    - type: llm-rubric
+      metric: "identify_bug"
+      value: "检查是否提到了空列表、除零、ZeroDivisionError 或 len(numbers)==0 的判断"
+    - type: llm-rubric
+      metric: "provide_fix"
+      value: "检查是否建议添加空列表检查、返回 0 或抛出更有意义的异常"
+  metadata:
+    category: "code-analysis"
+    legacy_case_id: "code-analysis-001"
+
+- description: "Stage B: analyze CSV revenue data"
+  vars:
+    case_id: "stage-b-csv-001"
+    skill: "data-analysis"
+    prompt: "Analyze the sales.csv file and tell me the total rows and average revenue"
+    setup_files:
+      sales.csv: |
+        product,revenue
+        A,1000
+        B,2000
+        C,1500
+  assert:
+    - type: contains-any
+      value:
+        - "3 rows"
+        - "total"
+        - "count"
+    - type: contains-any
+      value:
+        - "average"
+        - "1500"
+        - "mean"
+  metadata:
+    category: "stage-b"
+    legacy_case_id: "stage-b-csv-001"

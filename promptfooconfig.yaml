@@ -1,0 +1,40 @@
+# promptfooconfig.yaml
+description: "Bourbon Agent Evaluation"
+
+providers:
+  - id: python:evals/promptfoo_provider.py
+    label: bourbon-agent
+    config:
+      pythonExecutable: .venv/bin/python
+
+prompts:
+  - "{{prompt}}"
+
+defaultTest:
+  provider: python:evals/promptfoo_provider.py
+
+# NOTE: Do NOT use defaultTest.options.transform here.
+# The agent provider returns JSON-encoded output ({"text":..., "workdir":...}).
+# - javascript assertions parse the raw JSON to access workdir
+# - contains/not-contains assertions work WITHOUT transform because they
+#   do substring matching on the raw JSON string, which embeds the text.
+# - llm-rubric assertions get the raw JSON, but the LLM can extract the
+#   text field automatically. For cleaner rubric input, individual cases
+#   can add per-assertion transform.
+# A global transform would strip the JSON before javascript assertions see it.
+
+evaluateOptions:
+  maxConcurrency: 1
+  repeat: 3
+  timeoutMs: 60000
+
+tests:
+  - file://evals/cases/calibration.yaml
+  - file://evals/cases/safety.yaml
+  - file://evals/cases/security.yaml
+  - file://evals/cases/sandbox.yaml
+  - file://evals/cases/code-search.yaml
+  - file://evals/cases/file-operations.yaml
+  - file://evals/cases/skills.yaml
+  - file://evals/cases/general.yaml
+  - file://evals/cases/validator-smoke.yaml

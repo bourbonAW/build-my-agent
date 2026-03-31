@@ -1,0 +1,262 @@
+- description: "Skills/Investment Agent: china market monitor"
+  vars:
+    case_id: "skill-inv-china-001"
+    skill: "investment-agent"
+    prompt: "看一下今天A股和港股的表现，特别是沪深300估值、融资余额和北向资金流向"
+  assert:
+    - type: contains-any
+      value: ["沪深300", "CSI300", "PE", "PB", "估值"]
+    - type: contains-any
+      value: ["融资余额", "杠杆", "两融", "Margin"]
+    - type: contains-any
+      value: ["北向资金", "外资", "净流入", "资金流向"]
+    - type: contains-any
+      value: ["港股", "恒生", "恒科", "HK", "Hong Kong"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-china-001"
+
+- description: "Skills/Investment Agent: daily summary"
+  vars:
+    case_id: "skill-inv-daily-001"
+    skill: "investment-agent"
+    prompt: "生成今天的投资日报，包含全球市场概况、我的持仓表现和重要新闻"
+  assert:
+    - type: contains-any
+      value: ["全球", "美股", "亚太", "欧洲", "市场概况"]
+    - type: contains-any
+      value: ["持仓", "组合", "盈亏", "净值", "表现"]
+    - type: contains-any
+      value: ["新闻", "事件", "重要", "宏观", "政策"]
+    - type: contains-any
+      value: ["策略", "建议", "操作", "配置", "调整"]
+    - type: contains-any
+      value: ["风险", "评级", "情绪", "恐惧", "贪婪"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-daily-001"
+
+- description: "Skills/Investment Agent: fund monitor"
+  vars:
+    case_id: "skill-inv-fund-001"
+    skill: "investment-agent"
+    prompt: "帮我查询一下019455中韩半导体ETF今天的表现，包括涨跌幅、净值和交易量"
+  assert:
+    - type: contains
+      value: "019455"
+    - type: contains-any
+      value: ["涨跌幅", "%", "涨跌"]
+    - type: contains-any
+      value: ["净值", "单位净值"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-fund-001"
+
+- description: "Skills/Investment Agent: gold hedge analysis"
+  vars:
+    case_id: "skill-inv-gold-001"
+    skill: "investment-agent"
+    prompt: "分析一下黄金ETF000216的避险效果，以及DXY上涨和实际利率变化对黄金的影响"
+  assert:
+    - type: contains-any
+      value: ["黄金", "000216", "华安黄金"]
+    - type: contains-any
+      value: ["DXY", "美元指数", "美元", "负相关"]
+    - type: contains-any
+      value: ["实际利率", "实际收益率", "国债", "TIPS"]
+    - type: contains-any
+      value: ["避险", "对冲", "保护", "分散风险"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-gold-001"
+
+- description: "Skills/Investment Agent: historical patterns"
+  vars:
+    case_id: "skill-inv-historical-001"
+    skill: "investment-agent"
+    prompt: "当前的市场状况与历史上的哪些危机案例相似？帮我匹配历史模式并给出警示"
+  assert:
+    - type: contains-any
+      value: ["2008", "2020", "2015", "危机", "历史", "案例", "相似"]
+    - type: contains-any
+      value: ["相似度", "匹配", "模式", "对比", "相似"]
+    - type: contains-any
+      value: ["VIX", "DXY", "利差", "指标", "对比"]
+    - type: contains-any
+      value: ["警示", "信号", "警告", "注意", "风险"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-historical-001"
+
+- description: "Skills/Investment Agent: leading indicator alerts"
+  vars:
+    case_id: "skill-inv-leading-001"
+    skill: "investment-agent"
+    prompt: "运行领先指标预警系统，检查当前的US-Japan利差、MOVE指数、高收益债利差和期限溢价，告诉我整体风险等级"
+  assert:
+    - type: contains-any
+      value: ["US-Japan", "MOVE", "利差", "高收益债", "期限溢价", "2年期"]
+    - type: contains-any
+      value: ["🟢", "🟡", "🟠", "🔴", "Green", "Yellow", "Orange", "Red", "风险等级"]
+    - type: contains-any
+      value: ["阈值", "threshold", "预警", "alert", "警告"]
+    - type: contains-any
+      value: ["建议", "策略", "操作", "防御", "减仓", "加仓"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-leading-001"
+
+- description: "Skills/Investment Agent: long term strategy"
+  vars:
+    case_id: "skill-inv-longterm-001"
+    skill: "investment-agent"
+    prompt: "我是长期投资者，打算定投3-5年，现在这个时点应该怎么做？需要再平衡吗？"
+  assert:
+    - type: contains-any
+      value: ["长期", "定投", "3年", "5年", "时间", "持有"]
+    - type: contains-any
+      value: ["定投", "DCA", "分批", "定期", "每月"]
+    - type: contains-any
+      value: ["再平衡", "调仓", "配置", "比例", "权重"]
+    - type: contains-any
+      value: ["时间", "跨度", "周期", "年份", "忽视", "波动"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-longterm-001"
+
+- description: "Skills/Investment Agent: macro liquidity"
+  vars:
+    case_id: "skill-inv-macro-001"
+    skill: "investment-agent"
+    prompt: "帮我生成一份当前的宏观流动性分析报告，包括DXY、SOFR-OIS、美债收益率曲线等关键指标"
+  assert:
+    - type: contains
+      value: "DXY"
+    - type: contains-any
+      value: ["SOFR", "OIS"]
+    - type: contains-any
+      value: ["收益率", "yield", "期限溢价"]
+    - type: contains-any
+      value: ["综合分析", "总结", "结论"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-macro-001"
+
+- description: "Skills/Investment Agent: multi-fund compare"
+  vars:
+    case_id: "skill-inv-compare-001"
+    skill: "investment-agent"
+    prompt: "对比一下我的中韩半导体ETF、黄金ETF和纳斯达克100ETF的表现，哪个最强？"
+  assert:
+    - type: contains-any
+      value: ["中韩半导体", "黄金", "纳斯达克", "019455", "000216", "016532"]
+    - type: contains-any
+      value: ["对比", "比较", "最强", "跑赢", "表现"]
+    - type: contains-any
+      value: ["相关性", "分散", "配置", "对冲", "负相关"]
+    - type: contains-any
+      value: ["排名", "第一", "最强", "冠军", "领先"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-compare-001"
+
+- description: "Skills/Investment Agent: portfolio summary"
+  vars:
+    case_id: "skill-inv-portfolio-001"
+    skill: "investment-agent"
+    prompt: "帮我看一下今天整个投资组合的表现，生成一份整体摘要报告"
+  assert:
+    - type: contains-any
+      value: ["组合", "portfolio", "整体", "摘要", "总结"]
+    - type: contains-any
+      value: ["盈亏", "收益", "亏损", "P&L", "涨跌幅"]
+    - type: contains-any
+      value: ["基金", "中韩半导体", "黄金", "恒科"]
+    - type: contains-any
+      value: ["风险", "评级", "警告", "等级"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-portfolio-001"
+
+- description: "Skills/Investment Agent: risk level change"
+  vars:
+    case_id: "skill-inv-risk-change-001"
+    skill: "investment-agent"
+    prompt: "检查一下风险等级是否有变化，从昨天的绿灯变成什么颜色了？需要我采取什么行动？"
+  assert:
+    - type: contains-any
+      value: ["昨天", "今日", "变化", "从", "变成", "升级到"]
+    - type: contains-any
+      value: ["🟢", "🟡", "🟠", "🔴", "Green", "Yellow", "Orange", "Red"]
+    - type: contains-any
+      value: ["因为", "原因", "由于", "导致", "触发"]
+    - type: contains-any
+      value: ["行动", "操作", "调整", "减仓", "防御", "建议"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-risk-change-001"
+
+- description: "Skills/Investment Agent: semiconductor tracker"
+  vars:
+    case_id: "skill-inv-semi-001"
+    skill: "investment-agent"
+    prompt: "分析一下费城半导体指数(SOX)的最新走势，以及对我的中韩半导体ETF持仓有什么影响"
+  assert:
+    - type: contains-any
+      value: ["SOX", "费城半导体", "半导体指数"]
+    - type: contains-any
+      value: ["中韩半导体", "019455", "持仓", "影响"]
+    - type: contains-any
+      value: ["趋势", "走势", "上涨", "下跌", "波动"]
+    - type: contains-any
+      value: ["DRAM", "NAND", "存储芯片", "芯片价格"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-semi-001"
+
+- description: "Skills/Investment Agent: VIX alert"
+  vars:
+    case_id: "skill-inv-vix-001"
+    skill: "investment-agent"
+    prompt: "VIX指数飙升到35了，这对我的投资组合有什么影响？我应该采取什么防御措施？"
+  assert:
+    - type: contains-any
+      value: ["VIX", "35", "波动率"]
+    - type: contains-any
+      value: ["风险", "警告", "⚠️", "🔴", "🟠", "🟡"]
+    - type: contains-any
+      value: ["防御", "减仓", "对冲", "建议", "策略"]
+  metadata:
+    category: "skills"
+    subcategory: "investment-agent"
+    legacy_case_id: "skill-inv-vix-001"
+
+- description: "Skills/Note Vault: save a note about MCP tool naming fix"
+  vars:
+    case_id: "skill-trigger-001"
+    skill: "note-vault"
+    prompt: "帮我记下来，MCP 工具名称格式修复的内容"
+  assert:
+    - type: llm-rubric
+      metric: "note_capture"
+      value: |
+        Evaluate whether the agent behaves like a note-taking workflow.
+        It should acknowledge the user's request to save a note, capture the topic
+        about the MCP tool naming format fix, and respond as if it attempted to save
+        or structure that note rather than merely discussing unrelated file operations.
+  metadata:
+    category: "skills"
+    subcategory: "note-vault"
+    legacy_case_id: "skill-trigger-001"

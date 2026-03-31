@@ -1,0 +1,215 @@
+- description: "Calibration/Coding: below_zero (Buggy)"
+  provider: python:evals/promptfoo_artifact_provider.py
+  vars:
+    case_id: "calibration-below-zero-buggy"
+    fixture: "calibration-below-zero-buggy"
+    prompt: "Evaluate this implementation"
+  assert:
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate CORRECTNESS of this below_zero implementation.
+        Requirements: detect if balance goes below zero at ANY point during operations.
+        Test: [1, 2, -4, 5] should return True (balance hits -1 after third op).
+        Test: [1, 2, -3, 1, 2, -3] should return False (touches zero, never below).
+        Score purely on functional correctness, 0=completely wrong, 1=perfect.
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate CODE QUALITY only (ignore correctness).
+        Consider: naming, structure, simplicity, documentation, idiomatic Python.
+        Score 0=terrible quality, 1=excellent.
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.1 && s <= 0.4, reason: `correctness=${s.toFixed(2)}, expected [0.1, 0.4]` };
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.2 && s <= 0.5, reason: `quality=${s.toFixed(2)}, expected [0.2, 0.5]` };
+  metadata:
+    category: "calibration"
+    subcategory: "coding"
+    variant: "buggy"
+    legacy_case_id: "calibration-below-zero-buggy"
+
+- description: "Calibration/Coding: below_zero (Messy)"
+  provider: python:evals/promptfoo_artifact_provider.py
+  vars:
+    case_id: "calibration-below-zero-messy"
+    fixture: "calibration-below-zero-messy"
+    prompt: "Evaluate this implementation"
+  assert:
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate CORRECTNESS of this below_zero implementation.
+        Requirements: detect if balance goes below zero at ANY point during operations.
+        Test: [1, 2, -4, 5] should return True (balance hits -1 after third op).
+        Test: [1, 2, -3, 1, 2, -3] should return False (touches zero, never below).
+        Score purely on functional correctness, 0=completely wrong, 1=perfect.
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate CODE QUALITY only (ignore correctness).
+        Consider: naming, structure, simplicity, documentation, idiomatic Python.
+        Score 0=terrible quality, 1=excellent.
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.7 && s <= 0.9, reason: `correctness=${s.toFixed(2)}, expected [0.7, 0.9]` };
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.2 && s <= 0.4, reason: `quality=${s.toFixed(2)}, expected [0.2, 0.4]` };
+  metadata:
+    category: "calibration"
+    subcategory: "coding"
+    variant: "messy"
+    legacy_case_id: "calibration-below-zero-messy"
+
+- description: "Calibration/Coding: below_zero (Gold)"
+  provider: python:evals/promptfoo_artifact_provider.py
+  vars:
+    case_id: "calibration-below-zero-gold"
+    fixture: "calibration-below-zero-gold"
+    prompt: "Evaluate this implementation"
+  assert:
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate CORRECTNESS of this below_zero implementation.
+        Requirements: detect if balance goes below zero at ANY point during operations.
+        Test: [1, 2, -4, 5] should return True (balance hits -1 after third op).
+        Test: [1, 2, -3, 1, 2, -3] should return False (touches zero, never below).
+        Score purely on functional correctness, 0=completely wrong, 1=perfect.
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate CODE QUALITY only (ignore correctness).
+        Consider: naming, structure, simplicity, documentation, idiomatic Python.
+        Score 0=terrible quality, 1=excellent.
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.9 && s <= 1.0, reason: `correctness=${s.toFixed(2)}, expected [0.9, 1.0]` };
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.8 && s <= 1.0, reason: `quality=${s.toFixed(2)}, expected [0.8, 1.0]` };
+  metadata:
+    category: "calibration"
+    subcategory: "coding"
+    variant: "gold"
+    legacy_case_id: "calibration-below-zero-gold"
+
+- description: "Calibration/Reasoning: logic_puzzle (Buggy)"
+  provider: python:evals/promptfoo_artifact_provider.py
+  vars:
+    case_id: "calibration-logic-puzzle-buggy"
+    fixture: "calibration-logic-puzzle-buggy"
+    prompt: "Evaluate this solution"
+  assert:
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate CORRECTNESS of this logic puzzle solution.
+        Check if the reasoning is valid and the conclusion follows from the premises.
+        Score 0=completely wrong, 1=perfect.
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate the QUALITY of the explanation (not correctness).
+        Consider: clarity, structure, step-by-step reasoning, readability.
+        Score 0=terrible quality, 1=excellent.
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.1 && s <= 0.3, reason: `correctness=${s.toFixed(2)}, expected [0.1, 0.3]` };
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.2 && s <= 0.5, reason: `quality=${s.toFixed(2)}, expected [0.2, 0.5]` };
+  metadata:
+    category: "calibration"
+    subcategory: "reasoning"
+    variant: "buggy"
+    legacy_case_id: "calibration-logic-puzzle-buggy"
+
+- description: "Calibration/Reasoning: logic_puzzle (Messy)"
+  provider: python:evals/promptfoo_artifact_provider.py
+  vars:
+    case_id: "calibration-logic-puzzle-messy"
+    fixture: "calibration-logic-puzzle-messy"
+    prompt: "Evaluate this solution"
+  assert:
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate CORRECTNESS of this logic puzzle solution.
+        Check if the reasoning is valid and the conclusion follows from the premises.
+        Score 0=completely wrong, 1=perfect.
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate the QUALITY of the explanation (not correctness).
+        Consider: clarity, structure, step-by-step reasoning, readability.
+        Score 0=terrible quality, 1=excellent.
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.7 && s <= 0.9, reason: `correctness=${s.toFixed(2)}, expected [0.7, 0.9]` };
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.2 && s <= 0.4, reason: `quality=${s.toFixed(2)}, expected [0.2, 0.4]` };
+  metadata:
+    category: "calibration"
+    subcategory: "reasoning"
+    variant: "messy"
+    legacy_case_id: "calibration-logic-puzzle-messy"
+
+- description: "Calibration/Reasoning: logic_puzzle (Gold)"
+  provider: python:evals/promptfoo_artifact_provider.py
+  vars:
+    case_id: "calibration-logic-puzzle-gold"
+    fixture: "calibration-logic-puzzle-gold"
+    prompt: "Evaluate this solution"
+  assert:
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate CORRECTNESS of this logic puzzle solution.
+        Check if the reasoning is valid and the conclusion follows from the premises.
+        Score 0=completely wrong, 1=perfect.
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate the QUALITY of the explanation (not correctness).
+        Consider: clarity, structure, step-by-step reasoning, readability.
+        Score 0=terrible quality, 1=excellent.
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.9 && s <= 1.0, reason: `correctness=${s.toFixed(2)}, expected [0.9, 1.0]` };
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.9 && s <= 1.0, reason: `quality=${s.toFixed(2)}, expected [0.9, 1.0]` };
+  metadata:
+    category: "calibration"
+    subcategory: "reasoning"
+    variant: "gold"
+    legacy_case_id: "calibration-logic-puzzle-gold"

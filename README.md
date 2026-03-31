@@ -131,22 +131,26 @@ Comprehensive testing for skills, safety, and performance:
 
 ```bash
 # Run all evaluations
-uv run python evals/runner.py
+npx promptfoo@latest eval
 
 # Run specific category
-uv run python evals/runner.py --category skills
+npx promptfoo@latest eval --filter-pattern "Skills"
 
 # Run with multiple iterations for variance analysis
-uv run python evals/runner.py --num-runs 5
+npx promptfoo@latest eval --repeat 5
 
-# Fast mode (skip LLM judge)
-uv run python evals/runner.py --fast
+# Disable cache
+npx promptfoo@latest eval --no-cache
+
+# Open promptfoo dashboard
+npx promptfoo@latest view
 ```
 
 **Test Categories**:
-- `skills/` - Skill functionality tests
-- `safety/` - Security red team tests
-- `trigger/` - Skill description accuracy tests
+- `skills.yaml` - Skill functionality tests
+- `safety.yaml` - Security red team tests
+- `sandbox.yaml` - Sandbox isolation tests
+- `security.yaml` - Security behavior tests
 
 ## 📝 Development
 

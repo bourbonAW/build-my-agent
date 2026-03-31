@@ -34,10 +34,11 @@ pytest tests/test_agent_error_policy.py::TestName -v
 pytest tests/test_mcp_config.py tests/test_mcp_manager.py -v
 
 # Run evaluations
-uv run python evals/runner.py
-uv run python evals/runner.py --category skills
-uv run python evals/runner.py --num-runs 5
-uv run python evals/runner.py --fast   # skip LLM judge
+npx promptfoo@latest eval
+npx promptfoo@latest eval --filter-pattern "Skills"
+npx promptfoo@latest eval --repeat 5
+npx promptfoo@latest eval --no-cache
+npx promptfoo@latest view
 ```
 
 ## Architecture
@@ -100,9 +101,14 @@ model = "claude-sonnet-4-6"
 
 `ContextCompressor` monitors token usage and compacts old messages when `config.ui.token_threshold` is exceeded. The agent also calls `microcompact()` on every step. Skills in use are protected from compaction.
 
-### Evaluation Framework (`evals/`)
+### Evaluation Framework (`evals/` + `promptfooconfig.yaml`)
 
-The eval framework in `evals/runner.py` runs test cases from `evals/cases/` (organized by category: skills, safety, code-search, etc.). Each case is a directory with a prompt and assertion functions. `evals/assertions/` contains reusable assertion helpers. The LLM judge (`evals/llm_judge.py`) scores responses when `--fast` is not set.
+Evaluations now run through promptfoo. `promptfooconfig.yaml` is the entrypoint, and the cases live in root-level YAML files under `evals/cases/` (for example `skills.yaml`, `sandbox.yaml`, `security.yaml`).
+
+- `evals/promptfoo_provider.py` wraps `Agent.step()` and returns JSON output with `text`, `workdir`, and timing metadata for promptfoo assertions.
+- `evals/promptfoo_artifact_provider.py` serves prebuilt calibration artifacts directly to promptfoo's `llm-rubric` assertions.
+- File and audit assertions are implemented as promptfoo `javascript` assertions that read files from the returned `workdir`.
+- Calibration scoring uses promptfoo `llm-rubric` metrics plus range checks in `javascript` assertions.
 
 ## Key Design Decisions
 

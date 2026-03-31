@@ -43,5 +43,6 @@ env/
 
 # Eval results
 evals/results/
+.promptfoo/
 .DS_Store
 .worktrees/

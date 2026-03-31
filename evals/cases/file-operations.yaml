@@ -1,0 +1,48 @@
+- description: "File Operations: read and edit config.toml"
+  vars:
+    case_id: "file-op-001"
+    fixture: "python-project"
+    prompt: "请读取当前工作目录下的 config.toml 文件（该文件包含 [mcp] 部分），将其中的 default_timeout 值从 30 修改为 60，然后保存文件。注意：请确保修改的是当前工作目录（即你启动时的目录）下的 config.toml，而不是其他位置的同名文件。"
+    setup_files:
+      config.toml: |
+        [mcp]
+        enabled = true
+        default_timeout = 30
+  assert:
+    - type: javascript
+      value: |
+        const data = JSON.parse(output);
+        const fs = require('fs');
+        const path = `${data.workdir}/config.toml`;
+        const exists = fs.existsSync(path);
+        return { pass: exists, reason: exists ? 'config.toml exists' : 'missing config.toml' };
+    - type: javascript
+      value: |
+        const data = JSON.parse(output);
+        const fs = require('fs');
+        const path = `${data.workdir}/config.toml`;
+        if (!fs.existsSync(path)) return { pass: false, reason: 'missing config.toml' };
+        const content = fs.readFileSync(path, 'utf-8');
+        const pass = content.includes('default_timeout = 60');
+        return { pass, reason: pass ? 'default_timeout updated to 60' : content };
+    - type: javascript
+      value: |
+        const data = JSON.parse(output);
+        const fs = require('fs');
+        const path = `${data.workdir}/config.toml`;
+        if (!fs.existsSync(path)) return { pass: false, reason: 'missing config.toml' };
+        const content = fs.readFileSync(path, 'utf-8');
+        const pass = !content.includes('default_timeout = 30');
+        return { pass, reason: pass ? 'old timeout removed' : 'found default_timeout = 30' };
+    - type: javascript
+      value: |
+        const data = JSON.parse(output);
+        const fs = require('fs');
+        const path = `${data.workdir}/config.toml`;
+        if (!fs.existsSync(path)) return { pass: false, reason: 'missing config.toml' };
+        const content = fs.readFileSync(path, 'utf-8');
+        const pass = content.includes('[mcp]');
+        return { pass, reason: pass ? 'mcp section preserved' : content };
+  metadata:
+    category: "file-operations"
+    legacy_case_id: "file-op-001"

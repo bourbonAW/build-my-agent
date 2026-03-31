@@ -106,16 +106,23 @@ max_flaky_rate = 0.1
 ### 验证框架
 
 ```bash
-uv run python evals/validate.py
+npx promptfoo@latest eval --filter-pattern "Safety" --no-cache
 ```
 
-### 运行评测（P0 框架占位）
+### 运行评测
 
 ```bash
 # 运行所有评测
-uv run python evals/runner.py
+npx promptfoo@latest eval
 
-# 预期输出：框架结构验证通过，实际评测待实现 Agent 调用接口
+# 按描述过滤类别
+npx promptfoo@latest eval --filter-pattern "Skills"
+
+# 多次运行观测波动
+npx promptfoo@latest eval --repeat 5
+
+# 查看结果面板
+npx promptfoo@latest view
 ```
 
 ## 关键设计决策

@@ -1,0 +1,17 @@
+- description: "Code Search: locate activate definitions"
+  vars:
+    case_id: "code-search-001"
+    fixture: "python-project"
+    prompt: "在项目中搜索 'activate' 函数的所有定义位置，告诉我它们分别在哪些文件的哪一行"
+  assert:
+    - type: contains
+      value: "activate"
+    - type: contains-any
+      value:
+        - "agent.py"
+        - "skills.py"
+    - type: contains
+      value: "行"
+  metadata:
+    category: "code-search"
+    legacy_case_id: "code-search-001"
