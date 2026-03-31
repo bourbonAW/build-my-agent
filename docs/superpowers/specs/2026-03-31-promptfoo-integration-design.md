@@ -1,7 +1,7 @@
 # Promptfoo Integration Design Spec
 
 **Date:** 2026-03-31
-**Status:** Draft
+**Status:** Approved
 **Supersedes:** eval reporter/runner/validator infrastructure
 
 ## Problem
@@ -64,7 +64,7 @@ return {
 # Text-based assertions use transform to extract text:
 defaultTest:
   options:
-    transformVars: "try { JSON.parse(output).text } catch { output }"
+    transform: "try { JSON.parse(output).text } catch(e) { output }"
 ```
 
 ### 2. Bourbon Agent Provider (`evals/promptfoo_provider.py`)
