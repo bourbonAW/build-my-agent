@@ -61,10 +61,11 @@ return {
     const fs = require('fs');
     return fs.existsSync(data.workdir + '/main.py');
 
-# Text-based assertions use transform to extract text:
-defaultTest:
-  options:
-    transform: "try { JSON.parse(output).text } catch(e) { output }"
+# Text-based assertions (contains/not-contains) work on the raw JSON string
+# since they do substring matching. No global transform needed.
+# NOTE: Do NOT use defaultTest.options.transform — it would strip the JSON
+# before javascript assertions can access workdir. Individual llm-rubric
+# assertions can use per-assertion transform if needed for cleaner input.
 ```
 
 ### 2. Bourbon Agent Provider (`evals/promptfoo_provider.py`)

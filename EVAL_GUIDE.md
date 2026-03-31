@@ -1,206 +1,149 @@
-# Bourbon Eval 实施指南
+# Bourbon Eval Guide
 
-本文档总结 Bourbon Eval 体系的设计与实施状态。
+Bourbon's evaluation framework runs through [promptfoo](https://www.promptfoo.dev/).
 
-## 体系概览
-
-基于 [深度研究报告](./docs/deep-research-report.md) 和 Anthropic Skill-Creator 规范设计，采用**渐进式落地策略**（P0 → P1 → P2）。
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      EVAL ARCHITECTURE                          │
-├─────────────────────────────────────────────────────────────────┤
-│  P0: Minimum Viable Eval (✅ DONE)                              │
-│     ├─ 15-20 个评测用例                                         │
-│     ├─ 程序化断言库                                             │
-│     ├─ 基础 Runner                                              │
-│     └─ 配置系统                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  P1: Stability & Skill Eval (📋 PLANNED)                        │
-│     ├─ 多次运行与方差分析 (pass^k)                              │
-│     ├─ Skill 触发准确率评测                                     │
-│     ├─ 并行执行与上下文隔离                                     │
-│     └─ 安全红队测试集                                           │
-├─────────────────────────────────────────────────────────────────┤
-│  P2: CI/CD Integration (📋 PLANNED)                             │
-│     ├─ GitHub Actions 工作流                                    │
-│     ├─ PR 自动评测与评论                                        │
-│     ├─ 门禁阈值（pass rate、regression）                        │
-│     └─ 趋势看板                                                 │
-└─────────────────────────────────────────────────────────────────┘
+promptfooconfig.yaml          # Entrypoint
+       ↓
+evals/promptfoo_provider.py   # Wraps Agent.step() for promptfoo
+       ↓
+evals/cases/*.yaml            # Test case definitions
+       ↓
+promptfoo assertions          # javascript, llm-rubric, contains, etc.
 ```
 
-## 文件结构
+### Components
 
-```
-evals/
-├── README.md                   # 使用文档
-├── config.toml                # 评测配置
-├── runner.py                  # 执行器
-├── validate.py                # 验证脚本
-├── fixtures/                  # 测试固件
-├── cases/                     # 评测用例
-│   ├── code-search/           # 代码搜索 (4个用例)
-│   ├── file-operations/       # 文件操作 (4个用例)
-│   ├── code-analysis/         # 代码分析 (4个用例)
-│   ├── safety/                # 安全评测 (4个用例)
-│   └── skills/                # Skill 评测
-│       └── note-vault/        # note skill 触发测试
-└── assertions/                # 断言库
-    ├── file_assertions.py     # 文件断言
-    ├── code_assertions.py     # 代码断言
-    └── security_assertions.py # 安全断言
-```
+- **`promptfooconfig.yaml`** - Root config. Defines provider, default options, and test file references.
+- **`evals/promptfoo_provider.py`** - Custom Python provider that runs `Agent.step()` and returns JSON `{text, workdir, duration}`.
+- **`evals/promptfoo_artifact_provider.py`** - Serves pre-built calibration artifacts for `llm-rubric` evaluation.
+- **`evals/cases/`** - YAML test case files organized by category.
+- **`evals/fixtures/`** - Pre-built test fixtures (calibration artifacts, project templates).
 
-## P0 已完成内容
-
-### 1. 评测用例（5个示例）
-
-| ID | 类别 | 名称 | 断言类型 |
-|----|------|------|----------|
-| code-search-001 | 代码搜索 | 搜索特定函数定义 | 程序化 + LLM judge |
-| file-op-001 | 文件操作 | 读取并修改配置文件 | 程序化 |
-| code-analysis-001 | 代码分析 | 分析代码中的 bug | LLM judge |
-| safety-001 | 安全 | 路径穿越攻击防护 | 程序化 |
-| skill-trigger-001 | Skill | note skill 触发准确率 | 触发测试 |
-
-### 2. 断言库
-
-**程序化断言（可自动验证）：**
-- `file_exists(path)` - 文件存在
-- `file_contains(path, content)` - 文件包含内容
-- `file_not_contains(path, content)` - 文件不包含内容
-- `json_path_equals(path, key.subkey, value)` - JSON 路径值匹配
-- `code_compiles(path)` - Python 代码可编译
-- `function_exists(path, name)` - 函数存在
-- `no_path_traversal(path)` - 无路径穿越
-- `within_workdir(path, workdir)` - 在工作目录内
-
-**LLM Judge 断言（主观评估）：**
-- 由独立 LLM 评判输出质量
-- 用于开放式任务（代码分析、建议质量等）
-
-### 3. 配置系统
-
-```toml
-[runner]
-num_runs = 1              # 运行次数（P1 改为 3+）
-timeout = 120             # 超时时间
-isolate_context = true    # 上下文隔离
-
-[dimensions]              # 评测维度权重
-correctness = 0.4
-robustness = 0.2
-safety = 0.2
-performance = 0.1
-skill_trigger = 0.1
-
-[gates]                   # CI 门禁阈值
-min_pass_rate = 0.8
-max_regression_rate = 0.05
-max_flaky_rate = 0.1
-```
-
-## 快速开始
-
-### 验证框架
+## Quick Start
 
 ```bash
-npx promptfoo@latest eval --filter-pattern "Safety" --no-cache
-```
-
-### 运行评测
-
-```bash
-# 运行所有评测
+# Run all evaluations
 npx promptfoo@latest eval
 
-# 按描述过滤类别
+# Filter by category description
 npx promptfoo@latest eval --filter-pattern "Skills"
 
-# 多次运行观测波动
+# Run with multiple iterations for variance analysis
 npx promptfoo@latest eval --repeat 5
 
-# 查看结果面板
+# Disable cache for fresh runs
+npx promptfoo@latest eval --no-cache
+
+# Open dashboard to view results
 npx promptfoo@latest view
 ```
 
-## 关键设计决策
+## Test Categories
 
-### 1. 产物导向 vs 输出导向
+| Category | File | Description |
+|----------|------|-------------|
+| Calibration | `calibration.yaml` | Multi-dimensional scoring with pre-built artifacts |
+| Safety | `safety.yaml` | Red team tests for safety guardrails |
+| Security | `security.yaml` | Security behavior validation |
+| Sandbox | `sandbox.yaml` | Sandbox isolation tests |
+| Skills | `skills.yaml` | Skill functionality and trigger accuracy |
+| Code Search | `code-search.yaml` | Code search result quality |
+| File Operations | `file-operations.yaml` | File operation correctness |
+| General | `general.yaml` | General agent behavior |
+| Validator Smoke | `validator-smoke.yaml` | Validator smoke tests |
 
-传统 Eval 只检查文本输出，Bourbon 检查：
-- ✅ 文件最终状态（存在、内容、格式）
-- ✅ 代码可编译、测试通过
-- ✅ 环境状态变化
-- ⚠️ 文本输出仅作辅助
+## Assertion Types
 
-### 2. 程序化优先
+### Programmatic (javascript)
 
-| 优先级 | 验证方式 | 示例 |
-|--------|----------|------|
-| 1 | 断言验证 | 文件存在、JSON 路径匹配 |
-| 2 | 测试验证 | pytest 通过、mypy 无错误 |
-| 3 | LLM Judge | 代码分析质量、建议合理性 |
-| 4 | 人工抽检 | 复杂场景最终确认 |
+File and audit assertions parse the provider's JSON output to access `workdir`, then check filesystem state:
 
-### 3. A/B 对照
+```yaml
+assert:
+  - type: javascript
+    value: |
+      const output = JSON.parse(output);
+      const fs = require('fs');
+      const path = require('path');
+      const filePath = path.join(output.workdir, 'expected-file.py');
+      return fs.existsSync(filePath);
+```
 
-Skill 评测必须对比：
-- **新增 skill**: with-skill vs without-skill
-- **改进 skill**: new-version vs old-version snapshot
+### LLM Judge (llm-rubric)
 
-### 4. 非确定性治理
+Subjective evaluation of output quality:
 
-P1 阶段实现：
-- 同一用例运行 3 次
-- 计算 pass^k（k 次中成功的概率）
-- 标记方差高的 flaky 用例
+```yaml
+assert:
+  - type: llm-rubric
+    value: "The response correctly identifies the bug and explains why it occurs"
+```
 
-## 下一步行动
+### Text Matching
 
-### P1 阶段（2-4 周）
+Simple substring checks on the raw JSON output:
 
-1. **实现 Agent 调用接口**
-   ```python
-   # runner.py 中实现
-   def call_agent(prompt, workdir, with_skill=None) -> AgentOutput
-   ```
+```yaml
+assert:
+  - type: contains
+    value: "expected text"
+  - type: not-contains
+    value: "should not appear"
+```
 
-2. **多次运行支持**
-   ```toml
-   [runner]
-   num_runs = 3  # 计算 pass^k
-   ```
+## Calibration Cases
 
-3. **Skill 触发评测自动化**
-   - 构造 20-30 条 should-trigger/should-not-trigger 用例
-   - 运行 3 次计算 trigger accuracy
-   - 优化 skill description
+Calibration uses pre-built artifacts (in `evals/fixtures/`) evaluated by `llm-rubric` with multi-dimensional scoring. Each dimension gets a separate metric:
 
-4. **安全红队测试集**
-   - 路径穿越（✓ 已有基础）
-   - 命令注入
-   - Prompt injection
-   - 数据外泄尝试
+```yaml
+assert:
+  - type: llm-rubric
+    value: "Evaluate correctness of the implementation..."
+    metric: correctness
+  - type: javascript
+    value: |
+      const scores = context.namedScores;
+      return scores.correctness >= 0.6 && scores.correctness <= 0.9;
+```
 
-### P2 阶段（4-6 周）
+## Provider Output Contract
 
-1. **GitHub Actions 集成**
-   ```yaml
-   # .github/workflows/eval.yml
-   - PR 触发 smoke eval（10条）
-   - 评论展示 pass rate 对比
-   - 主分支门禁阈值检查
-   ```
+The agent provider returns JSON-encoded output:
 
-2. **报告与看板**
-   - HTML 交互式报告
-   - 历史趋势图表
-   - 回归自动告警
+```json
+{
+  "text": "Agent's text response...",
+  "workdir": "/tmp/eval-workspace-xxx",
+  "duration": 12.5
+}
+```
 
-## 参考
+- `javascript` assertions parse this JSON to access `workdir` and filesystem
+- `contains`/`not-contains` assertions match against the raw JSON string
+- `llm-rubric` assertions receive the raw JSON; the LLM extracts the text field
 
-- [深度研究报告](./docs/deep-research-report.md)
-- [Skill-Creator 官方文档](https://docs.anthropic.com/en/docs/claude-code/skill-creator)
-- [Agent Skills 规范](https://agentskills.io/)
+## Configuration Options
+
+In `promptfooconfig.yaml`:
+
+```yaml
+evaluateOptions:
+  maxConcurrency: 1    # Serial for workspace isolation
+  repeat: 3            # Default iterations per case
+  timeoutMs: 60000     # Per-case timeout
+```
+
+## Fixtures
+
+Pre-built fixtures in `evals/fixtures/`:
+
+| Fixture | Purpose |
+|---------|---------|
+| `calibration-below-zero-*` | Pre-built below_zero implementations (gold/buggy/messy) |
+| `calibration-logic-puzzle-*` | Pre-built logic puzzle solutions (gold/buggy/messy) |
+| `python-project` | Template Python project for file operation tests |
+| `js-project` | Template JS project for file operation tests |
+| `malicious` | Malicious fixtures for security tests |

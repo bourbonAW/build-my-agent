@@ -21,7 +21,7 @@
 Cover:
 - the live renderable shows streamed body output again
 - incomplete markdown remains buffered in the pending tail
-- final markdown still renders through the REPL path
+- final markdown still renders through the REPL path: capture all `console.print` calls, filter for `Markdown` instances, and assert the full accumulated response text appears in the final `Markdown` argument (not just that `console.print` was called at all)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -32,14 +32,17 @@ Expected: FAIL because the live renderable is currently status-only
 
 **Files:**
 - Modify: `src/bourbon/repl.py`
-- Modify: `tests/test_repl_activity_indicator.py`
-- Modify: `tests/test_repl_streaming.py`
+- Modify: `tests/test_repl_activity_indicator.py` (only if minor adjustments needed to make Task 1 tests pass)
+- Modify: `tests/test_repl_streaming.py` (only if minor adjustments needed to make Task 1 tests pass)
 
 - [ ] **Step 1: Add buffer-splitting helpers**
 
-Implement helpers in `src/bourbon/repl.py` that split the accumulated text into:
-- render-safe markdown prefix
-- pending tail
+Implement `_split_stable_markdown(buffer: str) -> tuple[str, str]` as a **module-level function** in `src/bourbon/repl.py` (not nested, not a method) so tests can import and call it directly.
+
+Split logic:
+- When `buffer` ends with `\n`: use the entire buffer as the initial stable candidate, then apply guard passes to move unsafe trailing content back into the pending tail
+- When `buffer` does not end with `\n`: treat the incomplete final line as pending tail immediately
+- Guard passes check for: unclosed fenced code block, unclosed table block, unbalanced inline markers (`**`, `` ` ``) on the last line
 
 - [ ] **Step 2: Restore streamed body rendering**
 
@@ -55,8 +58,7 @@ Expected: PASS
 
 ### Task 3: Regression verification
 
-**Files:**
-- Modify: `src/bourbon/repl.py`
+**Files:** Verify only (no modifications expected)
 
 - [ ] **Step 1: Run regression suite**
 
@@ -67,3 +69,8 @@ Expected: PASS
 
 Run: `.venv/bin/ruff check src/bourbon/repl.py tests/test_repl_activity_indicator.py tests/test_repl_streaming.py`
 Expected: PASS
+
+- [ ] **Step 3: Run type check**
+
+Run: `mypy src/bourbon/repl.py`
+Expected: PASS (no new errors introduced)

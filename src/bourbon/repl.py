@@ -1,6 +1,5 @@
 """REPL interface for Bourbon."""
 
-import re
 import sys
 import time
 import uuid
@@ -89,126 +88,8 @@ def _split_stable_markdown(buffer: str) -> tuple[str, str]:
         stable_prefix = buffer[: last_newline + 1]
         pending_tail = buffer[last_newline + 1 :]
 
-    stable_prefix, pending_tail = _buffer_unclosed_fence(stable_prefix, pending_tail)
-    stable_prefix, pending_tail = _buffer_incomplete_table_block(stable_prefix, pending_tail)
-    stable_prefix, pending_tail = _buffer_unbalanced_last_line(stable_prefix, pending_tail)
     return stable_prefix, pending_tail
 
-
-def _buffer_unclosed_fence(stable_prefix: str, pending_tail: str) -> tuple[str, str]:
-    """Move an unclosed fenced code block into the pending tail."""
-    fence_matches = list(re.finditer(r"(?m)^```.*$", stable_prefix))
-    if len(fence_matches) % 2 == 0:
-        return stable_prefix, pending_tail
-
-    unmatched_start = fence_matches[-1].start()
-    return (
-        stable_prefix[:unmatched_start],
-        stable_prefix[unmatched_start:] + pending_tail,
-    )
-
-
-def _buffer_unbalanced_last_line(stable_prefix: str, pending_tail: str) -> tuple[str, str]:
-    """Move the final line back to the tail if inline markers look incomplete."""
-    if not stable_prefix:
-        return stable_prefix, pending_tail
-
-    last_newline = stable_prefix.rstrip("\n").rfind("\n")
-    line_start = 0 if last_newline == -1 else last_newline + 1
-    last_line = stable_prefix[line_start:]
-    last_line_content = last_line.rstrip("\n")
-
-    inline_markers = ("**", "__", "`")
-    if any(last_line_content.count(marker) % 2 == 1 for marker in inline_markers):
-        return stable_prefix[:line_start], last_line + pending_tail
-
-    if _line_has_incomplete_link(last_line_content):
-        return stable_prefix[:line_start], last_line + pending_tail
-
-    return stable_prefix, pending_tail
-
-
-def _buffer_incomplete_table_block(
-    stable_prefix: str, pending_tail: str
-) -> tuple[str, str]:
-    """Keep trailing table-like lines pending until the table structure is complete."""
-    if not stable_prefix:
-        return stable_prefix, pending_tail
-
-    lines = stable_prefix.splitlines(keepends=True)
-    block_start = len(lines)
-
-    while block_start > 0:
-        line = lines[block_start - 1].rstrip("\n")
-        if _is_table_row(line) or _is_table_separator(line):
-            block_start -= 1
-            continue
-        break
-
-    if block_start == len(lines):
-        return stable_prefix, pending_tail
-
-    table_block = lines[block_start:]
-    if _table_block_is_complete(table_block):
-        return stable_prefix, pending_tail
-
-    return "".join(lines[:block_start]), "".join(table_block) + pending_tail
-
-
-def _table_block_is_complete(table_block: list[str]) -> bool:
-    """Return whether a trailing markdown table block has a header and separator."""
-    if len(table_block) < 2:
-        return False
-
-    header = table_block[0].rstrip("\n")
-    separator = table_block[1].rstrip("\n")
-    return _is_table_row(header) and _is_table_separator(separator)
-
-
-def _is_table_row(line: str) -> bool:
-    """Return whether a line looks like a pipe table row."""
-    stripped = line.strip()
-    return (
-        stripped.startswith("|")
-        and stripped.endswith("|")
-        and stripped.count("|") >= 3
-        and not _is_table_separator(stripped)
-    )
-
-
-def _is_table_separator(line: str) -> bool:
-    """Return whether a line looks like a markdown table separator row."""
-    stripped = line.strip()
-    if not (stripped.startswith("|") and stripped.endswith("|")):
-        return False
-
-    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-    if not cells:
-        return False
-
-    return all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
-
-
-def _line_has_incomplete_link(line: str) -> bool:
-    """Return whether a line appears to end inside markdown link syntax."""
-    if re.search(r"(?<!\\)!?\[[^\]\n]*\]\([^\)\n]*$", line):
-        return True
-
-    return bool(re.search(r"(?<!\\)!?\[[^\]\n]*$", line))
-
-
-def _should_render_markdown(response: str) -> bool:
-    """Return whether the final response should use Rich Markdown rendering."""
-    markdown_patterns = (
-        r"```",
-        r"(?m)^\s{0,3}#{1,6}\s+",
-        r"\*\*.+?\*\*",
-        r"(?m)^\s*[-*+]\s+",
-        r"(?m)^\s*\d+\.\s+",
-        r"(?m)^\s*>\s+",
-        r"(?m)^\|.+\|$",
-    )
-    return any(re.search(pattern, response) for pattern in markdown_patterns)
 
 
 class REPL:
@@ -434,21 +315,14 @@ class REPL:
 
             # After streaming completes, render the full response with markdown
             # Check if response contains markdown that needs special rendering
-            has_markdown = _should_render_markdown(response)
             debug_log(
                 "repl.stream.response",
                 turn_id=turn_id,
                 response_len=len(response),
                 chunk_count=len(chunks),
-                has_markdown=has_markdown,
             )
 
-            if has_markdown or "```" in response:
-                # Render with Rich Markdown for proper formatting
-                self.console.print(Markdown(response))
-            else:
-                # Plain text - just print the accumulated response
-                self.console.print(response)
+            self.console.print(Markdown(response))
             debug_log(
                 "repl.stream.complete",
                 turn_id=turn_id,

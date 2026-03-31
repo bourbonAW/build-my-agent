@@ -19,7 +19,7 @@
 | `src/bourbon/repl.py` | REPL interface | Add dynamic prompt `_get_prompt()` + streaming input |
 | `tests/test_llm_streaming.py` | LLM streaming tests | New test file |
 | `tests/test_agent_streaming.py` | Agent streaming tests | New test file |
-| `tests/conftest.py` | Test fixtures | Update MockLLM with `chat_stream()` |
+| `tests/test_repl_context_display.py` | REPL context display tests | New test file |
 
 ---
 
@@ -29,7 +29,6 @@
 
 **Files:**
 - Modify: `src/bourbon/llm.py:1-50`
-- Test: `tests/conftest.py` (will be updated in Task 2)
 
 - [ ] **Step 1: Import Generator type**
 
@@ -240,29 +239,46 @@ Add to `tests/test_llm_streaming.py`:
 def test_openai_chat_stream_yields_text_events():
     """OpenAI chat_stream yields text events from stream."""
     from bourbon.llm import OpenAILLMClient
-    
-    # Mock the OpenAI client and stream
-    mock_chunk = MagicMock()
-    mock_chunk.choices = [MagicMock()]
-    mock_chunk.choices[0].delta = MagicMock()
-    mock_chunk.choices[0].delta.content = "Hello"
-    mock_chunk.choices[0].delta.tool_calls = None
-    mock_chunk.choices[0].finish_reason = "stop"
-    mock_chunk.usage = None
-    
-    mock_stream = [mock_chunk]
+
+    # Chunk 1: text content with finish_reason
+    mock_chunk_text = MagicMock()
+    mock_chunk_text.choices = [MagicMock()]
+    mock_chunk_text.choices[0].delta = MagicMock()
+    mock_chunk_text.choices[0].delta.content = "Hello"
+    mock_chunk_text.choices[0].delta.tool_calls = None
+    mock_chunk_text.choices[0].finish_reason = "stop"
+    mock_chunk_text.usage = None
+
+    # Chunk 2: usage-only chunk (choices is empty, per OpenAI docs with include_usage=True)
+    mock_chunk_usage = MagicMock()
+    mock_chunk_usage.choices = []  # Empty!
+    mock_chunk_usage.usage = MagicMock()
+    mock_chunk_usage.usage.prompt_tokens = 15
+    mock_chunk_usage.usage.completion_tokens = 3
+
+    mock_stream = [mock_chunk_text, mock_chunk_usage]
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = mock_stream
-    
+
     with patch('bourbon.llm.OpenAI', return_value=mock_client):
         client = OpenAILLMClient(api_key="test", model="gpt-test")
         events = list(client.chat_stream(messages=[{"role": "user", "content": "hi"}]))
-    
+
+    # Verify stream_options was passed
+    call_kwargs = mock_client.chat.completions.create.call_args[1]
+    assert call_kwargs["stream_options"] == {"include_usage": True}
+
     # Check text event
     text_events = [e for e in events if e["type"] == "text"]
     assert len(text_events) == 1
     assert text_events[0]["text"] == "Hello"
-    
+
+    # Check usage event (from trailing chunk)
+    usage_events = [e for e in events if e["type"] == "usage"]
+    assert len(usage_events) == 1
+    assert usage_events[0]["input_tokens"] == 15
+    assert usage_events[0]["output_tokens"] == 3
+
     # Check stop event
     stop_events = [e for e in events if e["type"] == "stop"]
     assert len(stop_events) == 1
@@ -291,17 +307,45 @@ def chat_stream(
 ) -> Generator[dict, None, None]:
     """Stream chat request to OpenAI-compatible API."""
     try:
-        openai_messages = self._build_messages(messages, system)
+        # Build messages inline (same logic as chat() — no helper exists)
+        openai_messages = []
+        if system:
+            openai_messages.append({"role": "system", "content": system})
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif part.get("type") == "tool_result":
+                        text_parts.append(str(part.get("content", "")))
+                content = "\n".join(text_parts)
+            openai_messages.append({"role": role, "content": content})
 
         kwargs = {
             "model": self.model,
             "messages": openai_messages,
             "max_tokens": max_tokens,
             "stream": True,
+            # Required for usage data on the final chunk
+            "stream_options": {"include_usage": True},
         }
 
         if tools:
-            kwargs["tools"] = self._normalize_tools(tools)
+            # Normalize tools inline (same logic as chat())
+            openai_tools = []
+            for tool in tools:
+                openai_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "description": tool["description"],
+                        "parameters": tool["input_schema"],
+                    },
+                })
+            kwargs["tools"] = openai_tools
             kwargs["tool_choice"] = "auto"
 
         stream = self.client.chat.completions.create(**kwargs)
@@ -311,26 +355,29 @@ def chat_stream(
         finish_reason = None
 
         for chunk in stream:
-            delta = chunk.choices[0].delta
-            finish_reason = chunk.choices[0].finish_reason
+            # Guard: the usage-only final chunk may have empty choices
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                finish_reason = chunk.choices[0].finish_reason
 
-            if delta.content:
-                yield {"type": "text", "text": delta.content}
+                if delta.content:
+                    yield {"type": "text", "text": delta.content}
 
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    idx = tc.index
-                    if idx not in current_tool_calls:
-                        current_tool_calls[idx] = {
-                            "id": tc.id or "",
-                            "name": tc.function.name or "",
-                            "arguments": "",
-                        }
-                    if tc.function and tc.function.arguments:
-                        current_tool_calls[idx]["arguments"] += tc.function.arguments
-                    if tc.id and not current_tool_calls[idx]["id"]:
-                        current_tool_calls[idx]["id"] = tc.id
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in current_tool_calls:
+                            current_tool_calls[idx] = {
+                                "id": tc.id or "",
+                                "name": tc.function.name or "",
+                                "arguments": "",
+                            }
+                        if tc.function and tc.function.arguments:
+                            current_tool_calls[idx]["arguments"] += tc.function.arguments
+                        if tc.id and not current_tool_calls[idx]["id"]:
+                            current_tool_calls[idx]["id"] = tc.id
 
+            # Usage appears on the final chunk (with include_usage=True)
             if chunk.usage:
                 input_tokens = chunk.usage.prompt_tokens
                 output_tokens = chunk.usage.completion_tokens
@@ -357,6 +404,8 @@ def chat_stream(
                     "output_tokens": output_tokens,
                 }
                 yield {"type": "stop", "stop_reason": stop_reason}
+                # Reset so we don't re-emit on the usage-only trailing chunk
+                finish_reason = None
     except Exception as e:
         raise LLMError(f"OpenAI API error: {e}") from e
 ```
@@ -466,18 +515,12 @@ git commit -m "feat(agent): add get_session_tokens() helper"
 - Modify: `src/bourbon/agent.py:278-410`
 - Test: `tests/test_agent_streaming.py`
 
-- [ ] **Step 1: Update MockLLM in conftest.py**
+- [ ] **Step 1: Write failing test for step_stream**
 
-Add to existing MockLLM in `tests/conftest.py` or wherever test fixtures are defined:
-
-```python
-def chat_stream(self, **kwargs):
-    """Mock streaming that yields text then stops."""
-    yield {"type": "text", "text": "Hello "}
-    yield {"type": "text", "text": "world"}
-    yield {"type": "usage", "input_tokens": 10, "output_tokens": 2}
-    yield {"type": "stop", "stop_reason": "end_turn"}
-```
+> **Note:** There is no `tests/conftest.py` in this repo. MockLLM classes are defined
+> inline in each test file (see `tests/test_agent_error_policy.py` and
+> `tests/test_agent_security_integration.py`). The `chat_stream()` method is added
+> directly to each test's MockLLM.
 
 - [ ] **Step 2: Write failing test for step_stream**
 
@@ -594,18 +637,26 @@ def _run_conversation_loop_stream(
 
             current_text = ""
             has_tool_calls = False
-            tool_use_data = None
+            # Collect ALL tool_use events (model may return multiple per turn)
+            tool_use_blocks: list[dict] = []
 
             for event in event_stream:
                 if event["type"] == "text":
                     text_chunk = event["text"]
                     current_text += text_chunk
                     accumulated_text += text_chunk
-                    on_text_chunk(text_chunk)
+                    # Protect callback — log and continue on error (per design spec)
+                    try:
+                        on_text_chunk(text_chunk)
+                    except Exception:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "on_text_chunk callback error", exc_info=True
+                        )
 
                 elif event["type"] == "tool_use":
                     has_tool_calls = True
-                    tool_use_data = event
+                    tool_use_blocks.append(event)
 
                 elif event["type"] == "usage":
                     usage = event
@@ -623,28 +674,23 @@ def _run_conversation_loop_stream(
             content = []
             if current_text:
                 content.append({"type": "text", "text": current_text})
-            if tool_use_data:
+            for tool_data in tool_use_blocks:
                 content.append({
                     "type": "tool_use",
-                    "id": tool_use_data["id"],
-                    "name": tool_use_data["name"],
-                    "input": tool_use_data["input"],
+                    "id": tool_data["id"],
+                    "name": tool_data["name"],
+                    "input": tool_data["input"],
                 })
 
             # Add assistant response to history
             self.messages.append({"role": "assistant", "content": content})
 
-            if not has_tool_calls or not tool_use_data:
+            if not has_tool_calls or not tool_use_blocks:
                 # Final response - return accumulated text
                 return accumulated_text
 
-            # Execute tool
-            tool_results = self._execute_tools([{
-                "type": "tool_use",
-                "id": tool_use_data["id"],
-                "name": tool_use_data["name"],
-                "input": tool_use_data["input"],
-            }])
+            # Execute ALL tool calls (matches sync _run_conversation_loop behavior)
+            tool_results = self._execute_tools(tool_use_blocks)
 
             # Check if we have a pending confirmation
             if self.pending_confirmation:
@@ -654,14 +700,22 @@ def _run_conversation_loop_stream(
             self.messages.append({"role": "user", "content": tool_results})
 
         except LLMError as e:
-            error_msg = f"LLM Error: {e}"
-            self.messages.append({"role": "assistant", "content": error_msg})
-            return accumulated_text + error_msg
+            # Fallback: retry once with non-streaming API (per design spec)
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Streaming API error, falling back to non-streaming: {e}"
+            )
+            try:
+                return self._run_conversation_loop()
+            except Exception:
+                error_msg = f"LLM Error: {e}"
+                self.messages.append({"role": "assistant", "content": error_msg})
+                return accumulated_text + error_msg
 
         tool_round += 1
 
     return (
-        accumulated_text + 
+        accumulated_text +
         "\n[Reached maximum tool execution rounds. "
         "Providing final response based on what was learned.]"
     )
@@ -765,7 +819,26 @@ self.session = PromptSession(
 )
 ```
 
-- [ ] **Step 4: Test the changes**
+- [ ] **Step 4: Update run() to use dynamic prompt**
+
+The `run()` method currently passes a fixed string `"🥃 bourbon >> "` to `self.session.prompt()`,
+which overrides the callable `message` set on PromptSession. Remove the explicit string so the
+callable takes effect:
+
+```python
+# In run(), change from:
+user_input = self.session.prompt(
+    "🥃 bourbon >> ",
+    style=self.style,
+)
+
+# To (omit the message argument — PromptSession uses self._get_prompt):
+user_input = self.session.prompt(
+    style=self.style,
+)
+```
+
+- [ ] **Step 5: Test the changes**
 
 ```bash
 # Run existing REPL tests
@@ -777,7 +850,7 @@ python -c "from bourbon.repl import REPL; print('Import OK')"
 
 Expected: No import errors
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/repl.py
@@ -848,7 +921,7 @@ The old synchronous code showed "Thinking..." but with streaming the user sees o
 python -c "from bourbon.repl import REPL; print('Import OK')"
 
 # Run existing tests
-pytest tests/ -v --tb=short 2>&1 | head -50
+pytest tests/ -v --tb=short
 ```
 
 Expected: All existing tests pass (MockLLM already has chat_stream)
@@ -862,9 +935,109 @@ git commit -m "feat(repl): implement streaming input processing"
 
 ---
 
+### Task 8: Add REPL Context Display Tests
+
+> **Required by design spec** (section "Testing Strategy", item 3: `test_repl_context_display.py`).
+
+**Files:**
+- New: `tests/test_repl_context_display.py`
+
+- [ ] **Step 1: Write tests for _get_prompt()**
+
+Create `tests/test_repl_context_display.py`:
+
+```python
+"""Tests for REPL dynamic context display prompt."""
+
+import pytest
+from unittest.mock import MagicMock
+
+
+def _make_repl_with_tokens(tokens: int, threshold: int, show_token_count: bool = True):
+    """Create a REPL instance with mocked agent/config for prompt testing."""
+    from bourbon.repl import REPL
+
+    repl = object.__new__(REPL)
+    repl.agent = MagicMock()
+    repl.agent.get_session_tokens.return_value = tokens
+    repl.agent.compressor.token_threshold = threshold
+    repl.config = MagicMock()
+    repl.config.ui.show_token_count = show_token_count
+    return repl
+
+
+def test_get_prompt_shows_context_percentage():
+    """_get_prompt displays correct percentage."""
+    repl = _make_repl_with_tokens(50_000, 200_000)
+    prompt = repl._get_prompt()
+    # 25%
+    assert "25.0%" in str(prompt)
+
+
+def test_get_prompt_gray_under_50_percent():
+    """Context color is gray when under 50%."""
+    repl = _make_repl_with_tokens(20_000, 200_000)
+    prompt_str = str(repl._get_prompt())
+    assert "#888888" in prompt_str
+
+
+def test_get_prompt_orange_between_50_and_80_percent():
+    """Context color is orange between 50-80%."""
+    repl = _make_repl_with_tokens(120_000, 200_000)
+    prompt_str = str(repl._get_prompt())
+    assert "#FFA500" in prompt_str
+
+
+def test_get_prompt_red_above_80_percent():
+    """Context color is red above 80%."""
+    repl = _make_repl_with_tokens(180_000, 200_000)
+    prompt_str = str(repl._get_prompt())
+    assert "#FF4444" in prompt_str
+
+
+def test_get_prompt_hidden_when_show_token_count_false():
+    """_get_prompt hides context when show_token_count is False."""
+    repl = _make_repl_with_tokens(50_000, 200_000, show_token_count=False)
+    prompt_str = str(repl._get_prompt())
+    assert "context:" not in prompt_str
+    assert "bourbon" in prompt_str
+
+
+def test_get_prompt_caps_at_100_percent():
+    """Percentage caps at 100% even if tokens exceed threshold."""
+    repl = _make_repl_with_tokens(250_000, 200_000)
+    prompt_str = str(repl._get_prompt())
+    assert "100.0%" in prompt_str
+```
+
+- [ ] **Step 2: Run tests (expect failure before Task 6 implementation)**
+
+```bash
+pytest tests/test_repl_context_display.py -v
+```
+
+Expected: FAIL until `_get_prompt()` is implemented in Task 6
+
+- [ ] **Step 3: After Task 6 is complete, verify all pass**
+
+```bash
+pytest tests/test_repl_context_display.py -v
+```
+
+Expected: All PASS
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/test_repl_context_display.py
+git commit -m "test: add REPL context display prompt tests"
+```
+
+---
+
 ## Phase 4: Integration & Polish
 
-### Task 8: Update MockLLM in All Test Files
+### Task 9: Update MockLLM in All Test Files
 
 **Files:**
 - Modify: `tests/test_agent_error_policy.py`
@@ -892,7 +1065,7 @@ def chat_stream(self, **kwargs):
 - [ ] **Step 3: Run all tests**
 
 ```bash
-pytest tests/ -v --tb=short 2>&1 | tail -30
+pytest tests/ -v --tb=short
 ```
 
 Expected: All tests pass
@@ -906,7 +1079,7 @@ git commit -m "test: add chat_stream() to all MockLLM classes"
 
 ---
 
-### Task 9: Add Tool Call Streaming Test
+### Task 10: Add Tool Call Streaming Test
 
 **Files:**
 - Test: `tests/test_agent_streaming.py`
@@ -975,29 +1148,98 @@ def test_step_stream_handles_tool_calls():
     assert chunks == ["Done"]
 ```
 
-- [ ] **Step 2: Run test**
+- [ ] **Step 2: Write test for MULTIPLE tool calls in one turn**
+
+This verifies Finding 1 fix — all tool_use events must be collected and executed,
+not just the last one:
+
+```python
+def test_step_stream_handles_multiple_tool_calls_per_turn():
+    """step_stream collects and executes ALL tool calls in a single turn."""
+    from bourbon.agent import Agent
+    from bourbon.config import Config
+
+    config = Config()
+    agent = object.__new__(Agent)
+    agent.config = config
+    agent.workdir = Path.cwd()
+    agent.messages = []
+    agent._rounds_without_todo = 0
+    agent._max_tool_rounds = 50
+    agent.pending_confirmation = None
+    agent.on_tool_start = None
+    agent.on_tool_end = None
+    agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    call_count = 0
+
+    class MockLLM:
+        def chat_stream(self, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: TWO tool calls in one turn
+                yield {"type": "tool_use", "id": "tool-1", "name": "bash", "input": {"command": "ls"}}
+                yield {"type": "tool_use", "id": "tool-2", "name": "bash", "input": {"command": "pwd"}}
+                yield {"type": "usage", "input_tokens": 10, "output_tokens": 5}
+                yield {"type": "stop", "stop_reason": "tool_use"}
+            else:
+                yield {"type": "text", "text": "Done"}
+                yield {"type": "usage", "input_tokens": 10, "output_tokens": 2}
+                yield {"type": "stop", "stop_reason": "end_turn"}
+
+    agent.llm = MockLLM()
+    agent.system_prompt = "You are a test agent"
+
+    class MockCompressor:
+        def microcompact(self, msgs): pass
+        def should_compact(self, msgs): return False
+        token_threshold = 100000
+
+    agent.compressor = MockCompressor()
+
+    # Track which tool blocks were passed to _execute_tools
+    executed_tools = []
+    def mock_execute(tools):
+        executed_tools.extend(tools)
+        return [
+            {"type": "tool_result", "tool_use_id": t["id"], "content": "ok"}
+            for t in tools
+        ]
+    agent._execute_tools = mock_execute
+
+    result = agent.step_stream("do stuff", lambda t: None)
+
+    # Both tool calls must have been executed
+    assert len(executed_tools) == 2
+    assert executed_tools[0]["id"] == "tool-1"
+    assert executed_tools[1]["id"] == "tool-2"
+    assert result == "Done"
+```
+
+- [ ] **Step 3: Run tests**
 
 ```bash
-pytest tests/test_agent_streaming.py::test_step_stream_handles_tool_calls -v
+pytest tests/test_agent_streaming.py::test_step_stream_handles_tool_calls tests/test_agent_streaming.py::test_step_stream_handles_multiple_tool_calls_per_turn -v
 ```
 
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add tests/test_agent_streaming.py
-git commit -m "test: add tool call streaming test"
+git commit -m "test: add tool call streaming tests (single and multi-tool)"
 ```
 
 ---
 
-### Task 10: Final Verification
+### Task 11: Final Verification
 
 - [ ] **Step 1: Run full test suite**
 
 ```bash
-pytest tests/ -v --tb=short 2>&1 | tail -50
+pytest tests/ -v --tb=short
 ```
 
 Expected: All tests pass
@@ -1035,11 +1277,20 @@ git log --oneline -5  # Review recent commits
 
 ## Summary
 
-This plan implements:
+This plan implements (11 tasks):
 
 1. **LLM Layer**: `chat_stream()` abstract + Anthropic/OpenAI implementations
 2. **Agent Layer**: `step_stream()` + `get_session_tokens()` + `_run_conversation_loop_stream()`
 3. **REPL Layer**: Dynamic `_get_prompt()` with context display + streaming input processing
-4. **Tests**: New test files for streaming + updated MockLLM classes
+4. **Tests**: New test files (`test_llm_streaming.py`, `test_agent_streaming.py`, `test_repl_context_display.py`) + updated MockLLM classes
 
 All changes maintain backward compatibility - the original `step()` method remains unchanged.
+
+### Key design decisions in this plan
+
+- **Multiple tool calls per turn**: The streaming loop collects ALL `tool_use` events into a list and passes them to `_execute_tools()` as a batch, matching the sync loop behavior.
+- **OpenAI `stream_options`**: Passes `{"include_usage": True}` and guards against the trailing usage-only chunk where `choices` is empty.
+- **Error handling**: Streaming API errors fall back to non-streaming retry; `on_text_chunk` callback exceptions are logged and swallowed (per design spec).
+- **Dynamic prompt**: Both `PromptSession(message=...)` AND the `run()` call site are updated; the latter must omit its explicit string or it overrides the callable.
+- **No `tests/conftest.py`**: MockLLM classes are defined inline in each test file; `chat_stream()` is added to each one individually.
+- **No `_build_messages()` / `_normalize_tools()` helpers**: OpenAI streaming inlines the same message/tool normalization logic used in `chat()`.
