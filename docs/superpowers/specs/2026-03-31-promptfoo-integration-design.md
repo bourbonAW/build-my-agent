@@ -14,7 +14,7 @@ Replace Bourbon's entire eval infrastructure with **promptfoo** as the evaluatio
 
 ### Why promptfoo
 
-- De facto standard for LLM eval (acquired by OpenAI, used by Anthropic, MIT licensed)
+- De facto standard for LLM eval (joined OpenAI March 2026, remains MIT licensed, used by Anthropic)
 - CLI-first, local-first — `npx promptfoo eval` + `npx promptfoo view`
 - Native `--repeat N` for multi-run
 - `llm-rubric` replaces Bourbon's evaluator agent
@@ -37,11 +37,43 @@ npx promptfoo eval → Bourbon provider (agent.step()) → promptfoo assertions/
 
 ## Components
 
-### 1. Bourbon Agent Provider (`evals/promptfoo_provider.py`)
+### 1. Provider Response Contract
+
+**Important**: promptfoo's `call_api` returns `{"output": string, ...}`. The `output` field is always a **string** — not an object. JavaScript assertions receive only this string. To pass structured data (workdir path, duration) to assertions, the provider encodes output as JSON:
+
+```python
+# Provider returns:
+return {
+    "output": json.dumps({
+        "text": agent_output,        # the actual agent response
+        "workdir": str(workdir),     # for file-based assertions
+        "duration_ms": duration
+    }),
+    "tokenUsage": {"total": ..., "prompt": ..., "completion": ...}
+}
+```
+
+```yaml
+# Assertions parse it:
+- type: javascript
+  value: |
+    const data = JSON.parse(output);
+    const fs = require('fs');
+    return fs.existsSync(data.workdir + '/main.py');
+
+# Text-based assertions use transform to extract text:
+defaultTest:
+  options:
+    transformVars: "try { JSON.parse(output).text } catch { output }"
+```
+
+### 2. Bourbon Agent Provider (`evals/promptfoo_provider.py`)
 
 A promptfoo custom Python provider that wraps `Agent.step()`.
 
 ```python
+import json
+
 def call_api(prompt, options, context):
     """Promptfoo calls this for each test case."""
     vars = options.get("vars", {})
@@ -52,12 +84,15 @@ def call_api(prompt, options, context):
     # 2. Create Agent with workspace
     # 3. Configure skill if specified
     # 4. Run agent.step(prompt)
-    # 5. Return result
+    # 5. Return structured JSON output
 
     return {
-        "output": agent_output,
-        "tokenUsage": {"total": ..., "prompt": ..., "completion": ...},
-        "metadata": {"workdir": str(workdir), "duration_ms": duration}
+        "output": json.dumps({
+            "text": agent_output,
+            "workdir": str(workdir),
+            "duration_ms": duration
+        }),
+        "tokenUsage": {"total": ..., "prompt": ..., "completion": ...}
     }
 ```
 
@@ -65,10 +100,10 @@ Responsibilities:
 - Workspace setup from fixtures (reuses logic from old `runner._setup_workspace`)
 - Agent creation with proper config
 - Skill activation when test case requires it
-- Workspace cleanup after execution
-- Token usage and duration tracking via metadata
+- Workspace cleanup: **deferred** — workdir is NOT cleaned up in `call_api` because assertions may need to access files after the provider returns. Cleanup happens via `atexit` handler or a post-eval script.
+- Token usage tracking via promptfoo's `tokenUsage` field
 
-### 2. Artifact Provider (`evals/promptfoo_artifact_provider.py`)
+### 3. Artifact Provider (`evals/promptfoo_artifact_provider.py`)
 
 A minimal provider for calibration cases. Does NOT run the agent — just returns pre-built code as output for promptfoo's `llm-rubric` to judge.
 
@@ -85,7 +120,7 @@ def call_api(prompt, options, context):
     return {"output": solution}
 ```
 
-### 3. Configuration (`promptfooconfig.yaml`)
+### 4. Configuration (`promptfooconfig.yaml`)
 
 Single entry point for all eval configuration.
 
@@ -114,7 +149,7 @@ tests:
   - file://evals/cases/calibration.yaml
 ```
 
-### 4. Test Case Format (YAML)
+### 5. Test Case Format (YAML)
 
 Each category gets its own YAML file under `evals/cases/`.
 
@@ -134,7 +169,9 @@ Each category gets its own YAML file under `evals/cases/`.
     category: safety
 ```
 
-#### Calibration case (pre-built artifact + LLM judge)
+#### Calibration case (pre-built artifact + multi-dimensional LLM judge)
+
+The old calibration system ran a full evaluator agent producing per-dimension scores (e.g., correctness: 3.0, quality: 3.0) and validated them against expected ranges. With promptfoo, each dimension gets its own `llm-rubric` assertion with a `metric` name, and a `javascript` assertion validates the score range.
 
 ```yaml
 # evals/cases/calibration.yaml
@@ -144,12 +181,38 @@ Each category gets its own YAML file under `evals/cases/`.
     prompt: "Evaluate this implementation of below_zero"
   provider: python:evals/promptfoo_artifact_provider.py
   assert:
+    # Dimension 1: correctness (scored 0-1 by llm-rubric)
     - type: llm-rubric
       value: |
-        Evaluate the correctness of this below_zero implementation.
-        It should detect when balance goes below zero at ANY point during operations.
+        Evaluate CORRECTNESS only. Does this below_zero implementation correctly
+        detect when balance goes below zero at ANY point during operations?
         Test: [1, 2, -4, 5] should return True (balance hits -1).
-      threshold: 0.5
+        Score 0 = completely wrong, 1 = perfectly correct.
+      metric: correctness
+
+    # Dimension 2: quality (scored 0-1 by llm-rubric)
+    - type: llm-rubric
+      value: |
+        Evaluate CODE QUALITY only (not correctness). Consider naming, structure,
+        simplicity, documentation, and idiomatic Python style.
+        Score 0 = terrible quality, 1 = excellent quality.
+      metric: quality
+
+    # Validate correctness score falls in expected range for buggy variant
+    - type: javascript
+      value: |
+        const score = context.namedScores?.correctness;
+        if (score === undefined) return { pass: false, reason: 'no correctness score' };
+        const inRange = score >= 0.1 && score <= 0.4;
+        return { pass: inRange, reason: `correctness=${score}, expected [0.1, 0.4]` };
+
+    # Validate quality score falls in expected range for buggy variant
+    - type: javascript
+      value: |
+        const score = context.namedScores?.quality;
+        if (score === undefined) return { pass: false, reason: 'no quality score' };
+        const inRange = score >= 0.2 && score <= 0.5;
+        return { pass: inRange, reason: `quality=${score}, expected [0.2, 0.5]` };
   metadata:
     category: calibration
     variant: buggy
@@ -179,18 +242,16 @@ Each category gets its own YAML file under `evals/cases/`.
   assert:
     - type: javascript
       value: |
+        const data = JSON.parse(output);
         const fs = require('fs');
-        const path = require('path');
-        const workdir = output.metadata?.workdir;
-        if (!workdir) return false;
-        return fs.existsSync(path.join(workdir, 'main.py'));
+        return fs.existsSync(data.workdir + '/main.py');
     - type: llm-rubric
       value: "The agent read the file and added appropriate error handling"
   metadata:
     category: file-operations
 ```
 
-### 5. Assertion Mapping
+### 6. Assertion Mapping
 
 | Bourbon (old) | Promptfoo (new) |
 |---|---|
@@ -199,9 +260,9 @@ Each category gets its own YAML file under `evals/cases/`.
 | `output_contains_any:[...]` | `type: contains-any, value: [...]` |
 | `output_not_contains_any:[...]` | `type: javascript` |
 | `output_not_contains_regex:pattern` | `type: not-contains, value: /pattern/` |
-| `file_exists:path` | `type: javascript` (check via metadata.workdir) |
-| `file_contains:path:text` | `type: javascript` (check via metadata.workdir) |
-| `audit_event_exists:...` | `type: javascript` (read audit.jsonl from workdir) |
+| `file_exists:path` | `type: javascript` (parse JSON output for workdir) |
+| `file_contains:path:text` | `type: javascript` (parse JSON output for workdir) |
+| `audit_event_exists:...` | `type: javascript` (read audit.jsonl via workdir from JSON output) |
 | `llm_judge` type assertion | `type: llm-rubric, value: "criteria"` |
 | Bourbon evaluator agent | `type: llm-rubric` (promptfoo's native LLM judge) |
 
@@ -274,8 +335,10 @@ No global install needed — `npx` runs promptfoo directly.
 2. **Phase 2**: Migrate remaining categories, validate parity with old results
 3. **Phase 3**: Delete old infrastructure (reporter, runner, metrics, validator, assertions, config.toml, JSON cases)
 
-## Open Questions
+## Resolved Questions
 
-- Should `evals/fixtures/` be reorganized to better match the new case structure?
-- Should we add a thin `Makefile` or `justfile` wrapper for common promptfoo commands?
-- How to handle `EVAL_KEEP_ARTIFACTS` env var equivalent in promptfoo?
+- **Fixture reorganization**: No. Keep `evals/fixtures/` as-is — providers reference them by name, no structural change needed.
+- **Makefile/justfile wrapper**: No. `npx promptfoo eval` is already one command. YAGNI.
+- **Workspace cleanup**: Provider registers an `atexit` handler that cleans up all temp workdirs when the process exits. This ensures assertions can access workdir files during evaluation. Set `EVAL_KEEP_ARTIFACTS=1` env var to skip cleanup (provider checks this before registering the handler).
+- **Subcategory filtering**: Use `--filter-pattern` matching on test description text. Descriptions should include category context (e.g., "Safety: Path traversal attack") to enable pattern matching. For more granular filtering, use promptfoo's `--filter-metadata "category=safety"` if supported, otherwise rely on `--filter-pattern`.
+- **Concurrency**: `maxConcurrency: 1` is correct since each agent run needs workspace isolation. Future optimization: increase concurrency since each case uses its own temp dir, but not needed now.
