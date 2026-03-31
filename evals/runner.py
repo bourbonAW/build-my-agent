@@ -482,9 +482,109 @@ class EvalRunner:
             "assertions": report.to_assertions(),
             "report": report.to_dict(),
         }
-    
+
+    def _run_calibration_case(self, case: dict, run_number: int = 1) -> EvalResult:
+        """Run a pre-built artifact through the evaluator only (no agent execution)."""
+        start = time.time()
+        workdir = self._setup_workspace(case)
+
+        try:
+            artifact_dir = workdir / "artifact"
+            if not artifact_dir.exists():
+                raise RuntimeError(
+                    f"Pre-built artifact not found: {artifact_dir}. "
+                    "Fixture must contain an artifact/ subdirectory."
+                )
+
+            evaluator_config = case.get("evaluator", {})
+            focus = evaluator_config.get("focus", ["correctness"])
+            dimensions_config = dict(evaluator_config.get("dimensions", {}))
+            for dim_name, dim_config in (
+                self.config.get("evaluator", {}).get("default_dimensions", {}).items()
+            ):
+                dimensions_config.setdefault(dim_name, dim_config)
+
+            report_path = EvaluatorAgentRunner(
+                artifact_dir=artifact_dir,
+                focus=focus,
+                threshold=evaluator_config.get(
+                    "threshold",
+                    self.config.get("evaluator", {}).get("default_threshold", 8.0),
+                ),
+                timeout=evaluator_config.get(
+                    "timeout",
+                    self.config.get("evaluator", {}).get("default_timeout", 120),
+                ),
+                dimensions_config=dimensions_config,
+                dimension_to_skill=self.config.get("evaluator", {}).get(
+                    "dimension_to_skill", {}
+                ),
+            ).run()
+            report = ValidationReport.load(report_path)
+
+            assertion_results = report.to_assertions()
+
+            expected_scores = evaluator_config.get("expected_scores", {})
+            for dim_name, expected in expected_scores.items():
+                actual = next(
+                    (d for d in report.dimensions if d.name == dim_name), None
+                )
+                if actual is None:
+                    assertion_results.append({
+                        "id": f"calibration_{dim_name}",
+                        "text": f"{dim_name} score in [{expected['min']}, {expected['max']}]",
+                        "passed": False,
+                        "evidence": f"dimension '{dim_name}' not found in evaluation report",
+                    })
+                else:
+                    in_range = expected["min"] <= actual.score <= expected["max"]
+                    assertion_results.append({
+                        "id": f"calibration_{dim_name}",
+                        "text": f"{dim_name} score in [{expected['min']}, {expected['max']}]",
+                        "passed": in_range,
+                        "evidence": f"actual={actual.score:.1f}, expected=[{expected['min']}, {expected['max']}]",
+                    })
+
+            # For calibration cases, success is determined ONLY by calibration_*
+            # assertions (expected score ranges), NOT by eval_* threshold assertions.
+            # Buggy/Messy variants intentionally score below threshold, so
+            # report.to_assertions() will include failing eval_* assertions —
+            # that's expected, not a test failure.
+            calibration_assertions = [
+                a for a in assertion_results if a["id"].startswith("calibration_")
+            ]
+            success = (
+                bool(calibration_assertions)
+                and all(a["passed"] for a in calibration_assertions)
+            )
+            duration = int((time.time() - start) * 1000)
+
+            return EvalResult(
+                case_id=case["id"],
+                success=success,
+                duration_ms=duration,
+                assertions=assertion_results,
+                run_number=run_number,
+            )
+        except Exception as e:
+            duration = int((time.time() - start) * 1000)
+            return EvalResult(
+                case_id=case["id"],
+                success=False,
+                duration_ms=duration,
+                error=str(e),
+                run_number=run_number,
+            )
+        finally:
+            import os
+            if workdir and not os.environ.get("EVAL_KEEP_ARTIFACTS"):
+                self._cleanup_workspace(workdir)
+
     def run_single(self, case: dict, run_number: int = 1) -> EvalResult:
         """执行单次运行"""
+        if case.get("pre_built_artifact"):
+            return self._run_calibration_case(case, run_number)
+
         workdir = None
         original_cwd = Path.cwd()
         start = time.time()

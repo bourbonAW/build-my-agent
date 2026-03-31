@@ -1,10 +1,12 @@
 """LLM client for multiple providers (Anthropic, OpenAI, and compatible APIs)."""
 
 import json
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 
 from bourbon.config import Config
+from bourbon.debug import debug_log
 
 # Optional imports - fail gracefully if not installed
 try:
@@ -125,7 +127,16 @@ class AnthropicLLMClient(LLMClient):
         max_tokens: int = 8000,
     ) -> Generator[dict, None, None]:
         """Stream chat request to Anthropic."""
+        started_at = time.monotonic()
         try:
+            debug_log(
+                "llm.anthropic.stream.start",
+                model=self.model,
+                base_url=str(getattr(self.client, "base_url", "")),
+                message_count=len(messages),
+                tool_count=len(tools or []),
+                max_tokens=max_tokens,
+            )
             kwargs = {
                 "model": self.model,
                 "messages": messages,
@@ -137,10 +148,22 @@ class AnthropicLLMClient(LLMClient):
                 kwargs["tools"] = tools
 
             with self.client.messages.stream(**kwargs) as stream:
+                debug_log(
+                    "llm.anthropic.stream.open",
+                    elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                )
                 current_tool = None
                 tool_json = ""
+                saw_raw_event = False
 
                 for event in stream:
+                    debug_log(
+                        "llm.anthropic.stream.raw_event",
+                        raw_type=event.type,
+                        first_event=not saw_raw_event,
+                        elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                    )
+                    saw_raw_event = True
                     if event.type == "content_block_delta":
                         if event.delta.type == "text_delta":
                             yield {"type": "text", "text": event.delta.text}
@@ -166,7 +189,16 @@ class AnthropicLLMClient(LLMClient):
                         }
                         current_tool = None
 
+                debug_log(
+                    "llm.anthropic.stream.before_final_message",
+                    elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                )
                 final_message = stream.get_final_message()
+                debug_log(
+                    "llm.anthropic.stream.complete",
+                    stop_reason=final_message.stop_reason,
+                    elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                )
                 yield {
                     "type": "usage",
                     "input_tokens": final_message.usage.input_tokens,
@@ -177,6 +209,11 @@ class AnthropicLLMClient(LLMClient):
                     "stop_reason": final_message.stop_reason,
                 }
         except Exception as e:
+            debug_log(
+                "llm.anthropic.stream.error",
+                error=str(e),
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+            )
             raise LLMError(f"Anthropic API error: {e}") from e
 
 
@@ -287,7 +324,16 @@ class OpenAILLMClient(LLMClient):
         max_tokens: int = 8000,
     ) -> Generator[dict, None, None]:
         """Stream chat request to OpenAI-compatible API."""
+        started_at = time.monotonic()
         try:
+            debug_log(
+                "llm.openai.stream.start",
+                model=self.model,
+                base_url=str(getattr(self.client, "base_url", "")),
+                message_count=len(messages),
+                tool_count=len(tools or []),
+                max_tokens=max_tokens,
+            )
             # Build messages inline (same logic as chat() — no helper exists)
             openai_messages = []
             if system:
@@ -332,12 +378,25 @@ class OpenAILLMClient(LLMClient):
                 kwargs["tool_choice"] = "auto"
 
             stream = self.client.chat.completions.create(**kwargs)
+            debug_log(
+                "llm.openai.stream.open",
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+            )
             current_tool_calls: dict[int, dict] = {}
             input_tokens = 0
             output_tokens = 0
             finish_reason = None
+            saw_chunk = False
 
             for chunk in stream:
+                debug_log(
+                    "llm.openai.stream.chunk",
+                    first_chunk=not saw_chunk,
+                    has_choices=bool(chunk.choices),
+                    has_usage=bool(chunk.usage),
+                    elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                )
+                saw_chunk = True
                 # Guard: the usage-only final chunk may have empty choices
                 if chunk.choices:
                     delta = chunk.choices[0].delta
@@ -381,6 +440,13 @@ class OpenAILLMClient(LLMClient):
                 }
 
             stop_reason = "tool_use" if finish_reason == "tool_calls" else "end_turn"
+            debug_log(
+                "llm.openai.stream.complete",
+                stop_reason=stop_reason,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+            )
             yield {
                 "type": "usage",
                 "input_tokens": input_tokens,
@@ -388,6 +454,11 @@ class OpenAILLMClient(LLMClient):
             }
             yield {"type": "stop", "stop_reason": stop_reason}
         except Exception as e:
+            debug_log(
+                "llm.openai.stream.error",
+                error=str(e),
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+            )
             raise LLMError(f"OpenAI API error: {e}") from e
 
 

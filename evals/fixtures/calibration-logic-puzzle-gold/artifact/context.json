@@ -1,0 +1,16 @@
+{
+  "prompt": "Solve the following logic puzzle and write your solution to solution.md:\n\nThree friends — Alice, Bob, and Carol — each own exactly one pet:\na cat, a dog, and a fish (one pet per person, no repeats).\n\nClues:\n1. Alice does not own the cat.\n2. Bob does not own the dog.\n3. Carol does not own the cat.\n\nDetermine who owns which pet. Show your reasoning step by step.",
+  "success_criteria": [
+    "Correctly infer that Bob owns the cat",
+    "Correctly explain that Alice and Carol can split dog and fish in either order, so the puzzle does not have a unique full assignment",
+    "Reasoning shows step-by-step elimination",
+    "Solution is written to solution.md"
+  ],
+  "success_criteria_formal": [],
+  "constraints": [],
+  "evaluation_hints": [
+    "Check workspace/solution.md for the reasoning and answer",
+    "Verify that the final answer does not violate any clue and does not overclaim a unique Alice/Carol assignment"
+  ],
+  "reference_files": []
+}

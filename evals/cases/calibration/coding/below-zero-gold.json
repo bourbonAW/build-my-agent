@@ -1,0 +1,37 @@
+{
+  "id": "calibration-below-zero-gold",
+  "name": "Calibration: below_zero (Gold)",
+  "category": "calibration",
+  "subcategory": "coding",
+  "difficulty": "easy",
+  "description": "Gold variant: perfect implementation of HumanEval/3 below_zero. Expects high scores on both correctness and quality.",
+  "pre_built_artifact": true,
+  "context": {
+    "workdir": "fixtures/calibration-below-zero-gold"
+  },
+  "assertions": [],
+  "evaluator": {
+    "enabled": true,
+    "focus": ["correctness", "quality"],
+    "threshold": 7.0,
+    "timeout": 120,
+    "dimensions": {
+      "correctness": { "weight": 0.7, "threshold": 8.0 },
+      "quality": { "weight": 0.3, "threshold": 6.0 }
+    },
+    "success_criteria": [
+      "Function below_zero correctly detects when balance goes below zero",
+      "Function returns True for [1, 2, -4, 5] and False for [1, 2, 3]",
+      "All test cases pass"
+    ],
+    "evaluation_hints": [
+      "Check workspace/solution.py for the implementation",
+      "Run the test assertions mentally against the code"
+    ],
+    "expected_scores": {
+      "correctness": { "min": 9, "max": 10 },
+      "quality": { "min": 8, "max": 10 }
+    }
+  },
+  "tags": ["calibration", "coding", "humaneval", "gold"]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "calibration-logic-puzzle-gold",
+  "name": "Calibration: Logic Puzzle (Gold)",
+  "category": "calibration",
+  "subcategory": "reasoning",
+  "difficulty": "easy",
+  "description": "Gold variant: correctly identifies the underconstrained puzzle, forces Bob=cat, and documents both valid Alice/Carol assignments. Expects high scores on both dimensions.",
+  "pre_built_artifact": true,
+  "context": {
+    "workdir": "fixtures/calibration-logic-puzzle-gold"
+  },
+  "assertions": [],
+  "evaluator": {
+    "enabled": true,
+    "focus": ["correctness", "quality"],
+    "threshold": 7.0,
+    "timeout": 120,
+    "dimensions": {
+      "correctness": { "weight": 0.7, "threshold": 8.0 },
+      "quality": { "weight": 0.3, "threshold": 6.0 }
+    },
+    "success_criteria": [
+      "Correctly infer that Bob owns the cat",
+      "Correctly explain that Alice and Carol can split dog and fish in either order, so the puzzle does not have a unique full assignment",
+      "Reasoning shows step-by-step elimination",
+      "Solution is written to solution.md"
+    ],
+    "evaluation_hints": [
+      "Check workspace/solution.md for the reasoning and answer",
+      "Verify the final answer does not violate any clue and does not overclaim a unique Alice/Carol assignment"
+    ],
+    "expected_scores": {
+      "correctness": { "min": 9, "max": 10 },
+      "quality": { "min": 9, "max": 10 }
+    }
+  },
+  "tags": ["calibration", "reasoning", "logic", "gold"]
+}

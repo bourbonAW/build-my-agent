@@ -1,0 +1,38 @@
+{
+  "id": "calibration-logic-puzzle-buggy",
+  "name": "Calibration: Logic Puzzle (Buggy)",
+  "category": "calibration",
+  "subcategory": "reasoning",
+  "difficulty": "easy",
+  "description": "Buggy variant: wrong answer that violates clues 2 and 3, with self-contradictory reasoning. Expects low scores.",
+  "pre_built_artifact": true,
+  "context": {
+    "workdir": "fixtures/calibration-logic-puzzle-buggy"
+  },
+  "assertions": [],
+  "evaluator": {
+    "enabled": true,
+    "focus": ["correctness", "quality"],
+    "threshold": 7.0,
+    "timeout": 120,
+    "dimensions": {
+      "correctness": { "weight": 0.7, "threshold": 8.0 },
+      "quality": { "weight": 0.3, "threshold": 6.0 }
+    },
+    "success_criteria": [
+      "Correctly infer that Bob owns the cat",
+      "Correctly explain that Alice and Carol can split dog and fish in either order, so the puzzle does not have a unique full assignment",
+      "Reasoning shows step-by-step elimination",
+      "Solution is written to solution.md"
+    ],
+    "evaluation_hints": [
+      "Check workspace/solution.md for the reasoning and answer",
+      "Verify the final answer does not violate any clue and does not overclaim a unique Alice/Carol assignment"
+    ],
+    "expected_scores": {
+      "correctness": { "min": 1, "max": 3 },
+      "quality": { "min": 2, "max": 5 }
+    }
+  },
+  "tags": ["calibration", "reasoning", "logic", "buggy"]
+}

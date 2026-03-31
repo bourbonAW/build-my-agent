@@ -1,0 +1,17 @@
+{
+  "prompt": "Implement the function below_zero that detects if a bank account balance falls below zero during a series of deposit/withdrawal operations.\n\nThe account starts at zero balance. Return True if balance goes below zero at any point, False otherwise.\n\ndef below_zero(operations: List[int]) -> bool:\n    ...\n\nExamples:\n  below_zero([1, 2, 3]) → False\n  below_zero([1, 2, -4, 5]) → True",
+  "success_criteria": [
+    "Function signature is below_zero(operations: List[int]) -> bool",
+    "Empty list returns False",
+    "[1, 2, -4, 5] returns True",
+    "[1, 2, -3, 1, 2, -3] returns False (balance touches zero but never goes below)",
+    "Implementation correctly tracks cumulative balance"
+  ],
+  "success_criteria_formal": [],
+  "constraints": [],
+  "evaluation_hints": [
+    "Check workspace/solution.py for the implementation",
+    "Run the test assertions mentally against the code"
+  ],
+  "reference_files": []
+}

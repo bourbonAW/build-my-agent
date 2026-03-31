@@ -1,0 +1,37 @@
+{
+  "id": "calibration-below-zero-buggy",
+  "name": "Calibration: below_zero (Buggy)",
+  "category": "calibration",
+  "subcategory": "coding",
+  "difficulty": "easy",
+  "description": "Buggy variant: check-after-loop bug only checks final balance, not intermediate states. Expects low correctness score.",
+  "pre_built_artifact": true,
+  "context": {
+    "workdir": "fixtures/calibration-below-zero-buggy"
+  },
+  "assertions": [],
+  "evaluator": {
+    "enabled": true,
+    "focus": ["correctness", "quality"],
+    "threshold": 7.0,
+    "timeout": 120,
+    "dimensions": {
+      "correctness": { "weight": 0.7, "threshold": 8.0 },
+      "quality": { "weight": 0.3, "threshold": 6.0 }
+    },
+    "success_criteria": [
+      "Function below_zero correctly detects when balance goes below zero",
+      "Function returns True for [1, 2, -4, 5] and False for [1, 2, 3]",
+      "All test cases pass"
+    ],
+    "evaluation_hints": [
+      "Check workspace/solution.py for the implementation",
+      "Run the test assertions mentally against the code"
+    ],
+    "expected_scores": {
+      "correctness": { "min": 1, "max": 4 },
+      "quality": { "min": 2, "max": 5 }
+    }
+  },
+  "tags": ["calibration", "coding", "humaneval", "buggy"]
+}

@@ -1,0 +1,6 @@
+{
+  "final_output": "Implemented below_zero. The function sums all operations and checks if the final balance is negative.",
+  "tool_calls": [],
+  "errors": [],
+  "exit_reason": "completed"
+}

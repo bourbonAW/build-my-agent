@@ -1,5 +1,6 @@
 """Core agent loop for Bourbon."""
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,12 +11,18 @@ from bourbon.audit import AuditLogger
 from bourbon.audit.events import AuditEvent
 from bourbon.compression import ContextCompressor
 from bourbon.config import Config
+from bourbon.debug import debug_log
 from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
 from bourbon.sandbox import SandboxManager
 from bourbon.skills import SkillManager
 from bourbon.todos import TodoManager
-from bourbon.tools import definitions, get_registry, get_tool_with_metadata, handler
+from bourbon.tools import (
+    definitions,
+    get_registry,
+    get_tool_with_metadata,
+    handler,
+)
 
 
 class AgentError(Exception):
@@ -309,9 +316,24 @@ class Agent:
         Returns:
             Complete response text (for history and optional markdown re-rendering)
         """
+        started_at = time.monotonic()
+        debug_log(
+            "agent.step_stream.start",
+            user_input_len=len(user_input),
+            message_count=len(self.messages),
+            has_pending_confirmation=bool(self.pending_confirmation),
+        )
+
         # Check if we're resuming from a pending confirmation
         if self.pending_confirmation:
-            return self._handle_confirmation_response(user_input)
+            response = self._handle_confirmation_response(user_input)
+            debug_log(
+                "agent.step_stream.complete",
+                response_len=len(response),
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                resumed_confirmation=True,
+            )
+            return response
 
         # Add user message
         self.messages.append({"role": "user", "content": user_input})
@@ -324,7 +346,14 @@ class Agent:
             self._auto_compact()
 
         # Run the streaming conversation loop
-        return self._run_conversation_loop_stream(on_text_chunk)
+        response = self._run_conversation_loop_stream(on_text_chunk)
+        debug_log(
+            "agent.step_stream.complete",
+            response_len=len(response),
+            elapsed_ms=int((time.monotonic() - started_at) * 1000),
+            has_pending_confirmation=bool(self.pending_confirmation),
+        )
+        return response
 
     def _run_conversation_loop_stream(
         self,
@@ -335,10 +364,17 @@ class Agent:
 
         tool_round = 0
         accumulated_text = ""
+        stream_started_at = time.monotonic()
 
         while tool_round < self._max_tool_rounds:
             # Call LLM with streaming
             try:
+                debug_log(
+                    "agent.stream.llm_call.start",
+                    tool_round=tool_round,
+                    message_count=len(self.messages),
+                    tool_definition_count=len(definitions()),
+                )
                 event_stream = self.llm.chat_stream(
                     messages=self.messages,
                     tools=definitions(),
@@ -350,12 +386,22 @@ class Agent:
                 has_tool_calls = False
                 # Collect ALL tool_use events (model may return multiple per turn)
                 tool_use_blocks: list[dict] = []
+                saw_text = False
 
                 for event in event_stream:
                     if event["type"] == "text":
                         text_chunk = event["text"]
                         current_text += text_chunk
                         accumulated_text += text_chunk
+                        debug_log(
+                            "agent.stream.event.text",
+                            tool_round=tool_round,
+                            chunk_len=len(text_chunk),
+                            current_text_len=len(current_text),
+                            accumulated_text_len=len(accumulated_text),
+                            first_text_chunk=not saw_text,
+                        )
+                        saw_text = True
                         # Protect callback — log and continue on error (per design spec)
                         try:
                             on_text_chunk(text_chunk)
@@ -363,10 +409,20 @@ class Agent:
                             logging.getLogger(__name__).warning(
                                 "on_text_chunk callback error", exc_info=True
                             )
+                            debug_log(
+                                "agent.stream.chunk_callback.error",
+                                tool_round=tool_round,
+                            )
 
                     elif event["type"] == "tool_use":
                         has_tool_calls = True
                         tool_use_blocks.append(event)
+                        debug_log(
+                            "agent.stream.event.tool_use",
+                            tool_round=tool_round,
+                            tool_name=event.get("name"),
+                            tool_id=event.get("id"),
+                        )
 
                     elif event["type"] == "usage":
                         usage = event
@@ -375,10 +431,25 @@ class Agent:
                         self.token_usage["total_tokens"] = (
                             self.token_usage["input_tokens"] + self.token_usage["output_tokens"]
                         )
+                        debug_log(
+                            "agent.stream.event.usage",
+                            tool_round=tool_round,
+                            input_tokens=usage.get("input_tokens", 0),
+                            output_tokens=usage.get("output_tokens", 0),
+                            total_tokens=self.token_usage["total_tokens"],
+                        )
 
                     elif event["type"] == "stop":
                         stop_reason = event.get("stop_reason", "end_turn")
                         has_tool_calls = stop_reason == "tool_use" or has_tool_calls
+                        debug_log(
+                            "agent.stream.event.stop",
+                            tool_round=tool_round,
+                            stop_reason=stop_reason,
+                            tool_use_count=len(tool_use_blocks),
+                            current_text_len=len(current_text),
+                            elapsed_ms=int((time.monotonic() - stream_started_at) * 1000),
+                        )
 
                 # Build assistant response content
                 content = []
@@ -399,13 +470,28 @@ class Agent:
 
                 if not has_tool_calls or not tool_use_blocks:
                     # Final response - return accumulated text
+                    debug_log(
+                        "agent.stream.final_response",
+                        tool_round=tool_round,
+                        response_len=len(accumulated_text),
+                    )
                     return accumulated_text
 
                 # Execute ALL tool calls (matches sync _run_conversation_loop behavior)
+                debug_log(
+                    "agent.stream.tools.execute",
+                    tool_round=tool_round,
+                    tool_use_count=len(tool_use_blocks),
+                )
                 tool_results = self._execute_tools(tool_use_blocks)
 
                 # Check if we have a pending confirmation
                 if self.pending_confirmation:
+                    debug_log(
+                        "agent.stream.pending_confirmation",
+                        tool_round=tool_round,
+                        response_len=len(accumulated_text),
+                    )
                     return accumulated_text + "\n" + self._format_confirmation_prompt()
 
                 # Add tool results to history
@@ -416,15 +502,31 @@ class Agent:
                 logging.getLogger(__name__).warning(
                     f"Streaming API error, falling back to non-streaming: {e}"
                 )
+                debug_log(
+                    "agent.stream.error",
+                    tool_round=tool_round,
+                    error=str(e),
+                    fallback="non_streaming",
+                )
                 try:
                     return self._run_conversation_loop()
                 except Exception:
                     error_msg = f"LLM Error: {e}"
                     self.messages.append({"role": "assistant", "content": error_msg})
+                    debug_log(
+                        "agent.stream.fallback.error",
+                        tool_round=tool_round,
+                        error=error_msg,
+                    )
                     return accumulated_text + error_msg
 
             tool_round += 1
 
+        debug_log(
+            "agent.stream.max_rounds",
+            tool_round=tool_round,
+            response_len=len(accumulated_text),
+        )
         return (
             accumulated_text + "\n[Reached maximum tool execution rounds. "
             "Providing final response based on what was learned.]"

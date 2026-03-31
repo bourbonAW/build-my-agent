@@ -1,0 +1,7 @@
+{
+  "case_id": "calibration-below-zero-gold",
+  "duration_ms": 5000,
+  "token_usage": {"input_tokens": 1000, "output_tokens": 500},
+  "timestamp": "2026-03-30T00:00:00Z",
+  "generator_version": "calibration-fixture"
+}

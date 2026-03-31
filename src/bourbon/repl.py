@@ -1,6 +1,9 @@
 """REPL interface for Bourbon."""
 
+import re
 import sys
+import time
+import uuid
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
@@ -8,12 +11,204 @@ from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.markdown import Markdown
+from rich.text import Text
 
 from bourbon.agent import Agent, AgentError
 from bourbon.config import Config
+from bourbon.debug import debug_log
 from bourbon.mcp_client import MCPServerNotInstalledError
+
+
+class StreamingDisplay:
+    """Animated renderable for REPL activity plus streamed markdown output."""
+
+    FRAMES = [
+        "[     ]",
+        "[=    ]",
+        "[==   ]",
+        "[===  ]",
+        "[==== ]",
+        "[=====]",
+    ]
+    FRAME_INTERVAL = 0.2
+
+    def __init__(self, started_at: float):
+        self.started_at = started_at
+        self.has_streamed_text = False
+        self.current_text = ""
+
+    def append_chunk(self, text: str) -> None:
+        """Append streamed text to the live buffer."""
+        if text:
+            self.has_streamed_text = True
+            self.current_text += text
+
+    def _frame(self) -> str:
+        """Return the current animation frame."""
+        elapsed = max(0.0, time.monotonic() - self.started_at)
+        idx = int(elapsed / self.FRAME_INTERVAL) % len(self.FRAMES)
+        return self.FRAMES[idx]
+
+    def _status_text(self) -> Text:
+        """Build the animated status line."""
+        status_label = (
+            "Bourbon is replying..." if self.has_streamed_text else "Bourbon is thinking..."
+        )
+        status = Text()
+        status.append("🥃 ", style="bold #D4A373")
+        status.append(self._frame(), style="bold #D4A373")
+        status.append(" ")
+        status.append(status_label, style="dim")
+        return status
+
+    def __rich_console__(self, console, options):
+        stable_prefix, pending_tail = _split_stable_markdown(self.current_text)
+        renderables = [self._status_text()]
+        if stable_prefix:
+            renderables.append(Markdown(stable_prefix))
+        if pending_tail:
+            renderables.append(Text(pending_tail))
+        yield Group(*renderables)
+
+
+def _split_stable_markdown(buffer: str) -> tuple[str, str]:
+    """Split accumulated text into a stable markdown prefix and pending tail."""
+    if not buffer:
+        return "", ""
+
+    if buffer.endswith("\n"):
+        stable_prefix = buffer
+        pending_tail = ""
+    else:
+        last_newline = buffer.rfind("\n")
+        if last_newline == -1:
+            return "", buffer
+        stable_prefix = buffer[: last_newline + 1]
+        pending_tail = buffer[last_newline + 1 :]
+
+    stable_prefix, pending_tail = _buffer_unclosed_fence(stable_prefix, pending_tail)
+    stable_prefix, pending_tail = _buffer_incomplete_table_block(stable_prefix, pending_tail)
+    stable_prefix, pending_tail = _buffer_unbalanced_last_line(stable_prefix, pending_tail)
+    return stable_prefix, pending_tail
+
+
+def _buffer_unclosed_fence(stable_prefix: str, pending_tail: str) -> tuple[str, str]:
+    """Move an unclosed fenced code block into the pending tail."""
+    fence_matches = list(re.finditer(r"(?m)^```.*$", stable_prefix))
+    if len(fence_matches) % 2 == 0:
+        return stable_prefix, pending_tail
+
+    unmatched_start = fence_matches[-1].start()
+    return (
+        stable_prefix[:unmatched_start],
+        stable_prefix[unmatched_start:] + pending_tail,
+    )
+
+
+def _buffer_unbalanced_last_line(stable_prefix: str, pending_tail: str) -> tuple[str, str]:
+    """Move the final line back to the tail if inline markers look incomplete."""
+    if not stable_prefix:
+        return stable_prefix, pending_tail
+
+    last_newline = stable_prefix.rstrip("\n").rfind("\n")
+    line_start = 0 if last_newline == -1 else last_newline + 1
+    last_line = stable_prefix[line_start:]
+    last_line_content = last_line.rstrip("\n")
+
+    inline_markers = ("**", "__", "`")
+    if any(last_line_content.count(marker) % 2 == 1 for marker in inline_markers):
+        return stable_prefix[:line_start], last_line + pending_tail
+
+    if _line_has_incomplete_link(last_line_content):
+        return stable_prefix[:line_start], last_line + pending_tail
+
+    return stable_prefix, pending_tail
+
+
+def _buffer_incomplete_table_block(
+    stable_prefix: str, pending_tail: str
+) -> tuple[str, str]:
+    """Keep trailing table-like lines pending until the table structure is complete."""
+    if not stable_prefix:
+        return stable_prefix, pending_tail
+
+    lines = stable_prefix.splitlines(keepends=True)
+    block_start = len(lines)
+
+    while block_start > 0:
+        line = lines[block_start - 1].rstrip("\n")
+        if _is_table_row(line) or _is_table_separator(line):
+            block_start -= 1
+            continue
+        break
+
+    if block_start == len(lines):
+        return stable_prefix, pending_tail
+
+    table_block = lines[block_start:]
+    if _table_block_is_complete(table_block):
+        return stable_prefix, pending_tail
+
+    return "".join(lines[:block_start]), "".join(table_block) + pending_tail
+
+
+def _table_block_is_complete(table_block: list[str]) -> bool:
+    """Return whether a trailing markdown table block has a header and separator."""
+    if len(table_block) < 2:
+        return False
+
+    header = table_block[0].rstrip("\n")
+    separator = table_block[1].rstrip("\n")
+    return _is_table_row(header) and _is_table_separator(separator)
+
+
+def _is_table_row(line: str) -> bool:
+    """Return whether a line looks like a pipe table row."""
+    stripped = line.strip()
+    return (
+        stripped.startswith("|")
+        and stripped.endswith("|")
+        and stripped.count("|") >= 3
+        and not _is_table_separator(stripped)
+    )
+
+
+def _is_table_separator(line: str) -> bool:
+    """Return whether a line looks like a markdown table separator row."""
+    stripped = line.strip()
+    if not (stripped.startswith("|") and stripped.endswith("|")):
+        return False
+
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    if not cells:
+        return False
+
+    return all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+
+
+def _line_has_incomplete_link(line: str) -> bool:
+    """Return whether a line appears to end inside markdown link syntax."""
+    if re.search(r"(?<!\\)!?\[[^\]\n]*\]\([^\)\n]*$", line):
+        return True
+
+    return bool(re.search(r"(?<!\\)!?\[[^\]\n]*$", line))
+
+
+def _should_render_markdown(response: str) -> bool:
+    """Return whether the final response should use Rich Markdown rendering."""
+    markdown_patterns = (
+        r"```",
+        r"(?m)^\s{0,3}#{1,6}\s+",
+        r"\*\*.+?\*\*",
+        r"(?m)^\s*[-*+]\s+",
+        r"(?m)^\s*\d+\.\s+",
+        r"(?m)^\s*>\s+",
+        r"(?m)^\|.+\|$",
+    )
+    return any(re.search(pattern, response) for pattern in markdown_patterns)
 
 
 class REPL:
@@ -68,6 +263,7 @@ class REPL:
 
         self.session = PromptSession(
             message=self._get_prompt,
+            bottom_toolbar=self._get_bottom_toolbar,
             history=FileHistory(str(history_file)),
             auto_suggest=AutoSuggestFromHistory(),
             enable_history_search=True,
@@ -80,11 +276,23 @@ class REPL:
             }
         )
 
+        # Bottom toolbar style
+        self.toolbar_style = Style.from_dict(
+            {
+                "bottom-toolbar": "bg:#333333 #ffffff",
+                "bottom-toolbar.text": "#888888",
+            }
+        )
+
     def _get_prompt(self) -> HTML:
-        """Generate dynamic prompt with context usage indicator."""
+        """Generate prompt."""
+        return HTML("🥃 bourbon >> ")
+
+    def _get_bottom_toolbar(self) -> HTML:
+        """Generate bottom toolbar with context usage indicator (right-aligned)."""
         # Check if context display is disabled
         if not getattr(self.config.ui, "show_token_count", True):
-            return HTML("🥃 bourbon >> ")
+            return HTML("")
 
         try:
             tokens = self.agent.get_session_tokens()
@@ -97,7 +305,7 @@ class REPL:
             tokens_k = tokens / 1000
             threshold_k = threshold / 1000
 
-            # Color coding
+            # Color coding for toolbar
             if percent < 50:
                 color = "#888888"  # gray
             elif percent < 80:
@@ -105,14 +313,11 @@ class REPL:
             else:
                 color = "#FF4444"  # red
 
-            ctx_line = (
-                f'<style fg="{color}">context: {percent:.1f}%'
-                f" ({tokens_k:.1f}k/{threshold_k:.1f}k)</style>"
-            )
-            return HTML(f"{ctx_line}\n🥃 bourbon >> ")
+            # Right-aligned context info using prompt_toolkit's right-aligned formatting
+            ctx_text = f"context: {percent:.1f}% ({tokens_k:.1f}k/{threshold_k:.1f}k)"
+            return HTML(f'<style fg="{color}">{ctx_text}</style>')
         except Exception:
-            # Fallback if anything goes wrong
-            return HTML("🥃 bourbon >> ")
+            return HTML('<style fg="#888888">context: --</style>')
 
     def _on_tool_start(self, tool_name: str, tool_input: dict) -> None:
         """Callback when a tool starts executing.
@@ -190,29 +395,76 @@ class REPL:
         self._process_input_streaming(user_input)
 
     def _process_input_streaming(self, user_input: str) -> None:
-        """Process user input with streaming output."""
+        """Process user input with streaming output and markdown rendering."""
         chunks: list[str] = []
-
-        def on_chunk(text: str) -> None:
-            chunks.append(text)
-            # Real-time display: print chunk immediately without newline
-            self.console.print(text, end="")
+        turn_id = uuid.uuid4().hex[:8]
+        started_at = time.monotonic()
+        streaming_display = StreamingDisplay(started_at=started_at)
+        debug_log(
+            "repl.stream.start",
+            turn_id=turn_id,
+            user_input_len=len(user_input),
+        )
 
         try:
             self.console.print()  # New line before streaming starts
-            response = self.agent.step_stream(user_input, on_chunk)
+
+            # Create a live display for streaming content
+            with Live(
+                streaming_display,
+                console=self.console,
+                refresh_per_second=10,
+                transient=True,
+            ) as live:
+                def on_chunk(text: str) -> None:
+                    chunks.append(text)
+                    streaming_display.append_chunk(text)
+                    # Update live display with accumulated text
+                    current_text = "".join(chunks)
+                    debug_log(
+                        "repl.stream.chunk",
+                        turn_id=turn_id,
+                        chunk_len=len(text),
+                        chunk_count=len(chunks),
+                        current_text_len=len(current_text),
+                    )
+                    live.refresh()
+
+                response = self.agent.step_stream(user_input, on_chunk)
+
+            # After streaming completes, render the full response with markdown
+            # Check if response contains markdown that needs special rendering
+            has_markdown = _should_render_markdown(response)
+            debug_log(
+                "repl.stream.response",
+                turn_id=turn_id,
+                response_len=len(response),
+                chunk_count=len(chunks),
+                has_markdown=has_markdown,
+            )
+
+            if has_markdown or "```" in response:
+                # Render with Rich Markdown for proper formatting
+                self.console.print(Markdown(response))
+            else:
+                # Plain text - just print the accumulated response
+                self.console.print(response)
+            debug_log(
+                "repl.stream.complete",
+                turn_id=turn_id,
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+                has_pending_confirmation=bool(self.agent.pending_confirmation),
+            )
+
         except Exception as e:
+            debug_log(
+                "repl.stream.error",
+                turn_id=turn_id,
+                error=str(e),
+                elapsed_ms=int((time.monotonic() - started_at) * 1000),
+            )
             self.console.print(f"[red]Error: {e}[/red]")
             return
-
-        # If response contains markdown (code blocks, etc.), re-render with proper formatting
-        if "```" in response:
-            # Clear the streamed text by moving cursor up
-            lines_count = response.count("\n") + 1
-            if lines_count > 0:
-                # Use ANSI escape to clear lines (simplified approach)
-                self.console.print(f"\r\033[{lines_count}A\033[J", end="")
-            self.console.print(Markdown(response))
 
         # Handle pending confirmation if needed
         if self.agent.pending_confirmation:

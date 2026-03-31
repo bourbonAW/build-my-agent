@@ -341,7 +341,8 @@ Create `evals/fixtures/calibration-logic-puzzle-gold/artifact/context.json`:
 {
   "prompt": "Solve the following logic puzzle and write your solution to solution.md:\n\nThree friends — Alice, Bob, and Carol — each own exactly one pet:\na cat, a dog, and a fish (one pet per person, no repeats).\n\nClues:\n1. Alice does not own the cat.\n2. Bob does not own the dog.\n3. Carol does not own the cat.\n\nDetermine who owns which pet. Show your reasoning step by step.",
   "success_criteria": [
-    "Correct conclusion: Alice owns the dog, Bob owns the cat, Carol owns the fish",
+    "Correctly infer that Bob owns the cat",
+    "Correctly explain that Alice and Carol can split dog and fish in either order, so the puzzle does not have a unique full assignment",
     "Reasoning shows step-by-step elimination",
     "Solution is written to solution.md"
   ],
@@ -349,7 +350,7 @@ Create `evals/fixtures/calibration-logic-puzzle-gold/artifact/context.json`:
   "constraints": [],
   "evaluation_hints": [
     "Check workspace/solution.md for the reasoning and answer",
-    "Verify that the final answer does not violate any of the three clues"
+    "Verify that the final answer does not violate any clue and does not overclaim a unique Alice/Carol assignment"
   ],
   "reference_files": []
 }
@@ -385,25 +386,26 @@ Create `evals/fixtures/calibration-logic-puzzle-gold/artifact/workspace/solution
 - Bob does not own the dog (Clue 2) — consistent, since Bob owns the cat
 - Remaining pets for Alice and Carol: dog and fish
 
-**Step 3: Determine remaining assignments**
-- Alice cannot own the cat (already assigned to Bob)
-- No constraint prevents Alice from owning the dog
-- Therefore: Alice owns the dog, Carol owns the fish
+**Step 3: Check whether the remaining assignments are uniquely determined**
+- The clues no longer distinguish Alice from Carol for dog and fish
+- Both of these assignments satisfy every clue:
+  - Alice owns the dog, Carol owns the fish
+  - Alice owns the fish, Carol owns the dog
+- Therefore, Bob owning the cat is forced, but the remaining two pets are not uniquely assigned
 
 ## Answer
 
-| Person | Pet  |
-|--------|------|
-| Alice  | Dog  |
-| Bob    | Cat  |
-| Carol  | Fish |
+- Forced assignment: Bob owns the cat
+- Remaining valid completions:
+  - Option A: Alice owns the dog, Carol owns the fish
+  - Option B: Alice owns the fish, Carol owns the dog
 ```
 
 Create `evals/fixtures/calibration-logic-puzzle-gold/artifact/output.json`:
 
 ```json
 {
-  "final_output": "I solved the logic puzzle using elimination. The key insight is that clues 1 and 3 together force Bob to own the cat, which then determines the rest. Full solution written to solution.md.",
+  "final_output": "I solved the logic puzzle using elimination. Clues 1 and 3 force Bob to own the cat, and the remaining clues do not uniquely determine how Alice and Carol split dog and fish. I documented both valid assignments in solution.md.",
   "tool_calls": [],
   "errors": [],
   "exit_reason": "completed"
@@ -479,18 +481,22 @@ so like if alice cant have cat and carol cant have cat then bob has to have cat 
 
 and then bob cant have dog but he already has cat so thats fine
 
-so alice and carol have dog and fish left. alice can have dog and carol has fish
+so alice and carol have dog and fish left but actually the clues dont say
+which way around that has to go
 
-answer: alice=dog bob=cat carol=fish
+so there are 2 endings that both work:
+- alice=dog bob=cat carol=fish
+- alice=fish bob=cat carol=dog
 
-actually wait let me double check. alice no cat - she has dog, ok. bob no dog - he has cat, ok. carol no cat - she has fish, ok. yeah its right
+actually wait let me double check. bob=cat is forced. for the other two,
+either dog/fish split still fits. yeah thats the point
 ```
 
 Create `evals/fixtures/calibration-logic-puzzle-messy/artifact/output.json`:
 
 ```json
 {
-  "final_output": "figured it out, wrote to solution.md. alice gets the dog, bob gets the cat, carol gets the fish. pretty sure thats right",
+  "final_output": "figured it out, wrote to solution.md. bob gets the cat for sure and alice and carol split dog/fish in either order. pretty sure thats it",
   "tool_calls": [],
   "errors": [],
   "exit_reason": "completed"
@@ -690,7 +696,7 @@ Create `evals/cases/calibration/reasoning/logic-puzzle-gold.json`:
   "category": "calibration",
   "subcategory": "reasoning",
   "difficulty": "easy",
-  "description": "Gold variant: correct elimination reasoning with structured steps. Expects high scores on both dimensions.",
+  "description": "Gold variant: correctly identifies the underconstrained puzzle, forces Bob=cat, and documents both valid Alice/Carol assignments. Expects high scores on both dimensions.",
   "pre_built_artifact": true,
   "context": {
     "workdir": "fixtures/calibration-logic-puzzle-gold"
@@ -706,13 +712,14 @@ Create `evals/cases/calibration/reasoning/logic-puzzle-gold.json`:
       "quality": { "weight": 0.3, "threshold": 6.0 }
     },
     "success_criteria": [
-      "Correct conclusion: Alice owns the dog, Bob owns the cat, Carol owns the fish",
+      "Correctly infer that Bob owns the cat",
+      "Correctly explain that Alice and Carol can split dog and fish in either order, so the puzzle does not have a unique full assignment",
       "Reasoning shows step-by-step elimination",
       "Solution is written to solution.md"
     ],
     "evaluation_hints": [
       "Check workspace/solution.md for the reasoning and answer",
-      "Verify the final answer does not violate any of the three clues"
+      "Verify the final answer does not violate any clue and does not overclaim a unique Alice/Carol assignment"
     ],
     "expected_scores": {
       "correctness": { "min": 9, "max": 10 },
@@ -734,7 +741,7 @@ Create `evals/cases/calibration/reasoning/logic-puzzle-buggy.json`:
   "category": "calibration",
   "subcategory": "reasoning",
   "difficulty": "easy",
-  "description": "Buggy variant: wrong answer that violates clues 2 and 3, self-contradictory reasoning. Expects low scores.",
+  "description": "Buggy variant: wrong answer that violates clues 2 and 3, with self-contradictory reasoning. Expects low scores.",
   "pre_built_artifact": true,
   "context": {
     "workdir": "fixtures/calibration-logic-puzzle-buggy"
@@ -750,13 +757,14 @@ Create `evals/cases/calibration/reasoning/logic-puzzle-buggy.json`:
       "quality": { "weight": 0.3, "threshold": 6.0 }
     },
     "success_criteria": [
-      "Correct conclusion: Alice owns the dog, Bob owns the cat, Carol owns the fish",
+      "Correctly infer that Bob owns the cat",
+      "Correctly explain that Alice and Carol can split dog and fish in either order, so the puzzle does not have a unique full assignment",
       "Reasoning shows step-by-step elimination",
       "Solution is written to solution.md"
     ],
     "evaluation_hints": [
       "Check workspace/solution.md for the reasoning and answer",
-      "Verify the final answer does not violate any of the three clues"
+      "Verify the final answer does not violate any clue and does not overclaim a unique Alice/Carol assignment"
     ],
     "expected_scores": {
       "correctness": { "min": 1, "max": 3 },
@@ -778,7 +786,7 @@ Create `evals/cases/calibration/reasoning/logic-puzzle-messy.json`:
   "category": "calibration",
   "subcategory": "reasoning",
   "difficulty": "easy",
-  "description": "Correct-but-messy variant: right answer but unstructured, informal prose. Expects high correctness but low quality.",
+  "description": "Correct-but-messy variant: correctly recognizes the underconstrained puzzle but presents it in unstructured, informal prose. Expects high correctness but low quality.",
   "pre_built_artifact": true,
   "context": {
     "workdir": "fixtures/calibration-logic-puzzle-messy"
@@ -794,13 +802,14 @@ Create `evals/cases/calibration/reasoning/logic-puzzle-messy.json`:
       "quality": { "weight": 0.3, "threshold": 6.0 }
     },
     "success_criteria": [
-      "Correct conclusion: Alice owns the dog, Bob owns the cat, Carol owns the fish",
+      "Correctly infer that Bob owns the cat",
+      "Correctly explain that Alice and Carol can split dog and fish in either order, so the puzzle does not have a unique full assignment",
       "Reasoning shows step-by-step elimination",
       "Solution is written to solution.md"
     ],
     "evaluation_hints": [
       "Check workspace/solution.md for the reasoning and answer",
-      "Verify the final answer does not violate any of the three clues"
+      "Verify the final answer does not violate any clue and does not overclaim a unique Alice/Carol assignment"
     ],
     "expected_scores": {
       "correctness": { "min": 7, "max": 9 },

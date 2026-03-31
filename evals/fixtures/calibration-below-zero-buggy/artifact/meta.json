@@ -1,0 +1,7 @@
+{
+  "case_id": "calibration-below-zero-buggy",
+  "duration_ms": 3000,
+  "token_usage": {"input_tokens": 800, "output_tokens": 300},
+  "timestamp": "2026-03-30T00:00:00Z",
+  "generator_version": "calibration-fixture"
+}

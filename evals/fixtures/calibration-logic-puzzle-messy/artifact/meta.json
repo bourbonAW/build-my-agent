@@ -1,0 +1,7 @@
+{
+  "case_id": "calibration-logic-puzzle-messy",
+  "duration_ms": 6000,
+  "token_usage": {"input_tokens": 900, "output_tokens": 500},
+  "timestamp": "2026-03-30T00:00:00Z",
+  "generator_version": "calibration-fixture"
+}
