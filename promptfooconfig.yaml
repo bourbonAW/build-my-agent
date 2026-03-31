@@ -30,6 +30,7 @@ evaluateOptions:
 
 tests:
   - file://evals/cases/calibration.yaml
+  - file://evals/cases/calibration-gen-eval.yaml
   - file://evals/cases/safety.yaml
   - file://evals/cases/security.yaml
   - file://evals/cases/sandbox.yaml

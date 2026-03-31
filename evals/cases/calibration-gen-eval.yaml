@@ -1,0 +1,356 @@
+# Calibration: LLM-Gen → LLM-Eval Flow
+#
+# This file demonstrates the complete generate-then-evaluate pipeline:
+# 1. Agent generates code/artifacts based on task description
+# 2. LLM-as-judge evaluates the generated output for correctness and quality
+# 3. JavaScript assertions validate scores fall within expected calibration ranges
+
+# ============================================================================
+# Coding Task: below_zero implementation
+# ============================================================================
+
+- description: "Calibration-GenEval/Coding: below_zero (Gen+Eval)"
+  provider: python:evals/promptfoo_provider.py
+  vars:
+    case_id: "calibration-gen-below-zero"
+    prompt: |
+      Write a Python function called `below_zero` that takes a list of integers representing 
+      bank account operations (deposits positive, withdrawals negative) and returns True if 
+      the balance ever goes below zero during the operations.
+      
+      Requirements:
+      - Start with balance = 0
+      - Process operations in order
+      - Return True if balance < 0 at any point
+      - Return False otherwise (including if balance stays >= 0)
+      
+      Save the function to `solution.py` in the current directory.
+      Also write a few test cases to verify it works correctly.
+  assert:
+    # Evaluate correctness of the generated solution
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate the CORRECTNESS of the generated below_zero implementation.
+        
+        Requirements to check:
+        1. Function should be named `below_zero` (or similar clear name)
+        2. It should accept a list of integers as input
+        3. Starting balance should be 0
+        4. It should process operations sequentially
+        5. It should return True if balance goes below zero at ANY point
+        6. It should return False if balance never goes below zero
+        
+        Critical test cases:
+        - below_zero([1, 2, -4, 5]) should return True (hits -1 after third operation)
+        - below_zero([1, 2, -3]) should return False (ends at 0, never below)
+        - below_zero([1, 2, -3, 1, 2, -3]) should return False (touches 0 twice, never below)
+        - below_zero([]) should return False (no operations)
+        - below_zero([-1]) should return True (immediately below)
+        
+        Score 0=completely wrong/missing function, 1=perfect implementation.
+        Partial credit for mostly correct solutions.
+    
+    # Evaluate code quality (independent of correctness)
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate CODE QUALITY of the generated below_zero implementation.
+        Ignore functional correctness, focus on:
+        
+        - Naming: Clear function and variable names?
+        - Documentation: Has docstring explaining inputs/outputs?
+        - Code structure: Clean, readable logic?
+        - Pythonic style: Uses appropriate Python idioms?
+        - Tests: Includes test cases to verify functionality?
+        
+        Score 0=terrible quality (no docs, poor naming, messy), 
+              1=excellent quality (clear docs, great naming, clean code, good tests).
+    
+    # Verify solution.py was created
+    - type: javascript
+      value: |
+        const fs = require('fs');
+        const path = require('path');
+        const workdir = JSON.parse(context.output).workdir;
+        const solutionPath = path.join(workdir, 'solution.py');
+        if (!fs.existsSync(solutionPath)) {
+          return { pass: false, reason: 'solution.py not created' };
+        }
+        return { pass: true };
+    
+    # Calibration: correctness should be 0.9-1.0 for a good agent
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.9 && s <= 1.0, reason: `correctness=${s.toFixed(2)}, expected [0.9, 1.0]` };
+    
+    # Calibration: quality should be 0.7-1.0 for a good agent
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.7 && s <= 1.0, reason: `quality=${s.toFixed(2)}, expected [0.7, 1.0]` };
+  
+  metadata:
+    category: "calibration-gen-eval"
+    subcategory: "coding"
+    task: "below_zero"
+    variant: "standard"
+
+# ============================================================================
+# Coding Task: Factorial implementation (different difficulty)
+# ============================================================================
+
+- description: "Calibration-GenEval/Coding: factorial (Gen+Eval)"
+  provider: python:evals/promptfoo_provider.py
+  vars:
+    case_id: "calibration-gen-factorial"
+    prompt: |
+      Write a Python function called `factorial` that computes the factorial of a non-negative integer.
+      
+      Requirements:
+      - factorial(n) returns n! = n * (n-1) * (n-2) * ... * 1
+      - factorial(0) should return 1
+      - factorial(1) should return 1
+      - Should handle reasonably large inputs efficiently
+      - Include input validation (raise ValueError for negative inputs)
+      
+      Save the function to `math_utils.py` in the current directory.
+      Include docstring with examples and write some test cases.
+  assert:
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate CORRECTNESS of the generated factorial implementation.
+        
+        Requirements:
+        1. Function named `factorial` (or similar)
+        2. factorial(0) = 1
+        3. factorial(1) = 1
+        4. factorial(5) = 120
+        5. factorial(10) = 3628800
+        6. Raises error or handles negative inputs appropriately
+        7. Implementation is actually correct (not just test cases)
+        
+        Score 0=completely wrong, 1=perfect implementation.
+    
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate CODE QUALITY of the factorial implementation.
+        
+        Consider:
+        - Documentation: Clear docstring with examples?
+        - Error handling: Validates negative inputs?
+        - Efficiency: Uses appropriate algorithm (iterative or recursive)?
+        - Code style: Clean, readable, Pythonic?
+        - Tests: Includes verification tests?
+        
+        Score 0=poor quality, 1=excellent quality.
+    
+    - type: javascript
+      value: |
+        const fs = require('fs');
+        const path = require('path');
+        const workdir = JSON.parse(context.output).workdir;
+        const filePath = path.join(workdir, 'math_utils.py');
+        if (!fs.existsSync(filePath)) {
+          return { pass: false, reason: 'math_utils.py not created' };
+        }
+        return { pass: true };
+    
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.9 && s <= 1.0, reason: `correctness=${s.toFixed(2)}, expected [0.9, 1.0]` };
+    
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.7 && s <= 1.0, reason: `quality=${s.toFixed(2)}, expected [0.7, 1.0]` };
+  
+  metadata:
+    category: "calibration-gen-eval"
+    subcategory: "coding"
+    task: "factorial"
+    variant: "standard"
+
+# ============================================================================
+# Reasoning Task: Logic puzzle solution
+# ============================================================================
+
+- description: "Calibration-GenEval/Reasoning: logic puzzle (Gen+Eval)"
+  provider: python:evals/promptfoo_provider.py
+  vars:
+    case_id: "calibration-gen-logic-puzzle"
+    prompt: |
+      Solve this logic puzzle and write your solution to `solution.md`:
+      
+      Puzzle: Three friends (Alice, Bob, Carol) each have a different favorite color 
+      (Red, Green, Blue) and a different pet (Dog, Cat, Bird).
+      
+      Clues:
+      1. Alice does not like Red.
+      2. The person with the Dog likes Blue.
+      3. Bob has a Cat.
+      4. Carol likes Green.
+      
+      Determine: What is each person's favorite color and pet?
+      
+      Write your solution in a clear, step-by-step format showing your reasoning.
+      Save to `solution.md` in the current directory.
+  assert:
+    - type: llm-rubric
+      metric: "correctness"
+      value: |
+        Evaluate CORRECTNESS of the logic puzzle solution.
+        
+        The correct answer is:
+        - Alice: Red is wrong (clue 1), Green is taken by Carol (clue 4), so Alice = Blue
+          From clue 2, person with Blue has Dog, so Alice = Dog
+        - Carol: Green (from clue 4), remaining pet is Bird, so Carol = Bird
+        - Bob: Remaining color is Red, clue 3 says Bob = Cat
+        
+        Final solution:
+        - Alice: Blue, Dog
+        - Bob: Red, Cat  
+        - Carol: Green, Bird
+        
+        Score based on:
+        - 1.0 = All three assignments completely correct with valid reasoning
+        - 0.8 = Correct answer but minor reasoning gaps
+        - 0.5 = Partially correct (some right, some wrong)
+        - 0.0 = Completely wrong or no valid solution
+    
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate QUALITY of the puzzle solution explanation.
+        
+        Consider:
+        - Clarity: Is the reasoning easy to follow?
+        - Structure: Step-by-step or organized logically?
+        - Completeness: Uses all clues appropriately?
+        - Presentation: Well-formatted markdown?
+        
+        Score 0=confusing/unstructured, 1=clear and well-organized.
+    
+    - type: javascript
+      value: |
+        const fs = require('fs');
+        const path = require('path');
+        const workdir = JSON.parse(context.output).workdir;
+        const filePath = path.join(workdir, 'solution.md');
+        if (!fs.existsSync(filePath)) {
+          return { pass: false, reason: 'solution.md not created' };
+        }
+        return { pass: true };
+    
+    - type: javascript
+      value: |
+        const s = context.namedScores?.correctness;
+        if (s === undefined) return { pass: false, reason: 'no correctness score' };
+        return { pass: s >= 0.9 && s <= 1.0, reason: `correctness=${s.toFixed(2)}, expected [0.9, 1.0]` };
+    
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.7 && s <= 1.0, reason: `quality=${s.toFixed(2)}, expected [0.7, 1.0]` };
+  
+  metadata:
+    category: "calibration-gen-eval"
+    subcategory: "reasoning"
+    task: "logic_puzzle"
+    variant: "standard"
+
+# ============================================================================
+# Documentation Task: README generation
+# ============================================================================
+
+- description: "Calibration-GenEval/Docs: README generation (Gen+Eval)"
+  provider: python:evals/promptfoo_provider.py
+  vars:
+    case_id: "calibration-gen-readme"
+    prompt: |
+      Create a README.md file for a Python project called "DataProcessor".
+      
+      This is a command-line tool that:
+      - Reads CSV files
+      - Performs data cleaning (removes duplicates, handles missing values)
+      - Outputs cleaned data to a new CSV
+      
+      Write a comprehensive README that includes:
+      - Project description
+      - Installation instructions
+      - Usage examples with code snippets
+      - Command-line options documentation
+      - Requirements/dependencies
+      
+      Save to `README.md` in the current directory.
+  assert:
+    - type: llm-rubric
+      metric: "completeness"
+      value: |
+        Evaluate COMPLETENESS of the generated README.
+        
+        Check for these sections:
+        - Title/Project name mentioned
+        - Description of what the tool does
+        - Installation instructions
+        - Usage examples with code/command snippets
+        - Command-line options/arguments documented
+        - Requirements or dependencies listed
+        
+        Score 0=missing most sections, 1=all important sections present and well-written.
+    
+    - type: llm-rubric
+      metric: "quality"
+      value: |
+        Evaluate QUALITY of the README documentation.
+        
+        Consider:
+        - Clarity: Easy to understand?
+        - Organization: Logical structure?
+        - Examples: Clear, runnable code snippets?
+        - Professional tone: Suitable for open source project?
+        - Markdown formatting: Proper use of headers, code blocks, lists?
+        
+        Score 0=poor quality, 1=excellent professional documentation.
+    
+    - type: javascript
+      value: |
+        const fs = require('fs');
+        const path = require('path');
+        const workdir = JSON.parse(context.output).workdir;
+        const filePath = path.join(workdir, 'README.md');
+        if (!fs.existsSync(filePath)) {
+          return { pass: false, reason: 'README.md not created' };
+        }
+        const content = fs.readFileSync(filePath, 'utf-8');
+        if (content.length < 200) {
+          return { pass: false, reason: 'README.md too short (< 200 chars)' };
+        }
+        return { pass: true };
+    
+    - type: javascript
+      value: |
+        const s = context.namedScores?.completeness;
+        if (s === undefined) return { pass: false, reason: 'no completeness score' };
+        return { pass: s >= 0.8 && s <= 1.0, reason: `completeness=${s.toFixed(2)}, expected [0.8, 1.0]` };
+    
+    - type: javascript
+      value: |
+        const s = context.namedScores?.quality;
+        if (s === undefined) return { pass: false, reason: 'no quality score' };
+        return { pass: s >= 0.7 && s <= 1.0, reason: `quality=${s.toFixed(2)}, expected [0.7, 1.0]` };
+  
+  metadata:
+    category: "calibration-gen-eval"
+    subcategory: "documentation"
+    task: "readme_generation"
+    variant: "standard"
