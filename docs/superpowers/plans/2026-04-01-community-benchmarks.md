@@ -230,7 +230,7 @@ git commit -m "feat(eval): add loader package + common write_yaml_with_header ut
 ## Chunk 2: Loaders Without Auth — HumanEval, GSM8K, BIG-bench Hard
 
 > These three use public HuggingFace datasets that require no login or access approval.
-> Install deps once before running: `pip install datasets pyyaml`
+> Install deps once before running: `uv pip install -e ".[loaders]"`
 
 ### Task 3: `load_humaneval.py` + generate `humaneval_50.yaml`
 
@@ -333,7 +333,7 @@ Expected: `ImportError` (load_humaneval.py doesn't exist)
 """Loader: openai/openai-humaneval → promptfoo YAML test cases.
 
 Usage:
-    pip install datasets pyyaml
+    uv pip install -e ".[loaders]"
     python evals/loaders/load_humaneval.py --sample 50 --seed 42 \
         --output evals/benchmarks/humaneval_50.yaml
 """
@@ -443,7 +443,7 @@ Expected: all PASS
 
 ```bash
 # Install loader deps if not already done
-pip install datasets pyyaml
+uv pip install -e ".[loaders]"
 
 mkdir -p evals/benchmarks
 python evals/loaders/load_humaneval.py --sample 50 --seed 42 \
@@ -576,7 +576,7 @@ Expected: `ImportError`
 """Loader: openai/gsm8k → promptfoo YAML test cases.
 
 Usage:
-    pip install datasets pyyaml
+    uv pip install -e ".[loaders]"
     python evals/loaders/load_gsm8k.py --sample 50 --seed 42 \
         --stratify-by-steps --output evals/benchmarks/gsm8k_50.yaml
 """
@@ -802,7 +802,7 @@ Expected: `ImportError`
 """Loader: lighteval/big_bench_hard → promptfoo YAML test cases.
 
 Usage:
-    pip install datasets pyyaml
+    uv pip install -e ".[loaders]"
     python evals/loaders/load_bigbench_hard.py \
         --tasks causal_judgement date_understanding formal_fallacies \
                 geometric_shapes hyperbaton logical_deduction_five_objects \
@@ -1043,7 +1043,7 @@ Extracts first-turn questions from the human judgments dataset.
 Full 80 questions, all categories, no sampling.
 
 Usage:
-    pip install datasets pyyaml
+    uv pip install -e ".[loaders]"
     python evals/loaders/load_mt_bench.py --output evals/benchmarks/mt_bench_80.yaml
 """
 
@@ -1314,7 +1314,7 @@ Requires HuggingFace account + dataset access approval:
     # Then accept terms at https://huggingface.co/datasets/gaia-benchmark/GAIA
 
 Usage:
-    pip install datasets pyyaml
+    uv pip install -e ".[loaders]"
     python evals/loaders/load_gaia.py --sample 30 --seed 42 \
         --exclude-attachments --exclude-web \
         --output evals/benchmarks/gaia_level1_30.yaml
@@ -1637,7 +1637,7 @@ npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml \
 # Run all loader tests
 pytest tests/test_benchmark_loaders.py -v
 
-# Refresh a subset (after pip install datasets pyyaml)
+# Refresh a subset (uv pip install -e ".[loaders]" if not already done)
 python evals/loaders/load_gsm8k.py --sample 50 --seed 42 \
     --stratify-by-steps --output evals/benchmarks/gsm8k_50.yaml
 ```
