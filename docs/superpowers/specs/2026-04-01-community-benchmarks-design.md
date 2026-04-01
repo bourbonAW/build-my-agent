@@ -18,7 +18,7 @@ From `docs/deep-research-report.md`:
 - Build layered gates: programmatic checks as hard gates, LLM judge as supplement
 - Fix a stable subset for regression (not full benchmark) — ensures score changes reflect real capability changes, not sampling noise
 - Keep `maxConcurrency: 1` to prevent context pollution between test runs
-- Track `mean ± stddev` per category via promptfoo's `repeat: 3`
+- Use `repeat: 3` for run stability — tracks pass rate consistency across runs, not stddev
 
 ---
 
@@ -26,7 +26,7 @@ From `docs/deep-research-report.md`:
 
 | Dimension | Benchmark | Size (subset) | Assertion type |
 |-----------|-----------|---------------|----------------|
-| A — Code correctness | HumanEval | 50 tasks | `javascript` (unit test via temp file) |
+| A — Code correctness | HumanEval | 50 tasks | `llm-rubric` (sandbox execution + LLM judge) |
 | B — Tool use | GAIA Level 1 | 30 tasks (see feasibility note) | `javascript` (answer string match) |
 | C — Instruction following | MT-Bench | 80 tasks (full) | `llm-rubric` (LLM judge, score 1-10) |
 | D1 — Arithmetic reasoning | GSM8K | 50 tasks | `javascript` (#### delimiter extraction) |
@@ -122,66 +122,70 @@ The `contains` assertion type is **not used** for any benchmark — it would sub
 
 **Source:** `openai/openai-humaneval` on HuggingFace (MIT license, no access gate).
 
-Input: function signature + docstring. Agent completes the function body.  
-Assertion: `javascript` — writes generated code + test vectors to a temp file and invokes `python3` on it. Avoids shell injection risks of the `-c` flag with multi-line code.
+Input: function signature + docstring + test assertions. Agent writes the function **and** runs the tests via Bourbon's `bash` tool (inside sandbox). The raw bash output must appear verbatim in the response.
+
+Assertion: `llm-rubric` — an independent LLM judge evaluates both the code and the execution output included in the response. This avoids the primary failure mode of executing untrusted model-generated code in the Node.js worker outside any sandbox.
+
+**Why not `javascript` + `spawnSync`:** OpenAI's own HumanEval harness ships with execution disabled by default and warns: *"run untrusted code only inside a robust security sandbox."* `spawnSync` in the promptfoo Node.js worker has no isolation.
+
+**Verification tradeoff:** The LLM judge receives only the `text` field from the provider — it cannot inspect tool call transcripts or audit logs to confirm that bash was actually invoked. The rubric is probabilistic: it rewards responses that contain verbatim-looking bash stdout/stderr and penalizes those that only describe results in prose. An agent that fabricates plausible-looking execution output could score highly without having run the code. This is an accepted limitation: the eval detects regressions in the agent's tool-use behavior at scale, not individual-case correctness with cryptographic certainty. A future improvement would be to surface the audit log from `workdir` as a `javascript` assertion alongside the `llm-rubric`.
 
 ```yaml
-- description: "HumanEval #42: sum_squares"
+- description: "HumanEval HumanEval/42: sum_squares"
   vars:
     prompt: |
-      Complete the following Python function. Return ONLY the completed
-      function, no explanation:
+      Complete the following Python function, then run the provided test assertions
+      using your bash tool. Include the COMPLETE raw bash output in your response —
+      do not paraphrase or summarize the execution result.
 
       def sum_squares(lst):
           """Round each element in lst to ceiling, return sum of squares."""
           pass
-    test_code: |
+
+      Test assertions to run (write to a file and execute with python3):
       import math
       assert sum_squares([1,2,3]) == 14
       assert sum_squares([1.4,4.2,0]) == 29
       assert sum_squares([-2.4,1,1]) == 6
+      print("All tests passed")
   assert:
-    - type: javascript
+    - type: llm-rubric
+      metric: "humaneval_execution"
       value: |
-        const { spawnSync } = require('child_process');
-        const os = require('os');
-        const fs = require('fs');
-        const path = require('path');
-        const data = JSON.parse(output);
-        const fn = data.text;
-        const script = fn + "\n" + vars.test_code;
-        const tmpFile = path.join(os.tmpdir(), `humaneval_${Date.now()}.py`);
-        fs.writeFileSync(tmpFile, script);
-        try {
-          const result = spawnSync('python3', [tmpFile], { timeout: 10000 });
-          fs.unlinkSync(tmpFile);
-          if (result.status === 0) return true;
-          return { pass: false, reason: result.stderr?.toString() };
-        } catch (e) {
-          fs.unlinkSync(tmpFile);
-          return { pass: false, reason: e.message };
-        }
+        The output is a JSON string. Extract the "text" field.
+        The response should contain a Python function implementation AND
+        the raw output from running test assertions via bash.
+
+        Evaluate based on the ACTUAL execution output, not the agent's verbal summary:
+        - 9-10: Function implemented AND bash output shows clean execution
+          (no AssertionError, no Traceback, print confirms success)
+        - 5-8: Function present but execution output is unclear or missing
+        - 1-4: No bash execution output, or output shows AssertionError/Traceback
+
+        Do NOT trust the agent's summary — look for the raw bash output.
+        Respond with only a single integer.
+      threshold: 8
   metadata:
     category: "benchmark-humaneval"
     task_id: "HumanEval/42"
 ```
-
-**Note:** Python subprocess runs in the Node.js promptfoo worker process (outside Bourbon's sandbox). This is intentional — the sandbox is for agent tool execution, not for test harness code. The test vectors come from the committed YAML (trusted source), so the sandboxing trade-off is acceptable.
 
 ### B — GAIA Level 1 (Tool Use)
 
 **Source:** `gaia-benchmark/GAIA` on HuggingFace.  
 **Access:** Requires HuggingFace account approval via dataset form. Run `load_gaia.py` after approval; committed YAML requires no runtime HF access.
 
+> **Completion gate:** A 0-task placeholder YAML may be committed during development while access is pending, but Dimension B is not considered active until the file contains real tasks. The integration is not "complete" until this gate passes. See plan Step 2b for the hard check.
+
 Input: factual question solvable via reasoning. Agent produces a final answer.  
 Assertion: `javascript` — case-insensitive substring match after JSON parse.
 
 **Subset filtering rules** (enforced by `load_gaia.py`):
+- Load only Level 1 tasks (the dataset's `Level` field == 1; ~165 tasks in `validation` split)
 - Exclude tasks with file attachments (images, audio, PDFs) — ~30% of Level 1
 - Exclude tasks annotated as requiring live web search
-- Estimate: ~60-80 tasks survive both filters from ~165 Level 1 total; 30 is achievable
-- Sample balanced across difficulty tiers using the dataset's `level` metadata
-- Fixed `seed=42`
+- Estimate: ~60-80 tasks survive both filters; 30 is achievable
+- Random sample from the filtered pool, `seed=42` — no stratification needed because all tasks are already restricted to a single difficulty level
 
 ```yaml
 - description: "GAIA L1: WHO headquarters country capital"
@@ -384,12 +388,12 @@ python evals/loaders/load_bigbench_hard.py \
     --output evals/benchmarks/bigbench_hard_100.yaml
 ```
 
-**Dependency isolation:** `datasets` and `pyyaml` are placed in a dedicated `[loaders]` optional extra in `pyproject.toml`, separate from `[dev]`. This gives version pinning and `uv.lock` tracking without polluting the default dev install with HuggingFace's large dependency tree (~hundreds of MB including pyarrow, fsspec, huggingface_hub).
+**Dependency isolation:** `datasets`, `huggingface-hub`, and `pyyaml` are placed in a dedicated `[loaders]` optional extra in `pyproject.toml`, separate from `[dev]`. This gives version pinning and `uv.lock` tracking without polluting the default dev install with HuggingFace's large dependency tree (~hundreds of MB including pyarrow, fsspec). `huggingface-hub` is declared explicitly because all loaders import it directly (`from huggingface_hub import dataset_info`) — relying on it as a transitive dep of `datasets` would leave it unpinned and subject to silent version drift.
 
-Each generated YAML file includes a header comment:
+Each generated YAML file includes a header comment with an immutable git commit SHA from the HuggingFace Hub API (`huggingface_hub.dataset_info(dataset_id).sha`), not `dataset.info.version` which is a mutable semantic version string:
 ```yaml
 # Generated by: python evals/loaders/load_humaneval.py --sample 50 --seed 42
-# Dataset: openai/openai-humaneval, revision: <commit hash>
+# Dataset: openai/openai-humaneval, revision: <git-commit-sha>
 # Generated at: 2026-04-01
 ```
 
@@ -404,9 +408,10 @@ npx promptfoo@latest eval
 # Before/after model upgrade or major refactor: run benchmarks
 npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml
 
-# Run a single dimension
+# Run a single dimension (--filter-pattern matches description text, not metadata.category)
 npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml \
-    --filter-pattern "benchmark-mt-bench"
+    --filter-pattern "MT-Bench"
+# Other dimension patterns: "HumanEval", "GAIA", "GSM8K", "BBH"
 
 # Refresh static subset from HuggingFace (when intentionally updating baseline)
 uv pip install -e ".[loaders]"

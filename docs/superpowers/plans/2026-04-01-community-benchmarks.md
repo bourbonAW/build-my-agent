@@ -6,7 +6,7 @@
 
 **Architecture:** Five standalone loader scripts (`evals/loaders/`) fetch community datasets from HuggingFace and transform them into promptfoo YAML test cases. The generated YAML files are committed as static subsets (`evals/benchmarks/`). A separate `promptfooconfig-benchmarks.yaml` runs them in isolation from daily project evals. A shared `common.py` handles YAML output with audit-trail headers.
 
-**Tech Stack:** Python 3.12, `datasets` (HuggingFace), `pyyaml`, `argparse`; promptfoo for evaluation; JavaScript assertions in YAML for programmatic verification; `llm-rubric` for MT-Bench LLM-judge scoring.
+**Tech Stack:** Python 3.12, `datasets` (HuggingFace), `huggingface-hub`, `pyyaml`, `argparse`; promptfoo for evaluation; JavaScript assertions in YAML for programmatic verification; `llm-rubric` for MT-Bench and HumanEval LLM-judge scoring. (`huggingface-hub` is explicitly declared in `[loaders]` because all loaders import it directly; not just a transitive dep.)
 
 **Spec:** `docs/superpowers/specs/2026-04-01-community-benchmarks-design.md`
 
@@ -275,9 +275,9 @@ def test_transform_humaneval_case_structure():
     assert "description" in case
     assert "vars" in case
     assert "prompt" in case["vars"]
-    assert "test_code" in case["vars"]
+    assert "test_code" not in case["vars"]  # tests are embedded in prompt, not a separate var
     assert "assert" in case
-    assert case["assert"][0]["type"] == "javascript"
+    assert case["assert"][0]["type"] == "llm-rubric"
     assert "metadata" in case
     assert case["metadata"]["category"] == "benchmark-humaneval"
     assert "task_id" in case["metadata"]
@@ -289,14 +289,25 @@ def test_transform_humaneval_prompt_contains_function():
            "def separate_paren_groups" in cases[0]["vars"]["prompt"]
 
 
-def test_transform_humaneval_test_code_contains_check_call():
+def test_transform_humaneval_prompt_contains_bash_execution_instruction():
+    """Prompt must instruct Bourbon to run tests via its bash tool and include raw output."""
     cases = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=2, seed=42)
     for case in cases:
+        prompt = case["vars"]["prompt"]
+        assert "bash" in prompt.lower()  # instructs agent to use bash tool
+        assert "raw" in prompt.lower() or "verbatim" in prompt.lower()  # must include actual output
+
+
+def test_transform_humaneval_prompt_embeds_test_assertions():
+    """Tests must be embedded in the prompt so Bourbon can execute them."""
+    cases = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=2, seed=42)
+    for case in cases:
+        prompt = case["vars"]["prompt"]
         entry = next(
             t["entry_point"] for t in MOCK_HUMANEVAL_TASKS
             if t["task_id"] == case["metadata"]["task_id"]
         )
-        assert f"check({entry})" in case["vars"]["test_code"]
+        assert f"check({entry})" in prompt
 
 
 def test_transform_humaneval_respects_sample():
@@ -310,12 +321,15 @@ def test_transform_humaneval_seed_is_deterministic():
     assert cases_a[0]["metadata"]["task_id"] == cases_b[0]["metadata"]["task_id"]
 
 
-def test_transform_humaneval_assertion_parses_json():
+def test_transform_humaneval_rubric_evaluates_execution_output():
+    """llm-rubric must instruct the judge to evaluate actual bash output, not agent summary."""
     cases = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=1, seed=0)
-    js = cases[0]["assert"][0]["value"]
-    assert "JSON.parse(output)" in js
-    assert "spawnSync" in js
-    assert "execSync" not in js  # dead import must not appear
+    assert cases[0]["assert"][0]["type"] == "llm-rubric"
+    assert cases[0]["assert"][0]["metric"] == "humaneval_execution"
+    assert cases[0]["assert"][0]["threshold"] == 8
+    rubric = cases[0]["assert"][0]["value"]
+    assert "bash" in rubric.lower() or "execution" in rubric.lower()
+    assert "summary" in rubric.lower() or "verbal" in rubric.lower()  # warn against trusting summary
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -342,33 +356,27 @@ from __future__ import annotations
 
 import argparse
 import random
-from pathlib import Path
+
+from huggingface_hub import dataset_info as hf_dataset_info
 
 from evals.loaders.common import write_yaml_with_header
 
-# JavaScript assertion template for HumanEval.
-# Writes generated code + test vectors to a temp file and runs python3 on it.
-# Avoids shell injection: uses spawnSync with array args, not string interpolation.
-_JS_ASSERTION = """\
-const { spawnSync } = require('child_process');
-const os = require('os');
-const fs = require('fs');
-const path = require('path');
-const data = JSON.parse(output);
-const fn = data.text;
-const script = fn + "\\n" + vars.test_code;
-const tmpFile = path.join(os.tmpdir(), `humaneval_${Date.now()}.py`);
-fs.writeFileSync(tmpFile, script);
-try {
-  const result = spawnSync('python3', [tmpFile], { timeout: 10000 });
-  fs.unlinkSync(tmpFile);
-  if (result.status === 0) return true;
-  return { pass: false, reason: result.stderr?.toString() || 'test failed' };
-} catch (e) {
-  try { fs.unlinkSync(tmpFile); } catch (_) {}
-  return { pass: false, reason: e.message };
-}
-"""
+# LLM-rubric template for HumanEval.
+# Bourbon implements the function and runs tests via its bash tool (inside sandbox).
+# The rubric evaluates the ACTUAL bash execution output — not the agent's verbal summary.
+_RUBRIC_TEMPLATE = """\
+The output is a JSON string. Extract the "text" field.
+The response should contain a Python function implementation AND
+the raw output from running test assertions via bash.
+
+Evaluate based on the ACTUAL execution output, not the agent's verbal summary:
+- 9-10: Function implemented AND bash output shows clean execution
+  (no AssertionError, no Traceback, output confirms success)
+- 5-8: Function present but execution output is unclear or missing
+- 1-4: No bash execution output, or output shows AssertionError/Traceback
+
+Do NOT trust the agent's summary — look for the raw bash output.
+Respond with only a single integer."""
 
 
 def transform_humaneval(tasks: list[dict], sample: int, seed: int) -> list[dict]:
@@ -379,17 +387,26 @@ def transform_humaneval(tasks: list[dict], sample: int, seed: int) -> list[dict]
     cases = []
     for task in sampled:
         test_code = task["test"] + f"\ncheck({task['entry_point']})\n"
+        prompt = (
+            "Complete the following Python function, then run the provided test assertions "
+            "using your bash tool. Include the COMPLETE raw bash output in your response — "
+            "do not paraphrase or summarize the execution result.\n\n"
+            + task["prompt"]
+            + "\n\nTest assertions to run (write to a file and execute with python3):\n"
+            + test_code
+            + 'print("All tests passed")'
+        )
         cases.append({
             "description": f"HumanEval {task['task_id']}",
             "vars": {
-                "prompt": (
-                    "Complete the following Python function. "
-                    "Return ONLY the completed function, no explanation:\n\n"
-                    + task["prompt"]
-                ),
-                "test_code": test_code,
+                "prompt": prompt,
             },
-            "assert": [{"type": "javascript", "value": _JS_ASSERTION}],
+            "assert": [{
+                "type": "llm-rubric",
+                "metric": "humaneval_execution",
+                "value": _RUBRIC_TEMPLATE,
+                "threshold": 8,
+            }],
             "metadata": {
                 "category": "benchmark-humaneval",
                 "task_id": task["task_id"],
@@ -408,8 +425,7 @@ def main() -> None:
     from datasets import load_dataset  # heavy import, only at runtime
 
     dataset = load_dataset("openai/openai-humaneval", split="test")
-    info = dataset.info
-    revision = getattr(info, "version", "unknown")
+    revision = hf_dataset_info("openai/openai-humaneval").sha or "unknown"
     tasks = list(dataset)
 
     cases = transform_humaneval(tasks, sample=args.sample, seed=args.seed)
@@ -587,6 +603,8 @@ import argparse
 import random
 import re
 
+from huggingface_hub import dataset_info as hf_dataset_info
+
 from evals.loaders.common import write_yaml_with_header
 
 _JS_ASSERTION = """\
@@ -653,7 +671,7 @@ def main() -> None:
     from datasets import load_dataset
 
     dataset = load_dataset("openai/gsm8k", "main", split="test")
-    revision = str(getattr(dataset.info, "version", "unknown"))
+    revision = hf_dataset_info("openai/gsm8k").sha or "unknown"
     tasks = list(dataset)
 
     if args.stratify_by_steps:
@@ -816,6 +834,8 @@ from __future__ import annotations
 import argparse
 import random
 
+from huggingface_hub import dataset_info as hf_dataset_info
+
 from evals.loaders.common import write_yaml_with_header
 
 _BBH_SUBTASKS = [
@@ -878,11 +898,10 @@ def main() -> None:
     from datasets import load_dataset
 
     all_cases: list[dict] = []
-    revision = "unknown"
+    revision = hf_dataset_info("lighteval/big_bench_hard").sha or "unknown"
 
     for task_name in args.tasks:
         dataset = load_dataset("lighteval/big_bench_hard", task_name, split="train")
-        revision = str(getattr(dataset.info, "version", "unknown"))
         records = list(dataset)
         cases = transform_bbh_task(records, task_name=task_name, per_task=args.per_task, seed=args.seed)
         all_cases.extend(cases)
@@ -1051,6 +1070,8 @@ from __future__ import annotations
 
 import argparse
 
+from huggingface_hub import dataset_info as hf_dataset_info
+
 from evals.loaders.common import write_yaml_with_header
 
 # MT-Bench category boundaries (question_id ranges, 1-indexed)
@@ -1134,7 +1155,7 @@ def main() -> None:
     from datasets import load_dataset
 
     dataset = load_dataset("lm-sys/mt_bench_human_judgments", split="human")
-    revision = str(getattr(dataset.info, "version", "unknown"))
+    revision = hf_dataset_info("lm-sys/mt_bench_human_judgments").sha or "unknown"
     records = list(dataset)
 
     cases = transform_mt_bench(records)
@@ -1325,6 +1346,8 @@ from __future__ import annotations
 import argparse
 import random
 
+from huggingface_hub import dataset_info as hf_dataset_info
+
 from evals.loaders.common import write_yaml_with_header
 
 _WEB_KEYWORDS = ("search", "look up", "find online", "google", "web", "browse",
@@ -1405,7 +1428,7 @@ def main() -> None:
 
     # GAIA splits: "validation" contains Level 1, 2, 3 tasks
     dataset = load_dataset("gaia-benchmark/GAIA", "2023_all", split="validation")
-    revision = str(getattr(dataset.info, "version", "unknown"))
+    revision = hf_dataset_info("gaia-benchmark/GAIA").sha or "unknown"
     tasks = [t for t in dataset if t.get("Level") == 1]
     print(f"Loaded {len(tasks)} Level 1 tasks")
 
@@ -1504,16 +1527,20 @@ Update this file after each intentional benchmark run (model upgrade, prompt cha
 A regression is defined as a drop of ≥5 percentage points (or ≥0.5 score points for MT-Bench)
 vs. the most recent committed baseline.
 
+`repeat: 3` is set in `promptfooconfig-benchmarks.yaml` for run stability — it runs each test 3 times
+and reports pass rate across runs. This smooths transient failures but does NOT output stddev directly.
+
 ## Baseline History
 
-| Benchmark | Dimension | Pass Rate | Mean Score | Date | Git Commit | Notes |
-|-----------|-----------|-----------|------------|------|------------|-------|
+| Benchmark | Dimension | Pass Rate | MT-Bench Score | Date | Git Commit | Notes |
+|-----------|-----------|-----------|----------------|------|------------|-------|
 | (run benchmarks and fill in first row) | | | | | | Initial baseline |
 
 ## How to Update
 
 1. Run: `npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml`
-2. Record pass rates from promptfoo dashboard per `category` tag
+2. Record pass rates from promptfoo dashboard; use `--filter-pattern "HumanEval"` etc. to isolate dimensions
+   (Note: `--filter-pattern` matches description text, not `metadata.category` tags)
 3. Add a new row above the previous baseline
 4. Commit: `git add evals/benchmarks/BASELINES.md && git commit -m "chore(eval): update baselines after <reason>"`
 
@@ -1521,7 +1548,7 @@ vs. the most recent committed baseline.
 
 | Benchmark | Category Tag | Dimension | Assertion Type |
 |-----------|-------------|-----------|----------------|
-| HumanEval | `benchmark-humaneval` | A — Code correctness | javascript (unit test) |
+| HumanEval | `benchmark-humaneval` | A — Code correctness | llm-rubric (sandbox execution + LLM judge) |
 | GAIA L1 | `benchmark-gaia` | B — Tool use | javascript (answer match) |
 | MT-Bench | `benchmark-mt-bench` | C — Instruction following | llm-rubric (score ≥7) |
 | GSM8K | `benchmark-gsm8k` | D1 — Arithmetic reasoning | javascript (#### delimiter) |
@@ -1593,16 +1620,39 @@ npx promptfoo@latest eval --config /tmp/smoke-benchmarks.yaml --no-cache
 
 Expected: 1 test, should PASS. If it fails, check that `promptfoo_provider.py` returns JSON with `text` field.
 
+- [ ] **Step 2b: Validate GAIA file has real tasks (hard gate)**
+
+```bash
+python3 -c "
+import yaml, sys
+lines = open('evals/benchmarks/gaia_level1_30.yaml').readlines()
+body = ''.join(l for l in lines if not l.startswith('#'))
+cases = yaml.safe_load(body) or []
+if len(cases) == 0:
+    print('BLOCK: gaia_level1_30.yaml is a 0-task placeholder.')
+    print('Dimension B (GAIA) does not exist — benchmark integration is NOT complete.')
+    print('Run load_gaia.py after HF access approval, then re-run this check.')
+    sys.exit(1)
+else:
+    print(f'OK: GAIA {len(cases)} tasks loaded')
+"
+```
+
+Expected: `OK: GAIA N tasks loaded`. **Exit code 1 blocks proceeding to Step 5.**
+
+If the GAIA dataset is still access-gated, do NOT proceed to Step 5. Instead, commit the current state with a partial label (see the note in Step 5) and track the pending access in `evals/benchmarks/BASELINES.md`.
+
 - [ ] **Step 3: Run one real benchmark dimension (GSM8K only, repeat:1)**
 
 ```bash
 npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml \
-    --filter-pattern "benchmark-gsm8k" \
+    --filter-pattern "GSM8K" \
     --no-cache \
     2>&1 | head -30
 ```
 
 Expected: starts running tasks, no config/import errors.
+Note: `--filter-pattern` matches test **description** text (e.g. "GSM8K #0: ..."), not `metadata.category`.
 
 - [ ] **Step 4: Verify promptfoo dashboard shows category tags**
 
@@ -1614,12 +1664,17 @@ Navigate to the benchmark run. Confirm `benchmark-gsm8k` appears as a filterable
 
 - [ ] **Step 5: Commit final state**
 
+> **Precondition:** Step 2b must exit 0 (GAIA has real tasks). Do not use the "complete" label if GAIA is still a placeholder — Dimension B would be missing and the multi-dimensional regression detection goal would not be met.
+
 ```bash
 git add -A
 git status  # should be clean or only untracked results/
-git commit -m "feat(eval): complete community benchmark integration" \
-    --allow-empty-message 2>/dev/null || \
-git commit -m "chore(eval): verify smoke test passes, all loaders committed"
+
+# If Step 2b passed (GAIA has real tasks):
+git commit -m "feat(eval): complete community benchmark integration (5 dimensions)"
+
+# If GAIA is still pending HF access (Step 2b exited 1), use this instead:
+# git commit -m "feat(eval): partial community benchmark integration (GAIA pending HF access)"
 ```
 
 ---
@@ -1630,9 +1685,10 @@ git commit -m "chore(eval): verify smoke test passes, all loaders committed"
 # Run all benchmarks
 npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml
 
-# Run one dimension
+# Run one dimension (--filter-pattern matches description text, not metadata.category)
 npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml \
-    --filter-pattern "benchmark-mt-bench"
+    --filter-pattern "MT-Bench"
+# Other dimension patterns: "HumanEval", "GAIA", "GSM8K", "BBH"
 
 # Run all loader tests
 pytest tests/test_benchmark_loaders.py -v
