@@ -1,0 +1,1643 @@
+# Community Benchmark Integration Implementation Plan
+
+> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Integrate HumanEval, GAIA Level 1, MT-Bench, GSM8K, and BIG-bench Hard into Bourbon's eval pipeline for multi-dimensional regression detection.
+
+**Architecture:** Five standalone loader scripts (`evals/loaders/`) fetch community datasets from HuggingFace and transform them into promptfoo YAML test cases. The generated YAML files are committed as static subsets (`evals/benchmarks/`). A separate `promptfooconfig-benchmarks.yaml` runs them in isolation from daily project evals. A shared `common.py` handles YAML output with audit-trail headers.
+
+**Tech Stack:** Python 3.12, `datasets` (HuggingFace), `pyyaml`, `argparse`; promptfoo for evaluation; JavaScript assertions in YAML for programmatic verification; `llm-rubric` for MT-Bench LLM-judge scoring.
+
+**Spec:** `docs/superpowers/specs/2026-04-01-community-benchmarks-design.md`
+
+---
+
+## File Map
+
+### New files to create
+
+| File | Responsibility |
+|------|---------------|
+| `promptfooconfig-benchmarks.yaml` | Config entry point for all community benchmarks |
+| `evals/loaders/__init__.py` | Package marker (empty) |
+| `evals/loaders/common.py` | Shared: YAML write with header, arg parsing helpers |
+| `evals/loaders/load_humaneval.py` | Transform HumanEval → YAML; CLI: `--sample --seed --output` |
+| `evals/loaders/load_gsm8k.py` | Transform GSM8K → YAML; CLI: `--sample --seed --stratify-by-steps --output` |
+| `evals/loaders/load_bigbench_hard.py` | Transform BBH → YAML; CLI: `--tasks --per-task --seed --output` |
+| `evals/loaders/load_mt_bench.py` | Transform MT-Bench → YAML; CLI: `--output` |
+| `evals/loaders/load_gaia.py` | Transform GAIA Level 1 → YAML; CLI: `--sample --seed --exclude-attachments --exclude-web --output` |
+| `evals/benchmarks/humaneval_50.yaml` | 50-task HumanEval subset (generated, committed) |
+| `evals/benchmarks/gsm8k_50.yaml` | 50-task GSM8K subset (generated, committed) |
+| `evals/benchmarks/bigbench_hard_100.yaml` | 100-task BBH subset (generated, committed) |
+| `evals/benchmarks/mt_bench_80.yaml` | 80-task MT-Bench full set (generated, committed) |
+| `evals/benchmarks/gaia_level1_30.yaml` | 30-task GAIA Level 1 subset (generated, committed) |
+| `evals/benchmarks/BASELINES.md` | Baseline tracking table template |
+| `tests/test_benchmark_loaders.py` | Unit tests for all five loader transform functions |
+
+### No existing files modified
+
+The entire implementation is additive. `promptfooconfig.yaml` is untouched.
+
+---
+
+## Chunk 1: Infrastructure — Config + Common Utilities + Test Scaffolding
+
+### Task 1: Create `promptfooconfig-benchmarks.yaml`
+
+**Files:**
+- Create: `promptfooconfig-benchmarks.yaml`
+
+- [ ] **Step 1: Write the config file**
+
+```yaml
+# promptfooconfig-benchmarks.yaml
+description: "Bourbon Agent — Community Benchmark Evaluation"
+
+providers:
+  - id: python:evals/promptfoo_provider.py
+    label: bourbon-agent
+    config:
+      pythonExecutable: .venv/bin/python
+
+prompts:
+  - "{{prompt}}"
+
+defaultTest:
+  provider: python:evals/promptfoo_provider.py
+
+evaluateOptions:
+  maxConcurrency: 1
+  repeat: 3
+  timeoutMs: 180000  # Per-test timeout. Each of the 3 repeat runs gets 180s independently.
+
+tests:
+  - file://evals/benchmarks/humaneval_50.yaml
+  - file://evals/benchmarks/gaia_level1_30.yaml
+  - file://evals/benchmarks/mt_bench_80.yaml
+  - file://evals/benchmarks/gsm8k_50.yaml
+  - file://evals/benchmarks/bigbench_hard_100.yaml
+```
+
+- [ ] **Step 2: Verify YAML syntax**
+
+```bash
+python3 -c "import yaml; yaml.safe_load(open('promptfooconfig-benchmarks.yaml'))" && echo "OK"
+```
+
+Expected: `OK`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add promptfooconfig-benchmarks.yaml
+git commit -m "feat(eval): add promptfooconfig-benchmarks.yaml entry point"
+```
+
+---
+
+### Task 2: Create `evals/loaders/common.py`
+
+**Files:**
+- Create: `evals/loaders/__init__.py`
+- Create: `evals/loaders/common.py`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_benchmark_loaders.py
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import tempfile
+import yaml
+from evals.loaders.common import write_yaml_with_header
+
+
+def test_write_yaml_with_header_creates_file():
+    cases = [{"description": "test", "vars": {"prompt": "hello"}}]
+    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode='w') as f:
+        outpath = f.name
+
+    write_yaml_with_header(
+        cases=cases,
+        output_path=outpath,
+        command="python evals/loaders/test.py --sample 1",
+        dataset_id="test/dataset",
+        dataset_revision="abc123",
+    )
+
+    content = Path(outpath).read_text()
+    assert "# Generated by: python evals/loaders/test.py --sample 1" in content
+    assert "# Dataset: test/dataset" in content
+    assert "# Dataset revision: abc123" in content
+
+    data = yaml.safe_load(content.split("\n---\n", 1)[-1] if "\n---\n" in content else content)
+    assert isinstance(data, list)
+    assert data[0]["description"] == "test"
+
+
+def test_write_yaml_with_header_actual_count_in_header():
+    cases = [{"description": f"case {i}"} for i in range(3)]
+    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode='w') as f:
+        outpath = f.name
+
+    write_yaml_with_header(
+        cases=cases,
+        output_path=outpath,
+        command="python evals/loaders/test.py",
+        dataset_id="test/dataset",
+        dataset_revision="abc123",
+    )
+
+    content = Path(outpath).read_text()
+    assert "# Actual task count: 3" in content
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+```bash
+pytest tests/test_benchmark_loaders.py::test_write_yaml_with_header_creates_file -v
+```
+
+Expected: `ImportError` or `ModuleNotFoundError` (common.py doesn't exist yet)
+
+- [ ] **Step 3: Create `evals/loaders/__init__.py` (empty)**
+
+```bash
+touch evals/loaders/__init__.py
+```
+
+- [ ] **Step 4: Implement `evals/loaders/common.py`**
+
+```python
+# evals/loaders/common.py
+"""Shared utilities for benchmark loader scripts."""
+
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+import yaml
+
+
+def write_yaml_with_header(
+    cases: list[dict],
+    output_path: str,
+    command: str,
+    dataset_id: str,
+    dataset_revision: str,
+) -> None:
+    """Write promptfoo test cases to YAML with an audit-trail header comment.
+
+    The header is a block of # comments at the top of the file. The YAML body
+    follows directly — pyyaml does not support top-level comments, so the header
+    is written as raw text before the YAML dump.
+    """
+    header = (
+        f"# Generated by: {command}\n"
+        f"# Dataset: {dataset_id}\n"
+        f"# Dataset revision: {dataset_revision}\n"
+        f"# Generated at: {date.today().isoformat()}\n"
+        f"# Actual task count: {len(cases)}\n"
+    )
+
+    body = yaml.dump(cases, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    Path(output_path).write_text(header + body, encoding="utf-8")
+    print(f"Wrote {len(cases)} tasks to {output_path}")
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+```bash
+pytest tests/test_benchmark_loaders.py::test_write_yaml_with_header_creates_file \
+       tests/test_benchmark_loaders.py::test_write_yaml_with_header_actual_count_in_header -v
+```
+
+Expected: both PASS
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add evals/loaders/__init__.py evals/loaders/common.py tests/test_benchmark_loaders.py
+git commit -m "feat(eval): add loader package + common write_yaml_with_header utility"
+```
+
+---
+
+## Chunk 2: Loaders Without Auth — HumanEval, GSM8K, BIG-bench Hard
+
+> These three use public HuggingFace datasets that require no login or access approval.
+> Install deps once before running: `pip install datasets pyyaml`
+
+### Task 3: `load_humaneval.py` + generate `humaneval_50.yaml`
+
+**Files:**
+- Create: `evals/loaders/load_humaneval.py`
+- Generate: `evals/benchmarks/humaneval_50.yaml`
+- Test: `tests/test_benchmark_loaders.py` (add tests)
+
+**HuggingFace dataset:** `openai/openai-humaneval`, split `test`  
+**Schema:** `task_id` (str), `prompt` (str, includes signature + docstring), `canonical_solution` (str), `test` (str, pytest-style check function), `entry_point` (str, function name to call)
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_benchmark_loaders.py`:
+
+```python
+from evals.loaders.load_humaneval import transform_humaneval
+
+
+MOCK_HUMANEVAL_TASKS = [
+    {
+        "task_id": "HumanEval/0",
+        "prompt": "from typing import List\n\ndef has_close_elements(numbers: List[float], threshold: float) -> bool:\n    \"\"\"Check if any two numbers are closer than threshold.\"\"\"\n",
+        "canonical_solution": "    for i in range(len(numbers)):\n        for j in range(i+1, len(numbers)):\n            if abs(numbers[i]-numbers[j]) < threshold:\n                return True\n    return False\n",
+        "test": "def check(has_close_elements):\n    assert has_close_elements([1.0, 2.0, 3.9, 4.0, 5.0, 2.2], 0.3) == True\n    assert has_close_elements([1.0, 2.0, 3.0], 0.5) == False\n",
+        "entry_point": "has_close_elements",
+    },
+    {
+        "task_id": "HumanEval/1",
+        "prompt": "def separate_paren_groups(paren_string: str) -> List[str]:\n    \"\"\"Separate parenthesized groups.\"\"\"\n",
+        "canonical_solution": "    result = []\n    # ...\n    return result\n",
+        "test": "def check(separate_paren_groups):\n    assert separate_paren_groups('( ) (( )) (( )( ))') == ['()', '(())', '(()())']\n",
+        "entry_point": "separate_paren_groups",
+    },
+]
+
+
+def test_transform_humaneval_case_structure():
+    cases = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=2, seed=42)
+    assert len(cases) == 2
+    case = cases[0]
+    assert "description" in case
+    assert "vars" in case
+    assert "prompt" in case["vars"]
+    assert "test_code" in case["vars"]
+    assert "assert" in case
+    assert case["assert"][0]["type"] == "javascript"
+    assert "metadata" in case
+    assert case["metadata"]["category"] == "benchmark-humaneval"
+    assert "task_id" in case["metadata"]
+
+
+def test_transform_humaneval_prompt_contains_function():
+    cases = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=1, seed=0)
+    assert "def has_close_elements" in cases[0]["vars"]["prompt"] or \
+           "def separate_paren_groups" in cases[0]["vars"]["prompt"]
+
+
+def test_transform_humaneval_test_code_contains_check_call():
+    cases = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=2, seed=42)
+    for case in cases:
+        entry = next(
+            t["entry_point"] for t in MOCK_HUMANEVAL_TASKS
+            if t["task_id"] == case["metadata"]["task_id"]
+        )
+        assert f"check({entry})" in case["vars"]["test_code"]
+
+
+def test_transform_humaneval_respects_sample():
+    cases = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=1, seed=42)
+    assert len(cases) == 1
+
+
+def test_transform_humaneval_seed_is_deterministic():
+    cases_a = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=1, seed=7)
+    cases_b = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=1, seed=7)
+    assert cases_a[0]["metadata"]["task_id"] == cases_b[0]["metadata"]["task_id"]
+
+
+def test_transform_humaneval_assertion_parses_json():
+    cases = transform_humaneval(MOCK_HUMANEVAL_TASKS, sample=1, seed=0)
+    js = cases[0]["assert"][0]["value"]
+    assert "JSON.parse(output)" in js
+    assert "spawnSync" in js
+    assert "execSync" not in js  # dead import must not appear
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "humaneval" -v
+```
+
+Expected: `ImportError` (load_humaneval.py doesn't exist)
+
+- [ ] **Step 3: Implement `evals/loaders/load_humaneval.py`**
+
+```python
+# evals/loaders/load_humaneval.py
+"""Loader: openai/openai-humaneval → promptfoo YAML test cases.
+
+Usage:
+    pip install datasets pyyaml
+    python evals/loaders/load_humaneval.py --sample 50 --seed 42 \
+        --output evals/benchmarks/humaneval_50.yaml
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+from pathlib import Path
+
+from evals.loaders.common import write_yaml_with_header
+
+# JavaScript assertion template for HumanEval.
+# Writes generated code + test vectors to a temp file and runs python3 on it.
+# Avoids shell injection: uses spawnSync with array args, not string interpolation.
+_JS_ASSERTION = """\
+const { spawnSync } = require('child_process');
+const os = require('os');
+const fs = require('fs');
+const path = require('path');
+const data = JSON.parse(output);
+const fn = data.text;
+const script = fn + "\\n" + vars.test_code;
+const tmpFile = path.join(os.tmpdir(), `humaneval_${Date.now()}.py`);
+fs.writeFileSync(tmpFile, script);
+try {
+  const result = spawnSync('python3', [tmpFile], { timeout: 10000 });
+  fs.unlinkSync(tmpFile);
+  if (result.status === 0) return true;
+  return { pass: false, reason: result.stderr?.toString() || 'test failed' };
+} catch (e) {
+  try { fs.unlinkSync(tmpFile); } catch (_) {}
+  return { pass: false, reason: e.message };
+}
+"""
+
+
+def transform_humaneval(tasks: list[dict], sample: int, seed: int) -> list[dict]:
+    """Transform a list of HumanEval dataset records into promptfoo test cases."""
+    rng = random.Random(seed)
+    sampled = rng.sample(tasks, min(sample, len(tasks)))
+
+    cases = []
+    for task in sampled:
+        test_code = task["test"] + f"\ncheck({task['entry_point']})\n"
+        cases.append({
+            "description": f"HumanEval {task['task_id']}",
+            "vars": {
+                "prompt": (
+                    "Complete the following Python function. "
+                    "Return ONLY the completed function, no explanation:\n\n"
+                    + task["prompt"]
+                ),
+                "test_code": test_code,
+            },
+            "assert": [{"type": "javascript", "value": _JS_ASSERTION}],
+            "metadata": {
+                "category": "benchmark-humaneval",
+                "task_id": task["task_id"],
+            },
+        })
+    return cases
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Load HumanEval subset")
+    parser.add_argument("--sample", type=int, default=50)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    from datasets import load_dataset  # heavy import, only at runtime
+
+    dataset = load_dataset("openai/openai-humaneval", split="test")
+    info = dataset.info
+    revision = getattr(info, "version", "unknown")
+    tasks = list(dataset)
+
+    cases = transform_humaneval(tasks, sample=args.sample, seed=args.seed)
+
+    command = (
+        f"python evals/loaders/load_humaneval.py "
+        f"--sample {args.sample} --seed {args.seed} --output {args.output}"
+    )
+    write_yaml_with_header(
+        cases=cases,
+        output_path=args.output,
+        command=command,
+        dataset_id="openai/openai-humaneval",
+        dataset_revision=str(revision),
+    )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "humaneval" -v
+```
+
+Expected: all PASS
+
+- [ ] **Step 5: Generate `humaneval_50.yaml`**
+
+```bash
+# Install loader deps if not already done
+pip install datasets pyyaml
+
+mkdir -p evals/benchmarks
+python evals/loaders/load_humaneval.py --sample 50 --seed 42 \
+    --output evals/benchmarks/humaneval_50.yaml
+```
+
+Expected output: `Wrote 50 tasks to evals/benchmarks/humaneval_50.yaml`
+
+- [ ] **Step 6: Spot-check the generated YAML**
+
+```bash
+python3 -c "
+import yaml
+cases = yaml.safe_load(open('evals/benchmarks/humaneval_50.yaml').read().split('# Actual')[0] + '[]')
+# Just verify it parses
+print('Header OK')
+# Load full file skipping header lines
+lines = open('evals/benchmarks/humaneval_50.yaml').readlines()
+body = ''.join(l for l in lines if not l.startswith('#'))
+cases = yaml.safe_load(body)
+print(f'Tasks: {len(cases)}')
+print(f'First: {cases[0][\"description\"]}')
+print(f'Category: {cases[0][\"metadata\"][\"category\"]}')
+"
+```
+
+Expected: `Tasks: 50`, category `benchmark-humaneval`
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add evals/loaders/load_humaneval.py evals/benchmarks/humaneval_50.yaml \
+    tests/test_benchmark_loaders.py
+git commit -m "feat(eval): add HumanEval loader + 50-task committed subset"
+```
+
+---
+
+### Task 4: `load_gsm8k.py` + generate `gsm8k_50.yaml`
+
+**Files:**
+- Create: `evals/loaders/load_gsm8k.py`
+- Generate: `evals/benchmarks/gsm8k_50.yaml`
+- Test: `tests/test_benchmark_loaders.py` (add tests)
+
+**HuggingFace dataset:** `openai/gsm8k`, config `main`, split `test`  
+**Schema:** `question` (str), `answer` (str — contains step-by-step reasoning ending with `#### <number>`)
+
+Step count proxy: count the number of `####`-delimited steps in the answer, or use answer string length as a rough proxy for stratification.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_benchmark_loaders.py`:
+
+```python
+from evals.loaders.load_gsm8k import transform_gsm8k, _extract_answer_number
+
+
+MOCK_GSM8K_TASKS = [
+    {
+        "question": "Janet's ducks lay 16 eggs per day. She eats 3 for breakfast every morning and bakes muffins for her friends every day with 4933600 eggs. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?",
+        "answer": "Janet sells 16 - 3 - 4 = <<16-3-4=9>>9 duck eggs a day.\nShe makes 9 * 2 = <<9*2=18>>18 every day at the farmers' market.\n#### 18",
+    },
+    {
+        "question": "A robe takes 2 bolts of blue fiber and half that much white fiber. How many bolts in total does it take?",
+        "answer": "It takes 2/2=<<2/2=1>>1 bolt of white fiber.\nSo the total amount of fabric is 2+1=<<2+1=3>>3 bolts.\n#### 3",
+    },
+    {
+        "question": "Josh decides to try flipping a house. He buys a house for $80,000 and then puts in $50,000 in repairs. This increased the value of the house by 150%. How much profit did he make?",
+        "answer": "The new value is 80000*2.5=<<80000*2.5=200000>>200000.\nSo he made a profit of 200000-80000-50000=<<200000-80000-50000=70000>>70000.\n#### 70000",
+    },
+]
+
+
+def test_extract_answer_number():
+    assert _extract_answer_number("Some reasoning\n#### 42") == "42"
+    assert _extract_answer_number("Step 1\n#### 1500") == "1500"
+    assert _extract_answer_number("No delimiter") is None
+
+
+def test_transform_gsm8k_case_structure():
+    cases = transform_gsm8k(MOCK_GSM8K_TASKS, sample=3, seed=42)
+    assert len(cases) == 3
+    case = cases[0]
+    assert "description" in case
+    assert "prompt" in case["vars"]
+    assert "expected_answer" in case["vars"]
+    assert case["assert"][0]["type"] == "javascript"
+    assert case["metadata"]["category"] == "benchmark-gsm8k"
+
+
+def test_transform_gsm8k_expected_answer_extracted():
+    cases = transform_gsm8k(MOCK_GSM8K_TASKS, sample=3, seed=42)
+    valid_answers = {"18", "3", "70000"}
+    for case in cases:
+        assert case["vars"]["expected_answer"] in valid_answers
+
+
+def test_transform_gsm8k_prompt_contains_delimiter_instruction():
+    cases = transform_gsm8k(MOCK_GSM8K_TASKS, sample=1, seed=0)
+    assert "####" in cases[0]["vars"]["prompt"]
+
+
+def test_transform_gsm8k_assertion_uses_hash_delimiter():
+    cases = transform_gsm8k(MOCK_GSM8K_TASKS, sample=1, seed=0)
+    js = cases[0]["assert"][0]["value"]
+    assert "####" in js
+    assert "JSON.parse(output)" in js
+
+
+def test_transform_gsm8k_seed_deterministic():
+    a = transform_gsm8k(MOCK_GSM8K_TASKS, sample=2, seed=99)
+    b = transform_gsm8k(MOCK_GSM8K_TASKS, sample=2, seed=99)
+    assert [c["vars"]["expected_answer"] for c in a] == \
+           [c["vars"]["expected_answer"] for c in b]
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "gsm8k" -v
+```
+
+Expected: `ImportError`
+
+- [ ] **Step 3: Implement `evals/loaders/load_gsm8k.py`**
+
+```python
+# evals/loaders/load_gsm8k.py
+"""Loader: openai/gsm8k → promptfoo YAML test cases.
+
+Usage:
+    pip install datasets pyyaml
+    python evals/loaders/load_gsm8k.py --sample 50 --seed 42 \
+        --stratify-by-steps --output evals/benchmarks/gsm8k_50.yaml
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+import re
+
+from evals.loaders.common import write_yaml_with_header
+
+_JS_ASSERTION = """\
+const data = JSON.parse(output);
+const match = data.text.match(/####\\s*(\\d+\\.?\\d*)/);
+const extracted = match ? match[1] : null;
+if (extracted === null) return { pass: false, reason: 'no #### delimiter found in response' };
+return extracted === String(vars.expected_answer);
+"""
+
+
+def _extract_answer_number(answer: str) -> str | None:
+    """Extract the final number after the #### delimiter."""
+    match = re.search(r"####\s*(\d+\.?\d*)", answer)
+    return match.group(1) if match else None
+
+
+def _estimate_steps(answer: str) -> int:
+    """Rough step count: number of calculation annotations like <<...>>."""
+    return len(re.findall(r"<<", answer))
+
+
+def transform_gsm8k(tasks: list[dict], sample: int, seed: int) -> list[dict]:
+    """Transform GSM8K dataset records into promptfoo test cases."""
+    # Filter to tasks where we can extract a clean numeric answer
+    valid = [t for t in tasks if _extract_answer_number(t["answer"]) is not None]
+
+    rng = random.Random(seed)
+    sampled = rng.sample(valid, min(sample, len(valid)))
+
+    cases = []
+    for i, task in enumerate(sampled):
+        expected = _extract_answer_number(task["answer"])
+        steps = _estimate_steps(task["answer"])
+        difficulty = "easy" if steps <= 3 else ("medium" if steps <= 6 else "hard")
+
+        cases.append({
+            "description": f"GSM8K #{i}: {task['question'][:60].rstrip()}",
+            "vars": {
+                "prompt": (
+                    task["question"]
+                    + "\n\nSolve step by step. End your answer with "
+                    '"#### <number>" on its own line (the number only, no units).'
+                ),
+                "expected_answer": expected,
+            },
+            "assert": [{"type": "javascript", "value": _JS_ASSERTION}],
+            "metadata": {
+                "category": "benchmark-gsm8k",
+                "difficulty": difficulty,
+            },
+        })
+    return cases
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Load GSM8K subset")
+    parser.add_argument("--sample", type=int, default=50)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--stratify-by-steps", action="store_true")
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    from datasets import load_dataset
+
+    dataset = load_dataset("openai/gsm8k", "main", split="test")
+    revision = str(getattr(dataset.info, "version", "unknown"))
+    tasks = list(dataset)
+
+    if args.stratify_by_steps:
+        # Stratify: ~1/3 easy (<=3 steps), ~1/3 medium (4-6), ~1/3 hard (7+)
+        rng = random.Random(args.seed)
+        easy = [t for t in tasks if _estimate_steps(t["answer"]) <= 3]
+        medium = [t for t in tasks if 4 <= _estimate_steps(t["answer"]) <= 6]
+        hard = [t for t in tasks if _estimate_steps(t["answer"]) >= 7]
+        per_tier = args.sample // 3
+        remainder = args.sample - per_tier * 3
+        pool = (
+            rng.sample(easy, min(per_tier + remainder, len(easy)))
+            + rng.sample(medium, min(per_tier, len(medium)))
+            + rng.sample(hard, min(per_tier, len(hard)))
+        )
+        rng.shuffle(pool)
+        cases = transform_gsm8k(pool, sample=len(pool), seed=args.seed)
+    else:
+        cases = transform_gsm8k(tasks, sample=args.sample, seed=args.seed)
+
+    command = (
+        f"python evals/loaders/load_gsm8k.py "
+        f"--sample {args.sample} --seed {args.seed} --output {args.output}"
+        + (" --stratify-by-steps" if args.stratify_by_steps else "")
+    )
+    write_yaml_with_header(
+        cases=cases,
+        output_path=args.output,
+        command=command,
+        dataset_id="openai/gsm8k",
+        dataset_revision=revision,
+    )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "gsm8k" -v
+```
+
+Expected: all PASS
+
+- [ ] **Step 5: Generate `gsm8k_50.yaml`**
+
+```bash
+python evals/loaders/load_gsm8k.py --sample 50 --seed 42 \
+    --stratify-by-steps --output evals/benchmarks/gsm8k_50.yaml
+```
+
+Expected: `Wrote 50 tasks to evals/benchmarks/gsm8k_50.yaml`
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add evals/loaders/load_gsm8k.py evals/benchmarks/gsm8k_50.yaml \
+    tests/test_benchmark_loaders.py
+git commit -m "feat(eval): add GSM8K loader + 50-task committed subset"
+```
+
+---
+
+### Task 5: `load_bigbench_hard.py` + generate `bigbench_hard_100.yaml`
+
+**Files:**
+- Create: `evals/loaders/load_bigbench_hard.py`
+- Generate: `evals/benchmarks/bigbench_hard_100.yaml`
+- Test: `tests/test_benchmark_loaders.py` (add tests)
+
+**HuggingFace dataset:** `lighteval/big_bench_hard` (Apache 2.0, no auth)  
+**Schema:** `input` (str, the question), `target` (str, correct option like `"(B)"`), loaded per task name via config parameter
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_benchmark_loaders.py`:
+
+```python
+from evals.loaders.load_bigbench_hard import transform_bbh_task
+
+
+MOCK_BBH_TASKS = [
+    {
+        "input": 'How would a typical person answer?\n"The surgery was successful. Did the doctor cause the recovery?"\nOptions:\n(A) Yes\n(B) No',
+        "target": "(A)",
+    },
+    {
+        "input": 'How would a typical person answer?\n"The surgery was successful, but the patient died. Did the doctor cause the death?"\nOptions:\n(A) Yes\n(B) No',
+        "target": "(B)",
+    },
+]
+
+
+def test_transform_bbh_case_structure():
+    cases = transform_bbh_task(MOCK_BBH_TASKS, task_name="causal_judgement", per_task=2, seed=42)
+    assert len(cases) == 2
+    case = cases[0]
+    assert "description" in case
+    assert "vars" in case
+    assert "prompt" in case["vars"]
+    assert "expected_option" in case["vars"]
+    assert case["assert"][0]["type"] == "javascript"
+    assert case["metadata"]["category"] == "benchmark-bigbench-hard"
+    assert case["metadata"]["subcategory"] == "causal_judgement"
+
+
+def test_transform_bbh_expected_option_is_letter():
+    cases = transform_bbh_task(MOCK_BBH_TASKS, task_name="causal_judgement", per_task=2, seed=42)
+    for case in cases:
+        opt = case["vars"]["expected_option"]
+        assert opt.startswith("(") and opt.endswith(")")
+
+
+def test_transform_bbh_prompt_contains_answer_instruction():
+    cases = transform_bbh_task(MOCK_BBH_TASKS, task_name="causal_judgement", per_task=1, seed=0)
+    assert 'Answer: (X)' in cases[0]["vars"]["prompt"]
+
+
+def test_transform_bbh_assertion_uses_regex_not_includes():
+    cases = transform_bbh_task(MOCK_BBH_TASKS, task_name="causal_judgement", per_task=1, seed=0)
+    js = cases[0]["assert"][0]["value"]
+    assert "match(" in js   # uses regex anchor, not .includes()
+    assert "JSON.parse(output)" in js
+
+
+def test_transform_bbh_seed_deterministic():
+    a = transform_bbh_task(MOCK_BBH_TASKS, task_name="causal_judgement", per_task=1, seed=5)
+    b = transform_bbh_task(MOCK_BBH_TASKS, task_name="causal_judgement", per_task=1, seed=5)
+    assert a[0]["vars"]["expected_option"] == b[0]["vars"]["expected_option"]
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "bbh" -v
+```
+
+Expected: `ImportError`
+
+- [ ] **Step 3: Implement `evals/loaders/load_bigbench_hard.py`**
+
+```python
+# evals/loaders/load_bigbench_hard.py
+"""Loader: lighteval/big_bench_hard → promptfoo YAML test cases.
+
+Usage:
+    pip install datasets pyyaml
+    python evals/loaders/load_bigbench_hard.py \
+        --tasks causal_judgement date_understanding formal_fallacies \
+                geometric_shapes hyperbaton logical_deduction_five_objects \
+                movie_recommendation navigate reasoning_about_colored_objects snarks \
+        --per-task 10 --seed 42 \
+        --output evals/benchmarks/bigbench_hard_100.yaml
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+
+from evals.loaders.common import write_yaml_with_header
+
+_BBH_SUBTASKS = [
+    "causal_judgement",
+    "date_understanding",
+    "formal_fallacies",
+    "geometric_shapes",
+    "hyperbaton",
+    "logical_deduction_five_objects",
+    "movie_recommendation",
+    "navigate",
+    "reasoning_about_colored_objects",
+    "snarks",
+]
+
+# Match "Answer: (X)" on its own line to avoid false positives
+# from option letters appearing in the quoted question text.
+_JS_ASSERTION = """\
+const data = JSON.parse(output);
+const match = data.text.match(/^Answer:\\s*(\\([A-Z]\\))\\s*$/m);
+if (!match) return { pass: false, reason: 'no "Answer: (X)" line found in response' };
+return match[1] === vars.expected_option;
+"""
+
+
+def transform_bbh_task(records: list[dict], task_name: str, per_task: int, seed: int) -> list[dict]:
+    """Transform a list of BBH task records into promptfoo test cases."""
+    rng = random.Random(seed)
+    sampled = rng.sample(records, min(per_task, len(records)))
+
+    cases = []
+    for i, record in enumerate(sampled):
+        prompt = (
+            record["input"]
+            + '\n\nEnd your response with "Answer: (X)" on its own line.'
+        )
+        cases.append({
+            "description": f"BBH {task_name} #{i}",
+            "vars": {
+                "prompt": prompt,
+                "expected_option": record["target"],
+            },
+            "assert": [{"type": "javascript", "value": _JS_ASSERTION}],
+            "metadata": {
+                "category": "benchmark-bigbench-hard",
+                "subcategory": task_name,
+            },
+        })
+    return cases
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Load BIG-bench Hard subset")
+    parser.add_argument("--tasks", nargs="+", default=_BBH_SUBTASKS)
+    parser.add_argument("--per-task", type=int, default=10)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    from datasets import load_dataset
+
+    all_cases: list[dict] = []
+    revision = "unknown"
+
+    for task_name in args.tasks:
+        dataset = load_dataset("lighteval/big_bench_hard", task_name, split="train")
+        revision = str(getattr(dataset.info, "version", "unknown"))
+        records = list(dataset)
+        cases = transform_bbh_task(records, task_name=task_name, per_task=args.per_task, seed=args.seed)
+        all_cases.extend(cases)
+        print(f"  {task_name}: {len(cases)} tasks")
+
+    command = (
+        f"python evals/loaders/load_bigbench_hard.py "
+        f"--tasks {' '.join(args.tasks)} "
+        f"--per-task {args.per_task} --seed {args.seed} --output {args.output}"
+    )
+    write_yaml_with_header(
+        cases=all_cases,
+        output_path=args.output,
+        command=command,
+        dataset_id="lighteval/big_bench_hard",
+        dataset_revision=revision,
+    )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "bbh" -v
+```
+
+Expected: all PASS
+
+- [ ] **Step 5: Generate `bigbench_hard_100.yaml`**
+
+```bash
+python evals/loaders/load_bigbench_hard.py \
+    --tasks causal_judgement date_understanding formal_fallacies \
+            geometric_shapes hyperbaton logical_deduction_five_objects \
+            movie_recommendation navigate reasoning_about_colored_objects snarks \
+    --per-task 10 --seed 42 \
+    --output evals/benchmarks/bigbench_hard_100.yaml
+```
+
+Expected: 10 lines of `  <task>: 10 tasks`, then `Wrote 100 tasks to ...`
+
+- [ ] **Step 6: Run all loader tests to check no regressions**
+
+```bash
+pytest tests/test_benchmark_loaders.py -v
+```
+
+Expected: all PASS
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add evals/loaders/load_bigbench_hard.py evals/benchmarks/bigbench_hard_100.yaml \
+    tests/test_benchmark_loaders.py
+git commit -m "feat(eval): add BIG-bench Hard loader + 100-task committed subset"
+```
+
+---
+
+## Chunk 3: Loaders with Auth — MT-Bench + GAIA + BASELINES.md
+
+### Task 6: `load_mt_bench.py` + generate `mt_bench_80.yaml`
+
+**Files:**
+- Create: `evals/loaders/load_mt_bench.py`
+- Generate: `evals/benchmarks/mt_bench_80.yaml`
+- Test: `tests/test_benchmark_loaders.py` (add tests)
+
+**HuggingFace dataset:** `lm-sys/mt_bench_human_judgments` (Apache 2.0, no auth gate)  
+**Schema:** `question_id` (int), `model` (str), `judge` (str), `user_prompt` (str — the first-turn question), `judgment` (str), `score` (float), `turn` (int)  
+**Extraction:** Filter to `turn == 1`, deduplicate by `question_id`, take `user_prompt` as the question.  
+**Categories:** MT-Bench questions are tagged by ID range: IDs 1-10 = writing, 11-20 = roleplay, 21-30 = reasoning, 31-40 = math, 41-50 = coding, 51-60 = extraction, 61-70 = stem, 71-80 = humanities.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_benchmark_loaders.py`:
+
+```python
+from evals.loaders.load_mt_bench import transform_mt_bench, _category_for_id
+
+
+def test_category_for_id():
+    assert _category_for_id(1) == "writing"
+    assert _category_for_id(10) == "writing"
+    assert _category_for_id(41) == "coding"
+    assert _category_for_id(50) == "coding"
+    assert _category_for_id(80) == "humanities"
+
+
+MOCK_MT_BENCH_JUDGMENTS = [
+    # Two judgments for the same question (different models) — should deduplicate
+    {"question_id": 41, "model": "gpt-4", "turn": 1,
+     "user_prompt": "Implement QuickSort and explain time complexity.", "score": 9.0},
+    {"question_id": 41, "model": "claude-2", "turn": 1,
+     "user_prompt": "Implement QuickSort and explain time complexity.", "score": 8.0},
+    # Turn 2 — should be excluded
+    {"question_id": 41, "model": "gpt-4", "turn": 2,
+     "user_prompt": "Now do it in Java.", "score": 8.0},
+    # Second unique question
+    {"question_id": 42, "model": "gpt-4", "turn": 1,
+     "user_prompt": "Write a Python function to merge two sorted arrays.", "score": 9.5},
+]
+
+
+def test_transform_mt_bench_deduplicates_by_question_id():
+    cases = transform_mt_bench(MOCK_MT_BENCH_JUDGMENTS)
+    assert len(cases) == 2
+
+
+def test_transform_mt_bench_excludes_turn_2():
+    cases = transform_mt_bench(MOCK_MT_BENCH_JUDGMENTS)
+    for case in cases:
+        assert "Now do it in Java" not in case["vars"]["prompt"]
+
+
+def test_transform_mt_bench_case_structure():
+    cases = transform_mt_bench(MOCK_MT_BENCH_JUDGMENTS)
+    case = cases[0]
+    assert "description" in case
+    assert "prompt" in case["vars"]
+    assert case["assert"][0]["type"] == "llm-rubric"
+    assert "threshold" in case["assert"][0]
+    assert case["metadata"]["category"] == "benchmark-mt-bench"
+    assert "subcategory" in case["metadata"]
+
+
+def test_transform_mt_bench_category_assigned():
+    cases = transform_mt_bench(MOCK_MT_BENCH_JUDGMENTS)
+    coding_cases = [c for c in cases if c["metadata"]["subcategory"] == "coding"]
+    assert len(coding_cases) == 2  # Both IDs 41 and 42 are coding
+
+
+def test_transform_mt_bench_rubric_instructs_json_parsing():
+    cases = transform_mt_bench(MOCK_MT_BENCH_JUDGMENTS)
+    rubric = cases[0]["assert"][0]["value"]
+    assert "JSON" in rubric or "text" in rubric.lower()
+    assert "integer" in rubric.lower() or "number" in rubric.lower()
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "mt_bench" -v
+```
+
+Expected: `ImportError`
+
+- [ ] **Step 3: Implement `evals/loaders/load_mt_bench.py`**
+
+```python
+# evals/loaders/load_mt_bench.py
+"""Loader: lm-sys/mt_bench_human_judgments → promptfoo YAML test cases.
+
+Extracts first-turn questions from the human judgments dataset.
+Full 80 questions, all categories, no sampling.
+
+Usage:
+    pip install datasets pyyaml
+    python evals/loaders/load_mt_bench.py --output evals/benchmarks/mt_bench_80.yaml
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from evals.loaders.common import write_yaml_with_header
+
+# MT-Bench category boundaries (question_id ranges, 1-indexed)
+_CATEGORIES = [
+    (1, 10, "writing"),
+    (11, 20, "roleplay"),
+    (21, 30, "reasoning"),
+    (31, 40, "math"),
+    (41, 50, "coding"),
+    (51, 60, "extraction"),
+    (61, 70, "stem"),
+    (71, 80, "humanities"),
+]
+
+_RUBRIC_TEMPLATE = """\
+The output is a JSON string with a "text" field containing the agent's response.
+Extract the "text" field and score the response from 1 to 10.
+
+Scoring criteria:
+- 9-10: Fully addresses the task, accurate, well-structured, no significant errors
+- 7-8: Addresses the task with minor gaps or imprecisions
+- 5-6: Partially addresses the task with notable omissions or errors
+- 1-4: Fails to address the task, significantly wrong, or refuses without reason
+
+Respond with only a single integer."""
+
+
+def _category_for_id(question_id: int) -> str:
+    """Return the MT-Bench category name for a given question ID."""
+    for lo, hi, name in _CATEGORIES:
+        if lo <= question_id <= hi:
+            return name
+    return "other"
+
+
+def transform_mt_bench(records: list[dict]) -> list[dict]:
+    """Extract unique first-turn questions and convert to promptfoo test cases."""
+    # Keep only turn=1, deduplicate by question_id (take first occurrence)
+    seen: set[int] = set()
+    unique: list[dict] = []
+    for record in records:
+        if record.get("turn") != 1:
+            continue
+        qid = record["question_id"]
+        if qid not in seen:
+            seen.add(qid)
+            unique.append(record)
+
+    # Sort by question_id for stable output
+    unique.sort(key=lambda r: r["question_id"])
+
+    cases = []
+    for record in unique:
+        qid = record["question_id"]
+        category = _category_for_id(qid)
+        cases.append({
+            "description": f"MT-Bench #{qid} ({category})",
+            "vars": {
+                "prompt": record["user_prompt"],
+            },
+            "assert": [{
+                "type": "llm-rubric",
+                "metric": "mt_bench_score",
+                "value": _RUBRIC_TEMPLATE,
+                "threshold": 7,
+            }],
+            "metadata": {
+                "category": "benchmark-mt-bench",
+                "subcategory": category,
+                "question_id": qid,
+            },
+        })
+    return cases
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Load MT-Bench questions")
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    from datasets import load_dataset
+
+    dataset = load_dataset("lm-sys/mt_bench_human_judgments", split="human")
+    revision = str(getattr(dataset.info, "version", "unknown"))
+    records = list(dataset)
+
+    cases = transform_mt_bench(records)
+    print(f"Extracted {len(cases)} unique first-turn questions")
+
+    command = f"python evals/loaders/load_mt_bench.py --output {args.output}"
+    write_yaml_with_header(
+        cases=cases,
+        output_path=args.output,
+        command=command,
+        dataset_id="lm-sys/mt_bench_human_judgments",
+        dataset_revision=revision,
+    )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "mt_bench" -v
+```
+
+Expected: all PASS
+
+- [ ] **Step 5: Generate `mt_bench_80.yaml`**
+
+```bash
+python evals/loaders/load_mt_bench.py --output evals/benchmarks/mt_bench_80.yaml
+```
+
+Expected: `Extracted 80 unique first-turn questions` then `Wrote 80 tasks to ...`
+
+If the dataset has fewer or more than 80 unique questions (schema may vary), check the actual count in the header comment. The plan covers the 80-question canonical set; if the HF dataset structure differs, inspect with:
+
+```bash
+python3 -c "
+from datasets import load_dataset
+ds = load_dataset('lm-sys/mt_bench_human_judgments', split='human')
+print(ds.features)
+print(ds[0])
+"
+```
+
+Adjust `transform_mt_bench` if column names differ from `question_id` / `user_prompt` / `turn`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add evals/loaders/load_mt_bench.py evals/benchmarks/mt_bench_80.yaml \
+    tests/test_benchmark_loaders.py
+git commit -m "feat(eval): add MT-Bench loader + 80-task committed subset"
+```
+
+---
+
+### Task 7: `load_gaia.py` + generate `gaia_level1_30.yaml`
+
+**Files:**
+- Create: `evals/loaders/load_gaia.py`
+- Generate: `evals/benchmarks/gaia_level1_30.yaml`
+- Test: `tests/test_benchmark_loaders.py` (add tests)
+
+**HuggingFace dataset:** `gaia-benchmark/GAIA` — **requires HF account + dataset access approval**  
+**Pre-requisite:**
+```bash
+huggingface-cli login   # then visit dataset page and accept terms
+```
+**Schema (Level 1):** `Question` (str), `Final answer` (str), `file_name` (str, empty = no attachment), `Annotator Metadata` (dict with `Steps` key)
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_benchmark_loaders.py`:
+
+```python
+from evals.loaders.load_gaia import transform_gaia, _requires_attachment, _requires_web
+
+
+MOCK_GAIA_TASKS = [
+    {
+        "Question": "What is the capital of Switzerland?",
+        "Final answer": "Bern",
+        "file_name": "",
+        "Annotator Metadata": {"Steps": "1. Recall geography"},
+    },
+    {
+        "Question": "Look at this image and describe it.",
+        "Final answer": "A cat",
+        "file_name": "image.png",  # has attachment — should be excluded
+        "Annotator Metadata": {"Steps": "1. View image"},
+    },
+    {
+        "Question": "Search the web for the current price of gold.",
+        "Final answer": "$2000",
+        "file_name": "",
+        "Annotator Metadata": {"Steps": "1. Search online for current gold price"},
+    },
+    {
+        "Question": "How many bones are in the adult human body?",
+        "Final answer": "206",
+        "file_name": "",
+        "Annotator Metadata": {"Steps": "1. Recall anatomy"},
+    },
+]
+
+
+def test_requires_attachment_detects_file():
+    assert _requires_attachment(MOCK_GAIA_TASKS[1]) is True
+    assert _requires_attachment(MOCK_GAIA_TASKS[0]) is False
+
+
+def test_requires_web_detects_search_steps():
+    assert _requires_web(MOCK_GAIA_TASKS[2]) is True
+    assert _requires_web(MOCK_GAIA_TASKS[0]) is False
+
+
+def test_transform_gaia_excludes_attachment_tasks():
+    cases = transform_gaia(MOCK_GAIA_TASKS, sample=10, seed=42,
+                           exclude_attachments=True, exclude_web=False)
+    prompts = [c["vars"]["prompt"] for c in cases]
+    assert "Look at this image" not in prompts
+
+
+def test_transform_gaia_excludes_web_tasks():
+    cases = transform_gaia(MOCK_GAIA_TASKS, sample=10, seed=42,
+                           exclude_attachments=False, exclude_web=True)
+    prompts = [c["vars"]["prompt"] for c in cases]
+    assert "Search the web" not in prompts
+
+
+def test_transform_gaia_case_structure():
+    cases = transform_gaia(MOCK_GAIA_TASKS, sample=2, seed=42,
+                           exclude_attachments=True, exclude_web=True)
+    assert len(cases) == 2
+    case = cases[0]
+    assert "prompt" in case["vars"]
+    assert "expected_answer" in case["vars"]
+    assert case["assert"][0]["type"] == "javascript"
+    assert case["metadata"]["category"] == "benchmark-gaia"
+
+
+def test_transform_gaia_assertion_parses_json():
+    cases = transform_gaia(MOCK_GAIA_TASKS, sample=1, seed=42,
+                           exclude_attachments=True, exclude_web=True)
+    js = cases[0]["assert"][0]["value"]
+    assert "JSON.parse(output)" in js
+
+
+def test_transform_gaia_warns_if_pool_too_small(capsys):
+    # Request more than available after filtering
+    cases = transform_gaia(MOCK_GAIA_TASKS, sample=100, seed=42,
+                           exclude_attachments=True, exclude_web=True)
+    # Should return all available, not crash
+    assert len(cases) <= 4
+    captured = capsys.readouterr()
+    assert "Warning" in captured.out or len(cases) < 100
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "gaia" -v
+```
+
+Expected: `ImportError`
+
+- [ ] **Step 3: Implement `evals/loaders/load_gaia.py`**
+
+```python
+# evals/loaders/load_gaia.py
+"""Loader: gaia-benchmark/GAIA Level 1 → promptfoo YAML test cases.
+
+Requires HuggingFace account + dataset access approval:
+    huggingface-cli login
+    # Then accept terms at https://huggingface.co/datasets/gaia-benchmark/GAIA
+
+Usage:
+    pip install datasets pyyaml
+    python evals/loaders/load_gaia.py --sample 30 --seed 42 \
+        --exclude-attachments --exclude-web \
+        --output evals/benchmarks/gaia_level1_30.yaml
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+
+from evals.loaders.common import write_yaml_with_header
+
+_WEB_KEYWORDS = ("search", "look up", "find online", "google", "web", "browse",
+                 "current price", "latest", "today", "real-time")
+
+_JS_ASSERTION = """\
+const data = JSON.parse(output);
+const text = data.text.toLowerCase();
+const ans = vars.expected_answer.toLowerCase();
+if (text.includes(ans)) return true;
+return { pass: false, reason: `Expected "${vars.expected_answer}" in response` };
+"""
+
+
+def _requires_attachment(task: dict) -> bool:
+    """Return True if the task has a file attachment."""
+    return bool(task.get("file_name", "").strip())
+
+
+def _requires_web(task: dict) -> bool:
+    """Return True if the task's annotated steps suggest web search."""
+    steps = ""
+    metadata = task.get("Annotator Metadata") or {}
+    if isinstance(metadata, dict):
+        steps = str(metadata.get("Steps", "")).lower()
+    question = task.get("Question", "").lower()
+    return any(kw in steps or kw in question for kw in _WEB_KEYWORDS)
+
+
+def transform_gaia(
+    tasks: list[dict],
+    sample: int,
+    seed: int,
+    exclude_attachments: bool,
+    exclude_web: bool,
+) -> list[dict]:
+    """Filter and transform GAIA Level 1 records into promptfoo test cases."""
+    pool = tasks
+    if exclude_attachments:
+        pool = [t for t in pool if not _requires_attachment(t)]
+    if exclude_web:
+        pool = [t for t in pool if not _requires_web(t)]
+
+    if len(pool) < sample:
+        print(f"Warning: only {len(pool)} tasks available after filtering "
+              f"(requested {sample}). Using full pool.")
+
+    rng = random.Random(seed)
+    sampled = rng.sample(pool, min(sample, len(pool)))
+
+    cases = []
+    for i, task in enumerate(sampled):
+        cases.append({
+            "description": f"GAIA L1 #{i}: {task['Question'][:60].rstrip()}",
+            "vars": {
+                "prompt": task["Question"],
+                "expected_answer": task["Final answer"],
+            },
+            "assert": [{"type": "javascript", "value": _JS_ASSERTION}],
+            "metadata": {
+                "category": "benchmark-gaia",
+                "level": 1,
+            },
+        })
+    return cases
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Load GAIA Level 1 subset")
+    parser.add_argument("--sample", type=int, default=30)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--exclude-attachments", action="store_true")
+    parser.add_argument("--exclude-web", action="store_true")
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    from datasets import load_dataset
+
+    # GAIA splits: "validation" contains Level 1, 2, 3 tasks
+    dataset = load_dataset("gaia-benchmark/GAIA", "2023_all", split="validation")
+    revision = str(getattr(dataset.info, "version", "unknown"))
+    tasks = [t for t in dataset if t.get("Level") == 1]
+    print(f"Loaded {len(tasks)} Level 1 tasks")
+
+    cases = transform_gaia(
+        tasks,
+        sample=args.sample,
+        seed=args.seed,
+        exclude_attachments=args.exclude_attachments,
+        exclude_web=args.exclude_web,
+    )
+
+    command = (
+        f"python evals/loaders/load_gaia.py --sample {args.sample} --seed {args.seed}"
+        + (" --exclude-attachments" if args.exclude_attachments else "")
+        + (" --exclude-web" if args.exclude_web else "")
+        + f" --output {args.output}"
+    )
+    write_yaml_with_header(
+        cases=cases,
+        output_path=args.output,
+        command=command,
+        dataset_id="gaia-benchmark/GAIA",
+        dataset_revision=revision,
+    )
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```bash
+pytest tests/test_benchmark_loaders.py -k "gaia" -v
+```
+
+Expected: all PASS
+
+- [ ] **Step 5: Generate `gaia_level1_30.yaml`** (requires HF access)
+
+```bash
+# If not already logged in:
+huggingface-cli login
+
+python evals/loaders/load_gaia.py --sample 30 --seed 42 \
+    --exclude-attachments --exclude-web \
+    --output evals/benchmarks/gaia_level1_30.yaml
+```
+
+Expected: `Loaded ~165 Level 1 tasks`, warning if pool < 30, then `Wrote N tasks to ...`
+
+If HF access is not yet approved, create a placeholder:
+
+```bash
+# Placeholder — replace after access is granted
+cat > evals/benchmarks/gaia_level1_30.yaml << 'EOF'
+# Generated by: python evals/loaders/load_gaia.py --sample 30 --seed 42 --exclude-attachments --exclude-web
+# Dataset: gaia-benchmark/GAIA
+# Dataset revision: pending-access
+# Generated at: 2026-04-01
+# Actual task count: 0
+# NOTE: Replace this file after requesting dataset access at https://huggingface.co/datasets/gaia-benchmark/GAIA
+[]
+EOF
+```
+
+- [ ] **Step 6: Run all loader tests — full suite**
+
+```bash
+pytest tests/test_benchmark_loaders.py -v
+```
+
+Expected: all PASS
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add evals/loaders/load_gaia.py evals/benchmarks/gaia_level1_30.yaml \
+    tests/test_benchmark_loaders.py
+git commit -m "feat(eval): add GAIA loader + level-1 committed subset"
+```
+
+---
+
+### Task 8: Create `evals/benchmarks/BASELINES.md`
+
+**Files:**
+- Create: `evals/benchmarks/BASELINES.md`
+
+- [ ] **Step 1: Create the baseline tracking file**
+
+```markdown
+# Benchmark Baselines
+
+Update this file after each intentional benchmark run (model upgrade, prompt change, etc.).
+A regression is defined as a drop of ≥5 percentage points (or ≥0.5 score points for MT-Bench)
+vs. the most recent committed baseline.
+
+## Baseline History
+
+| Benchmark | Dimension | Pass Rate | Mean Score | Date | Git Commit | Notes |
+|-----------|-----------|-----------|------------|------|------------|-------|
+| (run benchmarks and fill in first row) | | | | | | Initial baseline |
+
+## How to Update
+
+1. Run: `npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml`
+2. Record pass rates from promptfoo dashboard per `category` tag
+3. Add a new row above the previous baseline
+4. Commit: `git add evals/benchmarks/BASELINES.md && git commit -m "chore(eval): update baselines after <reason>"`
+
+## Dimension Reference
+
+| Benchmark | Category Tag | Dimension | Assertion Type |
+|-----------|-------------|-----------|----------------|
+| HumanEval | `benchmark-humaneval` | A — Code correctness | javascript (unit test) |
+| GAIA L1 | `benchmark-gaia` | B — Tool use | javascript (answer match) |
+| MT-Bench | `benchmark-mt-bench` | C — Instruction following | llm-rubric (score ≥7) |
+| GSM8K | `benchmark-gsm8k` | D1 — Arithmetic reasoning | javascript (#### delimiter) |
+| BIG-bench Hard | `benchmark-bigbench-hard` | D2 — Logical reasoning | javascript (Answer: (X)) |
+
+## Initial Thresholds (calibrate after first run)
+
+| Benchmark | Threshold | Regression Signal |
+|-----------|-----------|-------------------|
+| HumanEval | pass@1 ≥ 60% | Drop ≥ 5pp |
+| GAIA L1 | pass@1 ≥ 40% | Drop ≥ 5pp |
+| MT-Bench | mean score ≥ 7.0 | Drop ≥ 0.5 |
+| GSM8K | pass@1 ≥ 75% | Drop ≥ 5pp |
+| BIG-bench Hard | pass@1 ≥ 55% | Drop ≥ 5pp |
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add evals/benchmarks/BASELINES.md
+git commit -m "docs(eval): add BASELINES.md template for regression tracking"
+```
+
+---
+
+## Chunk 4: Smoke Test — Verify the Pipeline End-to-End
+
+### Task 9: Smoke test with a minimal subset
+
+**Goal:** Confirm `promptfooconfig-benchmarks.yaml` correctly loads YAML, the provider runs, and at least one assertion executes without config errors. Do **not** run all 310 tasks — just validate the plumbing.
+
+- [ ] **Step 1: Create a minimal smoke config**
+
+```bash
+cat > /tmp/smoke-benchmarks.yaml << 'EOF'
+description: "Benchmark smoke test"
+providers:
+  - id: python:evals/promptfoo_provider.py
+    label: bourbon-agent
+    config:
+      pythonExecutable: .venv/bin/python
+prompts:
+  - "{{prompt}}"
+defaultTest:
+  provider: python:evals/promptfoo_provider.py
+evaluateOptions:
+  maxConcurrency: 1
+  repeat: 1
+  timeoutMs: 60000
+tests:
+  - description: "Smoke: GSM8K simple"
+    vars:
+      prompt: "What is 2 + 2? End your answer with '#### 4' on its own line."
+      expected_answer: "4"
+    assert:
+      - type: javascript
+        value: |
+          const data = JSON.parse(output);
+          const match = data.text.match(/####\s*(\d+\.?\d*)/);
+          return match ? match[1] === vars.expected_answer : false;
+EOF
+```
+
+- [ ] **Step 2: Run smoke test**
+
+```bash
+npx promptfoo@latest eval --config /tmp/smoke-benchmarks.yaml --no-cache
+```
+
+Expected: 1 test, should PASS. If it fails, check that `promptfoo_provider.py` returns JSON with `text` field.
+
+- [ ] **Step 3: Run one real benchmark dimension (GSM8K only, repeat:1)**
+
+```bash
+npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml \
+    --filter-pattern "benchmark-gsm8k" \
+    --no-cache \
+    2>&1 | head -30
+```
+
+Expected: starts running tasks, no config/import errors.
+
+- [ ] **Step 4: Verify promptfoo dashboard shows category tags**
+
+```bash
+npx promptfoo@latest view
+```
+
+Navigate to the benchmark run. Confirm `benchmark-gsm8k` appears as a filterable tag.
+
+- [ ] **Step 5: Commit final state**
+
+```bash
+git add -A
+git status  # should be clean or only untracked results/
+git commit -m "feat(eval): complete community benchmark integration" \
+    --allow-empty-message 2>/dev/null || \
+git commit -m "chore(eval): verify smoke test passes, all loaders committed"
+```
+
+---
+
+## Quick Reference
+
+```bash
+# Run all benchmarks
+npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml
+
+# Run one dimension
+npx promptfoo@latest eval --config promptfooconfig-benchmarks.yaml \
+    --filter-pattern "benchmark-mt-bench"
+
+# Run all loader tests
+pytest tests/test_benchmark_loaders.py -v
+
+# Refresh a subset (after pip install datasets pyyaml)
+python evals/loaders/load_gsm8k.py --sample 50 --seed 42 \
+    --stratify-by-steps --output evals/benchmarks/gsm8k_50.yaml
+```
