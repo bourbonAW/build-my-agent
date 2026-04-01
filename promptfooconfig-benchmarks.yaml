@@ -1,0 +1,25 @@
+description: "Bourbon Agent — Community Benchmark Evaluation"
+
+providers:
+  - id: python:evals/promptfoo_provider.py
+    label: bourbon-agent
+    config:
+      pythonExecutable: .venv/bin/python
+
+prompts:
+  - "{{prompt}}"
+
+defaultTest:
+  provider: python:evals/promptfoo_provider.py
+
+evaluateOptions:
+  maxConcurrency: 1
+  repeat: 3
+  timeoutMs: 180000
+
+tests:
+  - file://evals/benchmarks/humaneval_50.yaml
+  - file://evals/benchmarks/gaia_level1_30.yaml
+  - file://evals/benchmarks/mt_bench_80.yaml
+  - file://evals/benchmarks/gsm8k_50.yaml
+  - file://evals/benchmarks/bigbench_hard_100.yaml

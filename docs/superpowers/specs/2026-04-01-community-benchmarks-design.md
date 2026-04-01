@@ -6,6 +6,14 @@
 
 ---
 
+## Open TODOs
+
+- [ ] **GAIA access gate:** Authenticate with HuggingFace, request access to `gaia-benchmark/GAIA`, run `evals/loaders/load_gaia.py`, replace the committed 0-task placeholder `evals/benchmarks/gaia_level1_30.yaml`, and re-run the hard gate check. Until this is done, Dimension B is not active and the integration is not complete.
+- [ ] **Promptfoo javascript assertion compatibility:** Debug `promptfoo@latest` javascript assertion behavior against Bourbon's Python provider output. Current smoke verification reaches the provider and gets the expected JSON payload, but the javascript assertion still fails unexpectedly. Resolve this by either updating the assertion contract to match the current promptfoo runtime or pinning a known-good promptfoo version.
+- [ ] **Post-fix pipeline verification:** After the GAIA and promptfoo assertion issues are resolved, re-run the smoke eval, run at least one real benchmark dimension end-to-end, and update `evals/benchmarks/BASELINES.md` with the first real baseline.
+
+---
+
 ## Problem Statement
 
 Current eval cases are white-box tests — they test Bourbon's own skills and infrastructure (sandbox, file-ops, investment-agent skill). They cannot detect regressions in general agent capabilities caused by model changes, prompt changes, or architectural changes. We need an external golden set that covers general capabilities orthogonally.
