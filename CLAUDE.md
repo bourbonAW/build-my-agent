@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Language
+
+Think and search in English, respond in Chinese.
+
 ## Commands
 
 ```bash
