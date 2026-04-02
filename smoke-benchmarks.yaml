@@ -1,0 +1,28 @@
+description: "Benchmark smoke test"
+providers:
+  - id: python:evals/promptfoo_provider.py
+    label: bourbon-agent
+    config:
+      pythonExecutable: .venv/bin/python
+prompts:
+  - "{{prompt}}"
+defaultTest:
+  provider: python:evals/promptfoo_provider.py
+evaluateOptions:
+  maxConcurrency: 1
+  repeat: 1
+  timeoutMs: 60000
+tests:
+  - description: "Smoke: boolean return + context.vars"
+    vars:
+      prompt: "What is 2 + 2? End your answer with '#### 4' on its own line."
+      expected_answer: "4"
+    assert:
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          const data = typeof parsed.output === 'string' ? JSON.parse(parsed.output) : parsed;
+          const match = data.text.match(/####\s*(\d+\.?\d*)/);
+          const extracted = match ? match[1] : null;
+          if (extracted === null) return false;
+          return extracted === String(context.vars.expected_answer);

@@ -21,8 +21,8 @@ const parsed = JSON.parse(output);
 const data = typeof parsed.output === 'string' ? JSON.parse(parsed.output) : parsed;
 const match = data.text.match(/####\\s*(\\d+\\.?\\d*)/);
 const extracted = match ? match[1] : null;
-if (extracted === null) return { pass: false, reason: 'no #### delimiter found in response' };
-return extracted === String(vars.expected_answer);
+if (extracted === null) return false;
+return extracted === String(context.vars.expected_answer);
 """
 
 

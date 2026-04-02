@@ -34,9 +34,8 @@ _JS_ASSERTION = """\
 const parsed = JSON.parse(output);
 const data = typeof parsed.output === 'string' ? JSON.parse(parsed.output) : parsed;
 const text = data.text.toLowerCase();
-const ans = vars.expected_answer.toLowerCase();
-if (text.includes(ans)) return true;
-return { pass: false, reason: `Expected "${vars.expected_answer}" in response` };
+const ans = context.vars.expected_answer.toLowerCase();
+return text.includes(ans);
 """
 
 

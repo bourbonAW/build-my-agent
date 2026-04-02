@@ -34,8 +34,8 @@ _JS_ASSERTION = """\
 const parsed = JSON.parse(output);
 const data = typeof parsed.output === 'string' ? JSON.parse(parsed.output) : parsed;
 const match = data.text.match(/^Answer:\\s*(\\([A-Z]\\))\\s*$/m);
-if (!match) return { pass: false, reason: 'no "Answer: (X)" line found in response' };
-return match[1] === vars.expected_option;
+if (!match) return false;
+return match[1] === context.vars.expected_option;
 """
 
 

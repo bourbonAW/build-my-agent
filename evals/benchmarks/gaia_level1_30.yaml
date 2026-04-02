@@ -34,12 +34,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -60,12 +57,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -121,12 +115,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -161,12 +152,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -197,12 +185,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -239,12 +224,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -266,12 +248,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -291,12 +270,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -329,12 +305,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -370,12 +343,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -397,12 +367,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -442,12 +409,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -475,12 +439,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -508,12 +469,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
@@ -557,12 +515,9 @@
 
       const text = data.text.toLowerCase();
 
-      const ans = vars.expected_answer.toLowerCase();
+      const ans = context.vars.expected_answer.toLowerCase();
 
-      if (text.includes(ans)) return true;
-
-      return { pass: false, reason: `Expected "${vars.expected_answer}" in response`
-      };
+      return text.includes(ans);
 
       '
   metadata:
