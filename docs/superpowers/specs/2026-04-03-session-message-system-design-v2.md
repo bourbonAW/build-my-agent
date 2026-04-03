@@ -1,7 +1,13 @@
 # Bourbon Session & Message System Redesign (v2 - 修正版)
 
-> **Status:** REVISED after code review  
-> **Changes from v1:** Fixed logical_parent_uuid semantics, unified persistence model, completed tool round recovery
+> **Status:** READY TO IMPLEMENT  
+> **Changes from v1:** Fixed logical_parent_uuid semantics, unified persistence model, grouped tool results  
+> **Post-review-1:** to_llm_format() dispatch, CompactMetadata ordering, ThinkingBlock exclusion note  
+> **Post-review-2:** compact manifest (F1), grouped tool results (F2), simplified recovery (F3), updated success criteria (F4)  
+> **Post-review-3:** spec/plan synced — compact() trigger+overrides, TranscriptStore manifest, Session add_message, usage before add (F5a), session_id override (F5b)  
+> **Post-review-4:** source_tool_uuid constraint (F1), doc cleanup (F2)  
+> **Post-review-5:** removed _recover_tool_results (impossible crash state), compact manifest round-trip test  
+> **Post-review-6:** rebuild_from_transcript applies overrides by mutating msg.parent_uuid before traversal (not effective_parents dict)
 
 ---
 
@@ -46,12 +52,12 @@ current_uuid = message.parent_uuid  # 唯一回溯边
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 3. Tool Round 完整实现
+### 3. Tool Round 设计
 
-参考 Claude Code 的设计：
-- `source_tool_uuid`: tool_result → 生成它的 assistant message
-- `parent_uuid` chain: 用于构建 active conversation
-- `recover_orphaned_parallel_tool_results`: 恢复并行的 tool results
+- `source_tool_uuid`: tool_result message → 生成它的 assistant message（用于精确定位）
+- `parent_uuid` chain: 唯一用于构建 active conversation 的边
+- grouped tool results: 一轮所有 tool results 存入单条 `TranscriptMessage`（Anthropic 协议要求）
+- crash recovery: 不需要额外恢复逻辑。`add_message()` 先 `chain.append()` 再 `append_to_transcript()`，因此不存在"在 transcript 但 parent_uuid=None"的状态（post-review-5 结论）
 
 ---
 
@@ -59,6 +65,8 @@ current_uuid = message.parent_uuid  # 唯一回溯边
 
 ```python
 # src/bourbon/session/types.py
+
+from __future__ import annotations  # 允许前向引用（TranscriptMessage 引用 CompactMetadata）
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -111,6 +119,24 @@ class ToolResultBlock:
 
 MessageContent = TextBlock | ToolUseBlock | ToolResultBlock
 
+# M2 note: ThinkingBlock（Claude extended thinking）被有意排除在本期交付之外。
+# 理由：Bourbon 目前不使用 extended thinking，本期优先保证 core session 稳定性。
+# 如果未来需要支持，需在 MessageContent union 中新增 ThinkingBlock(thinking: str, signature: str | None)，
+# 这将是一个非破坏性的类型扩展（添加新的 union 成员），不影响现有消息的序列化。
+
+
+@dataclass
+class CompactMetadata:
+    trigger: CompactTrigger
+    # 注：字段名含 token 但当前存的是消息数量（message count），
+    # 后续可改为从 TokenTracker 获取实际 token 数
+    pre_compact_token_count: int
+    post_compact_token_count: int
+    first_archived_uuid: UUID
+    last_archived_uuid: UUID
+    summary: str
+    archived_at: datetime = field(default_factory=datetime.now)
+
 
 @dataclass
 class TranscriptMessage:
@@ -145,17 +171,33 @@ class TranscriptMessage:
     # Compact Boundary
     is_compact_boundary: bool = False
     compact_metadata: CompactMetadata | None = None
-
-
-@dataclass
-class CompactMetadata:
-    trigger: CompactTrigger
-    pre_compact_token_count: int
-    post_compact_token_count: int
-    first_archived_uuid: UUID
-    last_archived_uuid: UUID
-    summary: str
-    archived_at: datetime = field(default_factory=datetime.now)
+    
+    def to_llm_format(self) -> dict:
+        """
+        转换为 LLM API 格式（Anthropic messages format）
+        
+        C3 fix: 使用显式 isinstance dispatch，避免 block.__dict__ 
+        对 ToolUseBlock.input 等字段的序列化歧义。
+        """
+        content_list = []
+        for block in self.content:
+            block_dict = {"type": block.type}
+            if isinstance(block, TextBlock):
+                block_dict["text"] = block.text
+            elif isinstance(block, ToolUseBlock):
+                block_dict["id"] = block.id
+                block_dict["name"] = block.name
+                block_dict["input"] = block.input
+            elif isinstance(block, ToolResultBlock):
+                block_dict["tool_use_id"] = block.tool_use_id
+                block_dict["content"] = block.content
+                block_dict["is_error"] = block.is_error
+            content_list.append(block_dict)
+        
+        return {
+            "role": self.role.value,
+            "content": content_list,
+        }
 
 
 @dataclass
@@ -274,17 +316,18 @@ class MessageChain:
         
         return llm_messages
     
-    def compact(self, preserve_count: int = 3, summary: str = "") -> CompactResult:
+    def compact(
+        self,
+        preserve_count: int = 3,
+        summary: str = "",
+        trigger: CompactTrigger = CompactTrigger.AUTO_THRESHOLD,
+    ) -> CompactResult:
         """
         Compact Active Chain
         
-        操作：
-        1. 保留最近 preserve_count 条消息
-        2. 从内存链中删除旧消息（transcript 中仍保留）
-        3. 创建 compact_boundary 消息
-        4. 更新 parent_uuid（不是 logical_parent_uuid！）
-        
-        注意：旧消息从内存删除，但已经在 transcript 中持久化
+        Finding 1 fix: 返回 CompactResult.parent_uuid_overrides，
+        调用方（Session.maybe_compact）必须将其持久化到 compact manifest 文件，
+        否则重启后 rebuild_from_transcript 会用旧 parent_uuid 重走已归档路径。
         """
         chain = self.build_active_chain()
         if len(chain) <= preserve_count:
@@ -303,7 +346,7 @@ class MessageChain:
             content=[TextBlock(text=f"[Context compressed: {summary}]")],
             is_compact_boundary=True,
             compact_metadata=CompactMetadata(
-                trigger=CompactTrigger.AUTO_THRESHOLD,
+                trigger=trigger,
                 pre_compact_token_count=len(to_archive),
                 post_compact_token_count=len(to_preserve),
                 first_archived_uuid=first_archived.uuid,
@@ -329,11 +372,20 @@ class MessageChain:
         if not first_preserved.logical_parent_uuid:
             first_preserved.logical_parent_uuid = last_archived.uuid
         
+        self._leaf_uuid = to_preserve[-1].uuid
+        self._root_uuid = boundary.uuid
+        
+        # Finding 1: 返回 overrides，调用方必须持久化到 compact manifest
+        parent_uuid_overrides = {
+            str(boundary.uuid): None,
+            str(first_preserved.uuid): str(boundary.uuid),
+        }
         return CompactResult(
             success=True,
             archived_count=len(to_archive),
             preserved_count=len(to_preserve),
             boundary_uuid=boundary.uuid,
+            parent_uuid_overrides=parent_uuid_overrides,
         )
     
     def clear(self) -> None:
@@ -350,18 +402,20 @@ class MessageChain:
         self,
         transcript: list[TranscriptMessage],
         resume_from: UUID | None = None,
+        parent_uuid_overrides: dict[str, str | None] | None = None,
     ) -> None:
         """
-        从 transcript 重建 active chain
+        从 transcript 重建 active chain。
         
-        用于：
-        1. 初始加载：从完整 transcript 构建
-        2. 恢复会话：从特定点重建
+        Finding 1 fix: 在遍历前 apply compact manifest 中的 parent_uuid overrides，
+        保证重启后链结构与 compact 后内存状态一致。
+        调用方应通过 TranscriptStore.load_compact_manifest() 加载 overrides。
         
-        算法：
-        1. 如果 resume_from 为 None，找到最新的非 compact_boundary 叶子
-        2. 从该叶子使用 parent_uuid 回溯构建链
-        3. 处理 tool_use/tool_result 配对
+        Crash recovery 说明（post-review-4 后不再需要 _recover_tool_results）：
+        Session.add_message() 先 chain.append() 再 append_to_transcript()。
+        因此：crash 在 persist 前 → msg 不在 transcript，不可恢复；
+              crash 在 persist 后 → msg 有正确 parent_uuid，正常遍历能找到。
+        不存在"在 transcript 但 parent_uuid=None"的状态，无需额外 recovery。
         """
         self.clear()
         
@@ -370,6 +424,20 @@ class MessageChain:
         
         # 构建 UUID -> Message 映射
         msg_map = {msg.uuid: msg for msg in transcript}
+        
+        # Finding 1 fix: 在遍历前直接修改 msg.parent_uuid，使 _messages 中的消息
+        # 带有正确的指针——这是必须的，因为 build_active_chain() 只认 msg.parent_uuid，
+        # 而不会感知任何外部覆盖表。磁盘加载的消息对象可以安全修改。
+        if parent_uuid_overrides:
+            for uuid_str, new_parent_str in parent_uuid_overrides.items():
+                try:
+                    msg_uuid = UUID(uuid_str)
+                    if msg_uuid in msg_map:
+                        msg_map[msg_uuid].parent_uuid = (
+                            UUID(new_parent_str) if new_parent_str else None
+                        )
+                except ValueError:
+                    pass  # 忽略格式错误的 UUID
         
         # 找到 resume point
         if resume_from is None:
@@ -382,7 +450,7 @@ class MessageChain:
         if resume_from is None or resume_from not in msg_map:
             return
         
-        # 从 resume point 回溯构建链
+        # 从 resume point 回溯构建链（直接使用 msg.parent_uuid，overrides 已预先应用）
         chain: list[TranscriptMessage] = []
         seen: set[UUID] = set()
         current_uuid = resume_from
@@ -404,57 +472,11 @@ class MessageChain:
             self._root_uuid = chain[0].uuid
             self._leaf_uuid = chain[-1].uuid
         
-        # 恢复 orphaned parallel tool results
-        self._recover_tool_results(msg_map, seen)
-    
-    def _recover_tool_results(
-        self,
-        msg_map: dict[UUID, TranscriptMessage],
-        active_uuids: set[UUID],
-    ) -> None:
-        """
-        恢复孤立的并行 tool results
-        
-        场景：一轮中有多个 tool_use，某些 tool_result 的 parent
-        可能不在当前 active chain 中（由于 compact）
-        """
-        # 找到所有 active assistant 消息中的 tool_use
-        tool_use_ids: set[str] = set()
-        for uuid in active_uuids:
-            msg = msg_map.get(uuid)
-            if msg and msg.role == MessageRole.ASSISTANT:
-                for block in msg.content:
-                    if isinstance(block, ToolUseBlock):
-                        tool_use_ids.add(block.id)
-        
-        # 找到所有已解决的 tool_result
-        resolved_ids: set[str] = set()
-        for uuid in active_uuids:
-            msg = msg_map.get(uuid)
-            if msg and msg.role == MessageRole.USER:
-                for block in msg.content:
-                    if isinstance(block, ToolResultBlock):
-                        resolved_ids.add(block.tool_use_id)
-        
-        # 找到未解决的 tool_use，从 transcript 恢复对应的 tool_result
-        unresolved = tool_use_ids - resolved_ids
-        for tool_id in unresolved:
-            # 在 transcript 中查找对应的 tool_result
-            for msg in msg_map.values():
-                if msg.role == MessageRole.USER:
-                    for block in msg.content:
-                        if isinstance(block, ToolResultBlock) and block.tool_use_id == tool_id:
-                            # 恢复这个 tool_result 到 active chain
-                            if msg.uuid not in self._messages:
-                                self._messages[msg.uuid] = msg
-                                # 设置 parent 指向 source assistant
-                                for assistant_uuid in active_uuids:
-                                    assistant_msg = msg_map.get(assistant_uuid)
-                                    if assistant_msg and assistant_msg.role == MessageRole.ASSISTANT:
-                                        for a_block in assistant_msg.content:
-                                            if isinstance(a_block, ToolUseBlock) and a_block.id == tool_id:
-                                                msg.parent_uuid = assistant_uuid
-                                                break
+        # _recover_tool_results 已移除（post-review-4）。
+        # crash 场景分析：Session.add_message() 先 chain.append() 再 append_to_transcript()。
+        #   - crash 在 persist 前：msg 不在 transcript，不可恢复，用户需重新触发本轮
+        #   - crash 在 persist 后：msg 在 transcript 且有正确 parent_uuid，正常遍历即可
+        # 不存在"在 transcript 但 parent_uuid=None"的状态，无需额外 recovery 逻辑。
 
 
 @dataclass
@@ -464,11 +486,14 @@ class CompactResult:
     preserved_count: int = 0
     boundary_uuid: UUID | None = None
     reason: str = ""
+    # Finding 1 fix: compact 修改了内存中的 parent_uuid，调用方必须持久化这些变更
+    # key: str(uuid), value: str(new_parent_uuid) | None
+    parent_uuid_overrides: dict[str, str | None] = field(default_factory=dict)
 ```
 
 ---
 
-## TranscriptStore (v2 - 两层模型)
+## TranscriptStore (v2 - 两层模型 + compact manifest)
 
 ```python
 # src/bourbon/session/storage.py
@@ -482,16 +507,19 @@ from .types import TranscriptMessage, SessionMetadata, SessionSummary
 
 class TranscriptStore:
     """
-    Two-Layer Persistence:
+    持久化层设计：
     
-    Layer 1 - Transcript (Append-Only):
-    - 完整记录所有消息历史
-    - JSONL 格式，只追加
-    - 用于审计、回放
+    Layer 1 - Transcript (Append-Only, JSONL):
+    - 完整记录所有消息历史，永不修改
+    - 用于审计、回放、重建
     
-    Layer 2 - Active State (Snapshot):
-    - 可选：保存当前活跃链的快照
-    - 用于快速恢复（不遍历完整 transcript）
+    Layer 2 - Compact Manifest (Overwriteable JSON):
+    - Finding 1 fix: compact 修改内存中的 parent_uuid，但 transcript 是 append-only
+    - 用一个独立的可覆写文件记录最近一次 compact 的 parent_uuid 变更
+    - rebuild_from_transcript 先 apply 这些变更，再遍历，确保重启后链结构正确
+    
+    Layer 3 - Session Metadata (Overwriteable JSON):
+    - 会话级元数据（count、tokens、last_activity 等）
     """
     
     def __init__(self, base_dir: Path):
@@ -616,6 +644,34 @@ class TranscriptStore:
         sessions.sort(key=lambda s: s.last_activity, reverse=True)
         return sessions
     
+    # === Layer 2: Compact Manifest (Overwriteable) ===
+    
+    def save_compact_manifest(
+        self,
+        project_name: str,
+        session_id: UUID,
+        overrides: dict[str, str | None],
+    ) -> None:
+        """持久化 compact 后的 parent_uuid 变更（Finding 1 fix）。每次 compact 覆盖前一次。"""
+        path = self.base_dir / project_name / f"{session_id}.compact.json"
+        with open(path, "w") as f:
+            json.dump({"overrides": overrides}, f, indent=2)
+    
+    def load_compact_manifest(
+        self,
+        project_name: str,
+        session_id: UUID,
+    ) -> dict[str, str | None]:
+        """加载 compact manifest，不存在则返回空 dict。"""
+        path = self.base_dir / project_name / f"{session_id}.compact.json"
+        if not path.exists():
+            return {}
+        try:
+            with open(path) as f:
+                return json.load(f).get("overrides", {})
+        except (json.JSONDecodeError, KeyError):
+            return {}
+    
     def _get_transcript_path(self, project_name: str, session_id: UUID) -> Path:
         project_dir = self.base_dir / project_name
         project_dir.mkdir(parents=True, exist_ok=True)
@@ -624,6 +680,47 @@ class TranscriptStore:
     def _get_meta_path(self, project_name: str, session_id: UUID) -> Path:
         project_dir = self.base_dir / project_name
         return project_dir / f"{session_id}.meta.json"
+```
+
+---
+
+## Session (SessionManager 核心)
+
+```python
+class Session:
+    def add_message(self, message: TranscriptMessage) -> None:
+        # Finding 5b fix: 覆写 session_id，防止默认 uuid4() 导致漂移
+        message.session_id = self.metadata.uuid
+        self.chain.append(message)
+        self.store.append_to_transcript(self.project_name, self.metadata.uuid, [message])
+    
+    def maybe_compact(
+        self,
+        trigger: CompactTrigger = CompactTrigger.AUTO_THRESHOLD,
+    ) -> CompactResult | None:
+        if trigger == CompactTrigger.AUTO_THRESHOLD and not self.context_manager.should_compact():
+            return None
+        result = self.chain.compact(
+            preserve_count=self.config.compact_preserve_count,
+            summary=self.context_manager.generate_summary(),
+            trigger=trigger,
+        )
+        if result.success:
+            self.store.append_to_transcript(
+                self.project_name, self.metadata.uuid,
+                [self.chain.get(result.boundary_uuid)],
+            )
+            self.store.save_compact_manifest(
+                self.project_name, self.metadata.uuid,
+                result.parent_uuid_overrides,
+            )
+            self.save()
+        return result
+    
+    def load_and_rebuild(self) -> None:
+        transcript = self.store.load_transcript(self.project_name, self.metadata.uuid)
+        overrides = self.store.load_compact_manifest(self.project_name, self.metadata.uuid)
+        self.chain.rebuild_from_transcript(transcript, parent_uuid_overrides=overrides)
 ```
 
 ---
@@ -676,8 +773,15 @@ class Agent:
             # 调用 LLM
             response = self.llm.chat(messages=messages, ...)
             
-            # 转换并添加到 Session
+            # Finding 5a fix: 先提取 usage，写入 assistant_msg，再 add_message
+            # 否则 transcript 记录不含 usage（append-only，写入后无法追加更新）
+            usage_data = response.get("usage", {})
             assistant_msg = self._convert_response_to_message(response)
+            if usage_data:
+                assistant_msg.usage = TokenUsage(
+                    input_tokens=usage_data.get("input_tokens", 0),
+                    output_tokens=usage_data.get("output_tokens", 0),
+                )
             self.session.add_message(assistant_msg)
             self.session.save()
             
@@ -685,11 +789,12 @@ class Agent:
             if has_tool_calls:
                 tool_results = self._execute_tools(tool_use_blocks)
                 
-                # 添加 tool results 到 Session
-                for result in tool_results:
-                    tool_msg = self._convert_tool_result_to_message(result)
-                    self.session.add_message(tool_msg)
-                
+                # Finding 2 fix: 所有 tool results 合并到单条 TranscriptMessage
+                # Anthropic 协议要求一轮的所有 tool_result 在同一个 user message 中
+                tool_turn_msg = self._convert_tool_results_to_transcript_message(
+                    tool_results, assistant_msg.uuid
+                )
+                self.session.add_message(tool_turn_msg)
                 self.session.save()
             else:
                 return extract_text(response)
@@ -752,7 +857,9 @@ class Agent:
 - [ ] Compact 从内存链删除消息，transcript 保留完整历史
 - [ ] Clear 重建空内存链，transcript 不受影响
 - [ ] Tool result 的 parent 指向 source assistant message
-- [ ] 恢复时正确处理 orphaned parallel tool results
+- [ ] 同一轮的所有 tool results 存储在单条 TranscriptMessage 中（Finding 2）
+- [ ] Compact 的 parent_uuid 变更通过 manifest 持久化，重启后 rebuild 正确恢复（Finding 1）
+- [ ] Compact manifest round-trip：compact → save_compact_manifest → rebuild_from_transcript(overrides) 后链结构正确（Finding 1 核心验证）
 - [ ] 所有现有代码路径使用新的 Session API（不使用 `self.messages.append`）
 - [ ] 单元测试覆盖核心逻辑
 - [ ] 集成测试验证持久化和恢复
