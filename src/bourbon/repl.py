@@ -177,7 +177,7 @@ class REPL:
 
         try:
             tokens = self.agent.get_session_tokens()
-            threshold = self.agent.compressor.token_threshold
+            threshold = self.agent.session.context_manager.token_threshold
 
             # Calculate percentage
             percent = min(100.0, (tokens / threshold * 100) if threshold > 0 else 0)
@@ -460,8 +460,14 @@ class REPL:
             return True
 
         elif cmd == "/compact":
-            self.agent._manual_compact()
-            self.console.print("[dim]Context compressed.[/dim]")
+            from bourbon.session.types import CompactTrigger
+            result = self.agent.session.maybe_compact(trigger=CompactTrigger.MANUAL)
+            if result and result.success:
+                self.console.print(
+                    f"[dim]Context compressed: {result.archived_count} messages archived.[/dim]"
+                )
+            else:
+                self.console.print("[dim]Context compressed.[/dim]")
 
         elif cmd == "/tasks":
             todos = self.agent.get_todos()
@@ -501,12 +507,17 @@ class REPL:
             skill_name: Name of skill to activate
         """
         try:
+            from bourbon.session.types import MessageRole, TextBlock, TranscriptMessage
+
             content = self.agent.skills.activate(skill_name)
             self.console.print(f"[green]✓ Skill '{skill_name}' activated[/green]")
-            # Add to conversation context
-            self.agent.messages.append(
-                {"role": "user", "content": f"[User activated skill: {skill_name}]\n\n{content}"}
-            )
+            # Add to conversation context via Session
+            self.agent.session.add_message(TranscriptMessage(
+                role=MessageRole.USER,
+                content=[TextBlock(
+                    text=f"[User activated skill: {skill_name}]\n\n{content}"
+                )],
+            ))
             self.console.print("[dim]Skill instructions loaded into context.[/dim]")
         except Exception as e:
             self.console.print(f"[red]Error activating skill: {e}[/red]")

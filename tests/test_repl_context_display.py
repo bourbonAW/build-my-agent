@@ -10,7 +10,9 @@ def _make_repl_with_tokens(tokens: int, threshold: int, show_token_count: bool =
     repl = object.__new__(REPL)
     repl.agent = MagicMock()
     repl.agent.get_session_tokens.return_value = tokens
+    # Support both old (compressor) and new (session.context_manager) threshold paths
     repl.agent.compressor.token_threshold = threshold
+    repl.agent.session.context_manager.token_threshold = threshold
     repl.config = MagicMock()
     repl.config.ui.show_token_count = show_token_count
     return repl

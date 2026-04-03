@@ -1,9 +1,11 @@
 """Core agent loop for Bourbon."""
 
 import time
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import UUID
 
 from bourbon.access_control import AccessController
 from bourbon.access_control.policy import PolicyAction
@@ -15,6 +17,17 @@ from bourbon.debug import debug_log
 from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
 from bourbon.sandbox import SandboxManager
+from bourbon.session.manager import Session, SessionManager
+from bourbon.session.storage import TranscriptStore
+from bourbon.session.types import (
+    CompactTrigger,
+    MessageRole,
+    TextBlock,
+    TokenUsage,
+    ToolResultBlock,
+    ToolUseBlock,
+    TranscriptMessage,
+)
 from bourbon.skills import SkillManager
 from bourbon.todos import TodoManager
 from bourbon.tools import (
@@ -52,8 +65,20 @@ class Agent:
         on_tool_start: Callable[[str, dict], None] | None = None,
         on_tool_end: Callable[[str, str], None] | None = None,
         system_prompt: str | None = None,
+        session_id: UUID | None = None,
+        resume_last: bool = False,
     ):
-        """Initialize agent."""
+        """Initialize agent.
+
+        Args:
+            config: Bourbon configuration
+            workdir: Working directory
+            on_tool_start: Callback when a tool starts
+            on_tool_end: Callback when a tool ends
+            system_prompt: Custom system prompt
+            session_id: Specific session ID to resume
+            resume_last: Resume the most recent session
+        """
         self.config = config
         self.workdir = workdir or Path.cwd()
         self.on_tool_start = on_tool_start
@@ -83,8 +108,29 @@ class Agent:
         self._custom_system_prompt = system_prompt
         self.system_prompt = system_prompt or self._build_system_prompt()
 
-        # Message history
-        self.messages: list[dict] = []
+        # Initialize Session system
+        session_dir = Path.home() / ".bourbon" / "sessions"
+        project_name = self.workdir.name or "default"
+        store = TranscriptStore(base_dir=session_dir)
+        self._session_manager = SessionManager(
+            store=store,
+            project_name=project_name,
+            project_dir=str(self.workdir),
+            token_threshold=config.ui.token_threshold,
+            compact_preserve_count=3,
+        )
+
+        # Create or resume session
+        if session_id:
+            self.session = self._session_manager.resume_session(session_id)
+            if not self.session:
+                self.session = self._session_manager.create_session(session_id=session_id)
+        elif resume_last:
+            self.session = self._session_manager.resume_latest()
+            if not self.session:
+                self.session = self._session_manager.create_session()
+        else:
+            self.session = self._session_manager.create_session()
 
         # Track rounds without todo update for nagging
         self._rounds_without_todo = 0
@@ -116,6 +162,37 @@ class Agent:
             "output_tokens": 0,
             "total_tokens": 0,
         }
+
+    @property
+    def messages(self) -> list[dict]:
+        """Get current messages for LLM (read-only view).
+
+        DEPRECATED: Returns a copy. Modifications won't take effect.
+        Use session.add_message() instead.
+        """
+        if not hasattr(self, "session"):
+            return []
+        return self.session.get_messages_for_llm()
+
+    @messages.setter
+    def messages(self, value: list[dict]) -> None:
+        """DEPRECATED: Setting messages directly is ignored.
+
+        Use session.add_message() or session.chain.clear() instead.
+        """
+        if not hasattr(self, "session"):
+            # During test setup via object.__new__, session may not exist yet
+            return
+        if not value:
+            # Common pattern: agent.messages = [] means clear
+            self.session.chain.clear()
+        else:
+            warnings.warn(
+                "Setting messages directly is deprecated and will be ignored. "
+                "Use session.add_message() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     async def initialize_mcp(self) -> dict:
         """Initialize MCP connections.
@@ -288,15 +365,19 @@ class Agent:
         if self.pending_confirmation:
             return self._handle_confirmation_response(user_input)
 
-        # Add user message
-        self.messages.append({"role": "user", "content": user_input})
+        # Add user message via Session
+        user_msg = TranscriptMessage(
+            role=MessageRole.USER,
+            content=[TextBlock(text=user_input)],
+        )
+        self.session.add_message(user_msg)
+        self.session.save()
 
         # Pre-process: micro-compact
-        self.compressor.microcompact(self.messages)
+        self.session.context_manager.microcompact()
 
         # Check if we need full compression
-        if self.compressor.should_compact(self.messages):
-            self._auto_compact()
+        self.session.maybe_compact()
 
         # Run the conversation loop
         return self._run_conversation_loop()
@@ -320,7 +401,7 @@ class Agent:
         debug_log(
             "agent.step_stream.start",
             user_input_len=len(user_input),
-            message_count=len(self.messages),
+            message_count=self.session.chain.message_count,
             has_pending_confirmation=bool(self.pending_confirmation),
         )
 
@@ -335,15 +416,19 @@ class Agent:
             )
             return response
 
-        # Add user message
-        self.messages.append({"role": "user", "content": user_input})
+        # Add user message via Session
+        user_msg = TranscriptMessage(
+            role=MessageRole.USER,
+            content=[TextBlock(text=user_input)],
+        )
+        self.session.add_message(user_msg)
+        self.session.save()
 
         # Pre-process: micro-compact
-        self.compressor.microcompact(self.messages)
+        self.session.context_manager.microcompact()
 
         # Check if we need full compression
-        if self.compressor.should_compact(self.messages):
-            self._auto_compact()
+        self.session.maybe_compact()
 
         # Run the streaming conversation loop
         response = self._run_conversation_loop_stream(on_text_chunk)
@@ -369,14 +454,15 @@ class Agent:
         while tool_round < self._max_tool_rounds:
             # Call LLM with streaming
             try:
+                messages = self.session.get_messages_for_llm()
                 debug_log(
                     "agent.stream.llm_call.start",
                     tool_round=tool_round,
-                    message_count=len(self.messages),
+                    message_count=len(messages),
                     tool_definition_count=len(definitions()),
                 )
                 event_stream = self.llm.chat_stream(
-                    messages=self.messages,
+                    messages=messages,
                     tools=definitions(),
                     system=self.system_prompt,
                     max_tokens=64000,
@@ -465,8 +551,10 @@ class Agent:
                         }
                     )
 
-                # Add assistant response to history
-                self.messages.append({"role": "assistant", "content": content})
+                # Add assistant response to Session
+                assistant_msg = self._build_assistant_transcript_message(content)
+                self.session.add_message(assistant_msg)
+                self.session.save()
 
                 if not has_tool_calls or not tool_use_blocks:
                     # Final response - return accumulated text
@@ -494,8 +582,12 @@ class Agent:
                     )
                     return accumulated_text + "\n" + self._format_confirmation_prompt()
 
-                # Add tool results to history
-                self.messages.append({"role": "user", "content": tool_results})
+                # Add all tool results as single user message (Anthropic protocol requirement)
+                tool_turn_msg = self._build_tool_results_transcript_message(
+                    tool_results, assistant_msg.uuid
+                )
+                self.session.add_message(tool_turn_msg)
+                self.session.save()
 
             except LLMError as e:
                 # Fallback: retry once with non-streaming API (per design spec)
@@ -512,7 +604,10 @@ class Agent:
                     return self._run_conversation_loop()
                 except Exception:
                     error_msg = f"LLM Error: {e}"
-                    self.messages.append({"role": "assistant", "content": error_msg})
+                    self.session.add_message(TranscriptMessage(
+                        role=MessageRole.ASSISTANT,
+                        content=[TextBlock(text=error_msg)],
+                    ))
                     debug_log(
                         "agent.stream.fallback.error",
                         tool_round=tool_round,
@@ -550,14 +645,17 @@ class Agent:
                 return output
             return f"Skipped {confirmation.tool_name}: approval not granted."
 
-        # Add the user's choice to the conversation
+        # Add the user's choice to the conversation via Session
         context = (
             f"[Previous high-risk operation failed: {confirmation.tool_name}]\n"
             f"[Error: {confirmation.error_output}]\n"
             f"[User decision: {user_input}]\n"
             f"Please proceed based on the user's decision above."
         )
-        self.messages.append({"role": "user", "content": context})
+        self.session.add_message(TranscriptMessage(
+            role=MessageRole.USER,
+            content=[TextBlock(text=context)],
+        ))
 
         # Continue the conversation
         return self._run_conversation_loop()
@@ -569,8 +667,9 @@ class Agent:
         while tool_round < self._max_tool_rounds:
             # Call LLM
             try:
+                messages = self.session.get_messages_for_llm()
                 response = self.llm.chat(
-                    messages=self.messages,
+                    messages=messages,
                     tools=definitions(),
                     system=self.system_prompt,
                     max_tokens=64000,
@@ -586,7 +685,10 @@ class Agent:
                     )
             except LLMError as e:
                 error_msg = f"LLM Error: {e}"
-                self.messages.append({"role": "assistant", "content": error_msg})
+                self.session.add_message(TranscriptMessage(
+                    role=MessageRole.ASSISTANT,
+                    content=[TextBlock(text=error_msg)],
+                ))
                 return error_msg
 
             # Debug: log response (uncomment for debugging)
@@ -605,8 +707,18 @@ class Agent:
                 has_tool_calls = True
                 # print(f"[DEBUG] Found {len(tool_use_blocks)} tool_use blocks despite stop_reason")
 
-            # Add assistant response to history
-            self.messages.append({"role": "assistant", "content": response["content"]})
+            # Add assistant response to Session
+            assistant_msg = self._build_assistant_transcript_message(response["content"])
+            # Capture usage before add_message
+            if "usage" in response:
+                usage = response["usage"]
+                assistant_msg.usage = TokenUsage(
+                    input_tokens=usage.get("input_tokens", 0),
+                    output_tokens=usage.get("output_tokens", 0),
+                    total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                )
+            self.session.add_message(assistant_msg)
+            self.session.save()
 
             if not has_tool_calls:
                 # Extract and return text response
@@ -624,8 +736,12 @@ class Agent:
                     # Return confirmation prompt to user
                     return self._format_confirmation_prompt()
 
-                # Add tool results to history
-                self.messages.append({"role": "user", "content": tool_results})
+                # Add all tool results as single user message
+                tool_turn_msg = self._build_tool_results_transcript_message(
+                    tool_results, assistant_msg.uuid
+                )
+                self.session.add_message(tool_turn_msg)
+                self.session.save()
             else:
                 # No actual tool_use blocks found despite stop_reason
                 print("[DEBUG] stop_reason was tool_use but no tool_use blocks found!")
@@ -907,13 +1023,62 @@ class Agent:
 
         return options
 
+    def _build_assistant_transcript_message(
+        self, content: list[dict]
+    ) -> TranscriptMessage:
+        """Convert LLM response content blocks to TranscriptMessage."""
+        blocks = []
+        for block in content:
+            if block.get("type") == "text":
+                blocks.append(TextBlock(text=block.get("text", "")))
+            elif block.get("type") == "tool_use":
+                blocks.append(ToolUseBlock(
+                    id=block.get("id", ""),
+                    name=block.get("name", ""),
+                    input=block.get("input", {}),
+                ))
+        return TranscriptMessage(role=MessageRole.ASSISTANT, content=blocks)
+
+    def _build_tool_results_transcript_message(
+        self,
+        results: list[dict],
+        source_assistant_uuid: UUID,
+    ) -> TranscriptMessage:
+        """Convert tool results to a single TranscriptMessage.
+
+        All tool results from one round are merged into one user message
+        (Anthropic protocol requires all tool_results in same user turn).
+        """
+        content = [
+            ToolResultBlock(
+                tool_use_id=r.get("tool_use_id", ""),
+                content=str(r.get("content", "")),
+                is_error=r.get("is_error", False),
+            )
+            for r in results
+            if r.get("type") == "tool_result"
+        ]
+        # Also preserve text blocks (e.g. todo reminders)
+        for r in results:
+            if r.get("type") == "text":
+                content.append(TextBlock(text=r.get("text", "")))
+        return TranscriptMessage(
+            role=MessageRole.USER,
+            content=content,
+            source_tool_uuid=source_assistant_uuid,
+        )
+
     def _auto_compact(self) -> None:
-        """Perform automatic context compression."""
-        self.messages = self.compressor.compact(self.messages)
+        """Perform automatic context compression.
+
+        DEPRECATED: Use session.maybe_compact() instead.
+        """
+        self.session.maybe_compact()
 
     def _manual_compact(self) -> None:
         """Perform manual context compression."""
-        self._auto_compact()
+        result = self.session.maybe_compact(trigger=CompactTrigger.MANUAL)
+        return result
 
     def get_todos(self) -> str:
         """Get current todo list."""
@@ -921,7 +1086,9 @@ class Agent:
 
     def clear_history(self) -> None:
         """Clear conversation history."""
-        self.messages = []
+        self.session.chain.clear()
+        self.session.metadata.message_count = 0
+        self.session.save()
 
     def reset_token_usage(self) -> None:
         """Reset token usage counters."""
@@ -937,4 +1104,9 @@ class Agent:
 
     def get_session_tokens(self) -> int:
         """Estimate current session token count."""
-        return self.compressor.estimate_tokens(self.messages)
+        if hasattr(self, "session"):
+            return self.session.context_manager.estimate_tokens()
+        # Fallback for legacy tests using object.__new__(Agent)
+        if hasattr(self, "compressor"):
+            return self.compressor.estimate_tokens(self.messages)
+        return 0
