@@ -27,18 +27,29 @@ def test_debug_log_writes_jsonl_when_enabled(monkeypatch, tmp_path: Path):
 
 def test_agent_step_stream_emits_debug_events():
     """Streaming agent path should emit boundary logs around the LLM stream."""
+    from pathlib import Path
+
     from bourbon.agent import Agent
     from bourbon.config import Config
+    from bourbon.session.manager import SessionManager
+    from bourbon.session.storage import TranscriptStore
+    import tempfile
 
     agent = object.__new__(Agent)
     agent.config = Config()
     agent.workdir = Path.cwd()
-    agent.messages = []
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     agent.system_prompt = "You are a test agent"
+
+    # Setup session
+    base = Path(tempfile.mkdtemp())
+    store = TranscriptStore(base_dir=base)
+    mgr = SessionManager(store=store, project_name="test", project_dir=str(agent.workdir))
+    agent.session = mgr.create_session()
+    agent._session_manager = mgr
 
     class MockLLM:
         def chat_stream(self, **kwargs):
@@ -46,15 +57,7 @@ def test_agent_step_stream_emits_debug_events():
             yield {"type": "usage", "input_tokens": 11, "output_tokens": 7}
             yield {"type": "stop", "stop_reason": "end_turn"}
 
-    class MockCompressor:
-        def microcompact(self, msgs):
-            pass
-
-        def should_compact(self, msgs):
-            return False
-
     agent.llm = MockLLM()
-    agent.compressor = MockCompressor()
 
     with patch("bourbon.agent.debug_log") as mock_debug_log:
         result = agent.step_stream("test", lambda _text: None)

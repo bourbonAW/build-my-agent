@@ -2,23 +2,37 @@
 
 from pathlib import Path
 
+from bourbon.session.manager import Session, SessionManager
+from bourbon.session.storage import TranscriptStore
+
+
+def _setup_mock_session(agent, tmp_path=None):
+    """Set up a minimal session for tests that bypass Agent.__init__."""
+    import tempfile
+
+    base = tmp_path or Path(tempfile.mkdtemp())
+    store = TranscriptStore(base_dir=base)
+    mgr = SessionManager(store=store, project_name="test", project_dir=str(agent.workdir))
+    agent.session = mgr.create_session()
+    agent._session_manager = mgr
+
 
 def test_get_session_tokens_returns_estimate():
     """get_session_tokens returns estimated token count."""
     from bourbon.agent import Agent
+    from bourbon.session.types import MessageRole, TextBlock, TranscriptMessage
 
     agent = object.__new__(Agent)
-    agent.messages = [{"role": "user", "content": "Hello world"}]
+    agent.workdir = Path.cwd()
+    _setup_mock_session(agent)
 
-    # Mock compressor
-    class MockCompressor:
-        def estimate_tokens(self, msgs):
-            return 25
-
-    agent.compressor = MockCompressor()
+    agent.session.add_message(TranscriptMessage(
+        role=MessageRole.USER,
+        content=[TextBlock(text="Hello world")],
+    ))
 
     tokens = agent.get_session_tokens()
-    assert tokens == 25
+    assert tokens > 0
 
 
 def test_step_stream_calls_callback_for_chunks():
@@ -30,7 +44,7 @@ def test_step_stream_calls_callback_for_chunks():
     agent = object.__new__(Agent)
     agent.config = config
     agent.workdir = Path.cwd()
-    agent.messages = []
+    _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
@@ -46,16 +60,7 @@ def test_step_stream_calls_callback_for_chunks():
 
     agent.llm = MockLLM()
     agent.system_prompt = "You are a test agent"
-
-    # Mock compressor
-    class MockCompressor:
-        def microcompact(self, msgs):
-            pass
-
-        def should_compact(self, msgs):
-            return False
-
-    agent.compressor = MockCompressor()
+    agent.compressor = None  # Not used in new code path
 
     chunks = []
 
@@ -79,7 +84,7 @@ def test_step_stream_updates_token_usage():
     agent = object.__new__(Agent)
     agent.config = config
     agent.workdir = Path.cwd()
-    agent.messages = []
+    _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
@@ -93,15 +98,6 @@ def test_step_stream_updates_token_usage():
 
     agent.llm = MockLLM()
     agent.system_prompt = "You are a test agent"
-
-    class MockCompressor:
-        def microcompact(self, msgs):
-            pass
-
-        def should_compact(self, msgs):
-            return False
-
-    agent.compressor = MockCompressor()
 
     result = agent.step_stream("test", lambda _text: None)
 
@@ -118,7 +114,7 @@ def test_step_stream_handles_tool_calls():
     agent = object.__new__(Agent)
     agent.config = config
     agent.workdir = Path.cwd()
-    agent.messages = []
+    _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
@@ -151,17 +147,6 @@ def test_step_stream_handles_tool_calls():
     agent.llm = MockLLM()
     agent.system_prompt = "You are a test agent"
 
-    class MockCompressor:
-        def microcompact(self, msgs):
-            pass
-
-        def should_compact(self, msgs):
-            return False
-
-        token_threshold = 100000
-
-    agent.compressor = MockCompressor()
-
     # Mock _execute_tools to return simple result
     agent._execute_tools = lambda tools: [
         {"type": "tool_result", "tool_use_id": "tool-1", "content": "file.txt"}
@@ -188,7 +173,7 @@ def test_step_stream_returns_confirmation_prompt_when_tool_sets_pending_confirma
     agent = object.__new__(Agent)
     agent.config = config
     agent.workdir = Path.cwd()
-    agent.messages = []
+    _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
@@ -209,17 +194,6 @@ def test_step_stream_returns_confirmation_prompt_when_tool_sets_pending_confirma
 
     agent.llm = MockLLM()
     agent.system_prompt = "You are a test agent"
-
-    class MockCompressor:
-        def microcompact(self, msgs):
-            pass
-
-        def should_compact(self, msgs):
-            return False
-
-        token_threshold = 100000
-
-    agent.compressor = MockCompressor()
 
     def mock_execute(_tools):
         agent.pending_confirmation = PendingConfirmation(
@@ -247,7 +221,7 @@ def test_step_stream_handles_multiple_tool_calls_per_turn():
     agent = object.__new__(Agent)
     agent.config = config
     agent.workdir = Path.cwd()
-    agent.messages = []
+    _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
@@ -284,17 +258,6 @@ def test_step_stream_handles_multiple_tool_calls_per_turn():
 
     agent.llm = MockLLM()
     agent.system_prompt = "You are a test agent"
-
-    class MockCompressor:
-        def microcompact(self, msgs):
-            pass
-
-        def should_compact(self, msgs):
-            return False
-
-        token_threshold = 100000
-
-    agent.compressor = MockCompressor()
 
     # Track which tool blocks were passed to _execute_tools
     executed_tools = []
