@@ -1,6 +1,6 @@
 # Bourbon Session System Implementation Plan (v2 - 修正版)
 
-> **Status:** REVISED after code review  
+> **Status:** IN PROGRESS — Tasks 1-6 complete, Task 7 pending  
 > **Spec:** `docs/superpowers/specs/2026-04-03-session-message-system-design-v2.md`  
 > **Key Fixes:** logical_parent semantics, two-layer persistence, tool round recovery, sidechain deprioritized
 
@@ -54,7 +54,7 @@ tests/session/
 - Create: `src/bourbon/session/types.py`
 - Create: `tests/session/test_types.py`
 
-- [ ] **Step 1: 编写类型定义**
+- [x] **Step 1: 编写类型定义**
 
 ```python
 """Core types for Session System"""
@@ -220,7 +220,7 @@ class CompactResult:
     reason: str = ""
 ```
 
-- [ ] **Step 2: 编写基础测试**
+- [x] **Step 2: 编写基础测试**
 
 ```python
 # tests/session/test_types.py
@@ -298,14 +298,14 @@ def test_compact_result():
     assert result.archived_count == 10
 ```
 
-- [ ] **Step 3: 运行测试**
+- [x] **Step 3: 运行测试**
 
 ```bash
 pytest tests/session/test_types.py -v
 # Expected: 5 tests PASS
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/bourbon/session/types.py tests/session/test_types.py
@@ -320,7 +320,7 @@ git commit -m "feat(session): add core types with correct semantics"
 - Create: `src/bourbon/session/chain.py`
 - Create: `tests/session/test_chain.py`
 
-- [ ] **Step 1: 编写 MessageChain**
+- [x] **Step 1: 编写 MessageChain**
 
 ```python
 """MessageChain - Active conversation chain (in-memory only)"""
@@ -663,7 +663,7 @@ def build_conversation_from_transcript(
     return chain
 ```
 
-- [ ] **Step 2: 编写测试**
+- [x] **Step 2: 编写测试**
 
 ```python
 # tests/session/test_chain.py
@@ -825,14 +825,14 @@ class TestToolRecovery:
         assert recovered.parent_uuid == assistant_msg.uuid
 ```
 
-- [ ] **Step 3: 运行测试**
+- [x] **Step 3: 运行测试**
 
 ```bash
 pytest tests/session/test_chain.py -v
 # Expected: 8 tests PASS
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/bourbon/session/chain.py tests/session/test_chain.py
@@ -884,7 +884,7 @@ class Session:
 - Modify: `src/bourbon/agent.py`
 - Modify: `src/bourbon/repl.py`
 
-- [ ] **Step 1: 重写 Agent 核心方法**
+- [x] **Step 1: 重写 Agent 核心方法**
 
 ```python
 # src/bourbon/agent.py - 关键修改
@@ -1065,7 +1065,7 @@ class Agent:
             self.session.save()  # 保存 metadata（transcript 不受影响）
 ```
 
-- [ ] **Step 2: 重写 REPL 中的消息追加**
+- [x] **Step 2: 重写 REPL 中的消息追加**
 
 搜索所有 `self.agent.messages.append` 的调用点并重写。
 
