@@ -3,6 +3,7 @@
 import argparse
 import sys
 from pathlib import Path
+from uuid import UUID
 
 from rich.console import Console
 from rich.prompt import Prompt
@@ -90,6 +91,18 @@ def main() -> int:
         default=None,
         help="Working directory (default: current directory)",
     )
+    session_group = parser.add_mutually_exclusive_group()
+    session_group.add_argument(
+        "--session-id",
+        type=UUID,
+        default=None,
+        help="Resume a specific session by UUID",
+    )
+    session_group.add_argument(
+        "--resume-last",
+        action="store_true",
+        help="Resume the most recent session for this workdir",
+    )
 
     args = parser.parse_args()
 
@@ -112,7 +125,12 @@ def main() -> int:
         console.print("\nRun [bold]bourbon --init[/bold] to create a configuration.")
         return 1
 
-    repl = REPL(config, workdir=args.workdir)
+    repl = REPL(
+        config,
+        workdir=args.workdir,
+        session_id=args.session_id,
+        resume_last=args.resume_last,
+    )
     repl.run()
 
     return 0

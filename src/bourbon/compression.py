@@ -9,6 +9,7 @@ Includes protection for skill content per Agent Skills specification.
 
 import json
 import time
+import warnings
 from pathlib import Path
 
 
@@ -28,6 +29,12 @@ class ContextCompressor:
             token_threshold: Token count to trigger auto-compact
             keep_tool_results: Number of recent tool results to keep
         """
+        warnings.warn(
+            "bourbon.compression.ContextCompressor is deprecated; "
+            "use bourbon.session.context.ContextManager instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if transcript_dir is None:
             transcript_dir = Path.home() / ".bourbon" / "transcripts"
         self.transcript_dir = transcript_dir

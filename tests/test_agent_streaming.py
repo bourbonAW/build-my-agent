@@ -275,3 +275,65 @@ def test_step_stream_handles_multiple_tool_calls_per_turn():
     assert executed_tools[0]["id"] == "tool-1"
     assert executed_tools[1]["id"] == "tool-2"
     assert result == "Done"
+
+
+def test_handle_confirmation_response_persists_session_metadata():
+    """High-risk confirmation follow-up should persist updated session metadata."""
+    from bourbon.agent import Agent, PendingConfirmation
+    from bourbon.config import Config
+
+    agent = object.__new__(Agent)
+    agent.config = Config()
+    agent.workdir = Path.cwd()
+    _setup_mock_session(agent)
+    agent.pending_confirmation = PendingConfirmation(
+        tool_name="bash",
+        tool_input={"command": "pip install thing"},
+        error_output="Install failed",
+        options=["Retry"],
+        confirmation_type="high_risk_failure",
+    )
+    agent._run_conversation_loop = lambda: "continued"
+
+    result = agent._handle_confirmation_response("Retry")
+
+    assert result == "continued"
+    transcript = agent._session_manager.store.load_transcript("test", agent.session.session_id)
+    assert len(transcript) == 1
+    assert "User decision: Retry" in transcript[0].content[0].text
+
+    metadata = agent._session_manager.store.load_metadata("test", agent.session.session_id)
+    assert metadata is not None
+    assert metadata.message_count == 1
+
+
+def test_run_conversation_loop_persists_error_message_metadata():
+    """Sync LLM error path should persist the assistant error turn in session metadata."""
+    from bourbon.agent import Agent
+    from bourbon.config import Config
+    from bourbon.llm import LLMError
+
+    agent = object.__new__(Agent)
+    agent.config = Config()
+    agent.workdir = Path.cwd()
+    _setup_mock_session(agent)
+    agent._max_tool_rounds = 50
+    agent.system_prompt = "You are a test agent"
+    agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    class FailingLLM:
+        def chat(self, **kwargs):
+            raise LLMError("boom")
+
+    agent.llm = FailingLLM()
+
+    result = agent._run_conversation_loop()
+
+    assert result == "LLM Error: boom"
+    transcript = agent._session_manager.store.load_transcript("test", agent.session.session_id)
+    assert len(transcript) == 1
+    assert transcript[0].content[0].text == "LLM Error: boom"
+
+    metadata = agent._session_manager.store.load_metadata("test", agent.session.session_id)
+    assert metadata is not None
+    assert metadata.message_count == 1

@@ -11,7 +11,6 @@ from bourbon.access_control import AccessController
 from bourbon.access_control.policy import PolicyAction
 from bourbon.audit import AuditLogger
 from bourbon.audit.events import AuditEvent
-from bourbon.compression import ContextCompressor
 from bourbon.config import Config
 from bourbon.debug import debug_log
 from bourbon.llm import LLMError, create_client
@@ -87,9 +86,9 @@ class Agent:
         # Initialize components
         self.todos = TodoManager()
         self.skills = SkillManager(self.workdir)
-        self.compressor = ContextCompressor(
-            token_threshold=config.ui.token_threshold,
-        )
+        # Legacy placeholder kept for compatibility with older tests/callers.
+        # Active sessions now use Session.context_manager for all compression logic.
+        self.compressor = None
 
         # Initialize LLM client
         try:
@@ -608,6 +607,7 @@ class Agent:
                         role=MessageRole.ASSISTANT,
                         content=[TextBlock(text=error_msg)],
                     ))
+                    self.session.save()
                     debug_log(
                         "agent.stream.fallback.error",
                         tool_round=tool_round,
@@ -656,6 +656,7 @@ class Agent:
             role=MessageRole.USER,
             content=[TextBlock(text=context)],
         ))
+        self.session.save()
 
         # Continue the conversation
         return self._run_conversation_loop()
@@ -689,6 +690,7 @@ class Agent:
                     role=MessageRole.ASSISTANT,
                     content=[TextBlock(text=error_msg)],
                 ))
+                self.session.save()
                 return error_msg
 
             # Debug: log response (uncomment for debugging)

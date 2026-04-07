@@ -1,5 +1,6 @@
 """Tests for REPL streaming display behavior."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from rich.markdown import Markdown
@@ -95,3 +96,29 @@ def test_process_input_streaming_does_not_print_raw_ansi_clear_sequence():
     assert not any(
         call.args and call.args[0] == "\r\033[K" for call in repl.console.print.call_args_list
     )
+
+
+def test_activate_skill_persists_session_metadata(tmp_path: Path):
+    """Skill activation should persist the injected skill message in session metadata."""
+    from bourbon.repl import REPL
+    from bourbon.session.manager import SessionManager
+    from bourbon.session.storage import TranscriptStore
+
+    repl = object.__new__(REPL)
+    repl.console = MagicMock()
+    repl.agent = MagicMock()
+
+    store = TranscriptStore(base_dir=tmp_path)
+    manager = SessionManager(store=store, project_name="test", project_dir=str(tmp_path))
+    repl.agent.session = manager.create_session()
+    repl.agent.skills.activate.return_value = "<skill_content name=\"demo\">demo</skill_content>"
+
+    repl._activate_skill("demo")
+
+    transcript = store.load_transcript("test", repl.agent.session.session_id)
+    assert len(transcript) == 1
+    assert "[User activated skill: demo]" in transcript[0].content[0].text
+
+    metadata = store.load_metadata("test", repl.agent.session.session_id)
+    assert metadata is not None
+    assert metadata.message_count == 1

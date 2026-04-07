@@ -1,6 +1,6 @@
 # Bourbon Session System Implementation Plan (v2 - 修正版)
 
-> **Status:** IN PROGRESS — Tasks 1-6 complete, Task 7 pending  
+> **Status:** COMPLETED — Tasks 1-10 complete  
 > **Spec:** `docs/superpowers/specs/2026-04-03-session-message-system-design-v2.md`  
 > **Key Fixes:** logical_parent semantics, two-layer persistence, grouped tool results, sidechain deprioritized  
 > **Post-review-1 fixes:** C1 compact() dead code, C2 streaming path (Task 6b), I3 trigger param, I4 append mutation doc, M4 test reachability assertion  
@@ -1295,7 +1295,7 @@ def step_stream(
     return self._run_conversation_loop_stream(on_text_chunk)
 ```
 
-- [ ] **Step 3: 迁移其余遗漏的旧入口（Finding 4 - 必须全部覆盖）**
+- [x] **Step 3: 迁移其余遗漏的旧入口（Finding 4 - 必须全部覆盖）**
 
 以下入口若不迁移，会绕过 Session 系统直接操作旧 `list[dict]`：
 

@@ -110,12 +110,20 @@ class REPL:
     # Skill activation prefix
     SKILL_PREFIX = "/skill/"
 
-    def __init__(self, config: Config, workdir: Path | None = None):
+    def __init__(
+        self,
+        config: Config,
+        workdir: Path | None = None,
+        session_id: uuid.UUID | None = None,
+        resume_last: bool = False,
+    ):
         """Initialize REPL.
 
         Args:
             config: Bourbon configuration
             workdir: Working directory
+            session_id: Specific session to resume
+            resume_last: Resume the latest session for this workdir
         """
         self.config = config
         self.workdir = workdir or Path.cwd()
@@ -127,9 +135,11 @@ class REPL:
         try:
             self.agent = Agent(
                 config,
-                workdir,
+                workdir=workdir,
                 on_tool_start=self._on_tool_start,
                 on_tool_end=self._on_tool_end,
+                session_id=session_id,
+                resume_last=resume_last,
             )
         except AgentError as e:
             self.console.print(f"[red]Error initializing agent: {e}[/red]")
@@ -518,6 +528,7 @@ class REPL:
                     text=f"[User activated skill: {skill_name}]\n\n{content}"
                 )],
             ))
+            self.agent.session.save()
             self.console.print("[dim]Skill instructions loaded into context.[/dim]")
         except Exception as e:
             self.console.print(f"[red]Error activating skill: {e}[/red]")
