@@ -74,10 +74,18 @@ pytest tests/test_tools_registry.py::TestToolContext -v
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+```
+
+同时更新 `ToolHandler` 类型别名以支持 async handler（mypy 兼容）：
+
+```python
+# 原来：ToolHandler = Callable[..., str]
+# 改为：
+ToolHandler = Callable[..., str | Coroutine[Any, Any, str]]
 ```
 
 然后添加 `ToolContext` 类：
@@ -1519,13 +1527,15 @@ import pytest
 from bourbon.tools import ToolContext, get_registry, definitions
 
 
-@pytest.fixture()
-def registry_with_deferred():
-    """Registry with some deferred tools registered."""
-    from bourbon.tools import get_registry, ToolRegistry
-    # 使用全局 registry（触发 _ensure_imports）
-    definitions()  # 触发所有工具注册
-    return get_registry()
+@pytest.fixture(autouse=True)
+def ensure_tools_registered():
+    """Ensure all tools are registered before each test.
+
+    get_registry().call() does NOT call _ensure_imports(). Only definitions(),
+    handler(), get_tool_with_metadata() do. Call definitions() first to trigger
+    lazy import and populate the global registry.
+    """
+    definitions()
 
 
 class TestToolSearch:
@@ -1570,16 +1580,16 @@ class TestToolSearch:
         assert "No tools found" in result
 
     def test_on_tools_discovered_callback_called(self):
-        """ToolSearch 发现工具后调用 on_tools_discovered 回调。"""
-        pytest.importorskip("pandas")  # CsvAnalyze 依赖
+        """ToolSearch 发现工具后调用 on_tools_discovered 回调（需 pandas）。"""
+        pytest.importorskip("pandas")  # CsvAnalyze 依赖 pandas
         discovered: set[str] = set()
         ctx = ToolContext(
             workdir=Path("/tmp"),
             on_tools_discovered=discovered.update,
         )
-        get_registry().call("ToolSearch", {"query": "csv"}, ctx)
-        if discovered:  # 如果有 deferred 工具被发现
-            assert all(isinstance(n, str) for n in discovered)
+        get_registry().call("ToolSearch", {"query": "csv analyze"}, ctx)
+        assert len(discovered) > 0, "on_tools_discovered should have been called with matched tools"
+        assert all(isinstance(n, str) for n in discovered)
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -1718,9 +1728,18 @@ import pytest
 
 class TestAgentDiscoveredTools:
     def _make_agent(self, tmp_path):
+        """Create Agent via real __init__, patching create_client to avoid LLM init.
+
+        Agent.__init__ calls create_client(config) which raises if no API key.
+        Match the pattern used in test_agent_streaming.py and
+        test_agent_security_integration.py: bypass LLM creation with a mock.
+        """
         from bourbon.agent import Agent
         from bourbon.config import Config
-        return Agent(config=Config(), workdir=tmp_path)
+
+        with patch("bourbon.agent.create_client", return_value=MagicMock()):
+            agent = Agent(config=Config(), workdir=tmp_path)
+        return agent
 
     def test_agent_has_discovered_tools_attr(self, tmp_path):
         agent = self._make_agent(tmp_path)
@@ -1747,7 +1766,10 @@ class TestAgentDiscoveredTools:
 
     def test_definitions_called_with_discovered(self, tmp_path):
         agent = self._make_agent(tmp_path)
+        # __init__ already creates session; limit rounds and inject WebFetch
         agent._discovered_tools.add("WebFetch")
+        agent._max_tool_rounds = 1
+
         with patch("bourbon.agent.definitions") as mock_defs:
             mock_defs.return_value = []
             try:
