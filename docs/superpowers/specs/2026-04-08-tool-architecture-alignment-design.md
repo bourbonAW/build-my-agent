@@ -160,15 +160,17 @@ class ToolRegistry:
         return self._resolve(name)        # 改为 alias-aware
 
     def call(self, name: str, tool_input: dict, ctx: ToolContext) -> str:
-        """调用工具，注入 ToolContext。支持 async handler（用 asyncio.run 包装）。"""
+        """调用工具，注入 ToolContext。支持 async handler（如 WebFetch）。"""
         tool = self._resolve(name)
         if not tool:
             return f"Error: Unknown tool '{name}'"
         result = tool.handler(**tool_input, ctx=ctx)
-        # 支持 async handler（如 WebFetch）
+        # 支持 async handler：复用仓库已有的 AsyncRuntime（在 mcp_client/runtime.py），
+        # 避免 asyncio.run() 在已有事件循环时抛错。
+        # _async_runtime 是模块级单例，在 tools/__init__.py 顶层初始化：
+        #   _async_runtime = AsyncRuntime()
         if inspect.isawaitable(result):
-            import asyncio
-            result = asyncio.run(result)
+            result = _async_runtime.run(result)
         return result
 
     def get_tool_definitions(self, discovered: set[str] | None = None) -> list[dict]:
@@ -260,25 +262,43 @@ def _ensure_imports():
 
 #### access_control 同步更新
 
-`src/bourbon/access_control/capabilities.py` 中的工具名映射（行 25、79）需同步改为新名称：
+**问题根源**：`AccessController.evaluate()` 把原始 `tool_name`（可能是旧 alias）直接传给 `infer_capabilities()`，而 `infer_capabilities()` 内部用字符串分支判断（`if tool_name == "bash":`、`elif tool_name in _FILE_TOOL_CAPABILITIES:`）。旧名到新名的 alias 机制只覆盖 `ToolRegistry.call()` 路径，不覆盖这里。
+
+**修复**：在 `access_control/__init__.py` 的 `evaluate()` 入口先 canonicalize：
 
 ```python
-# 改前
-"bash": CapabilityType.EXEC,
-"read_file": CapabilityType.FILE_READ,
-"rg_search": CapabilityType.FILE_READ,
-# ...
-
-# 改后
-"Bash": CapabilityType.EXEC,
-"Read": CapabilityType.FILE_READ,
-"Grep": CapabilityType.FILE_READ,
-# ...
+def evaluate(self, tool_name: str, tool_input: dict) -> PolicyDecision:
+    tool_metadata = get_tool_with_metadata(tool_name)   # alias-aware，已返回 canonical Tool
+    canonical_name = tool_metadata.name if tool_metadata else tool_name  # 统一用主名
+    base_caps = list(tool_metadata.required_capabilities or []) if tool_metadata else []
+    context = infer_capabilities(canonical_name, tool_input, base_caps)  # 传 canonical_name
+    if canonical_name == "Bash":   # 改为新主名
+        return self.engine.evaluate_command(tool_input.get("command", ""), context)
+    return self.engine.evaluate(canonical_name, context)
 ```
 
-`src/bourbon/access_control/__init__.py`（行 26）中同样的旧名引用一并更新。
+`src/bourbon/access_control/capabilities.py` 同步更新为新工具名：
 
-由于 `required_capabilities` 仍挂在 `Tool` 上（通过属性传递），此处只需同步字符串键名，不影响 capability 推断逻辑本身。
+```python
+# capabilities.py
+_FILE_TOOL_CAPABILITIES = {
+    "Read":    CapabilityType.FILE_READ,
+    "Write":   CapabilityType.FILE_WRITE,
+    "Edit":    CapabilityType.FILE_WRITE,
+    "Grep":    CapabilityType.FILE_READ,
+    "AstGrep": CapabilityType.FILE_READ,
+    "Glob":    CapabilityType.FILE_READ,
+}
+_SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH = {"Grep", "AstGrep"}
+
+# infer_capabilities() 内部
+if tool_name == "Bash":   # 改为新主名
+    ...
+elif tool_name in _FILE_TOOL_CAPABILITIES:
+    ...
+```
+
+由于 `evaluate()` 入口已 canonicalize，旧 alias（`read_file`、`rg_search` 等）调用时也能正确命中新名映射，兼容承诺成立。
 
 ---
 
@@ -313,14 +333,22 @@ def tool_search_handler(query: str, max_results: int = 5, *, ctx: ToolContext) -
     registry = get_registry()
     deferred = [t for t in registry.list_tools() if t.should_defer]
     
+    # 按 token 分词匹配（而非整句 containment），支持自然语言查询
+    # 例：query="fetch web page" → tokens=["fetch","web","page"]
+    # WebFetch: "fetch" in "webfetch"(+10) + "web" in "webfetch"(+10) + "fetch" in desc(+2) = 22
+    tokens = [w for w in query.lower().split() if len(w) > 1]
+
     def score(t: Tool) -> int:
-        q = query.lower()
         s = 0
-        if q in t.name.lower(): s += 10
-        if t.search_hint and q in t.search_hint.lower(): s += 4
-        if q in t.description.lower(): s += 2
+        name_lower = t.name.lower()
+        desc_lower = t.description.lower()
+        hint_lower = (t.search_hint or "").lower()
+        for token in tokens:
+            if token in name_lower: s += 10
+            if hint_lower and token in hint_lower: s += 4
+            if token in desc_lower: s += 2
         return s
-    
+
     scored = sorted(deferred, key=score, reverse=True)
     matches = [t for t in scored if score(t) > 0][:max_results]
     
@@ -354,17 +382,38 @@ class Agent:
         )
 ```
 
-**`_execute_tools()` 改为通过 `registry.call()` 注入 ctx**：
+**修改 `_execute_regular_tool()`，而非 `_execute_tools()`**：
+
+`_execute_tools()` 保留现有分发结构（compress/TodoWrite/skill 特殊路径、on_tool_start 回调等），不动。
+变更集中在 `_execute_regular_tool()` 内部，用 `registry.call()` 替换旧的 handler 调用：
 
 ```python
-def _execute_tools(self, tool_calls: list[dict]) -> list[dict]:
-    ctx = self._make_tool_context()
-    results = []
-    for call in tool_calls:
-        result = get_registry().call(call["name"], call["input"], ctx)
-        results.append({"tool_use_id": call["id"], "content": result})
-    return results
+def _execute_regular_tool(self, tool_name: str, tool_input: dict, *, skip_policy_check=False) -> str:
+    # policy / audit 检查保持不变
+    if not skip_policy_check:
+        decision = self.access_controller.evaluate(tool_name, tool_input)
+        ...  # 保持现有逻辑
+
+    # sandbox 路由保持不变（Bash/is_destructive 判断见上文）
+
+    try:
+        ctx = self._make_tool_context()
+        # 用 registry.call() 替换：
+        #   旧：tool_handler_fn(**{...call_input, "workdir": self.workdir})
+        #   新：registry.call() 内部注入 ctx（含 workdir）+ 处理 alias + async 包装
+        output = get_registry().call(tool_name, tool_input, ctx)
+    except Exception as e:
+        return f"Error executing {tool_name}: {e}"
+
+    # audit 记录保持不变
+    self.audit.record(...)
+
+    # high-risk 失败确认保持不变
+    ...
+    return output
 ```
+
+关键变化：移除 `call_input.setdefault("workdir", self.workdir)`（行 884-885），改由 `ctx.workdir` 注入。其余安全链逻辑不变。
 
 **3 处 `definitions()` 调用（行约 461、465、680）全部更新**：
 
