@@ -33,7 +33,6 @@ from bourbon.tools import (
     definitions,
     get_registry,
     get_tool_with_metadata,
-    handler,
 )
 
 
@@ -86,6 +85,7 @@ class Agent:
         # Initialize components
         self.todos = TodoManager()
         self.skills = SkillManager(self.workdir)
+        self._discovered_tools: set[str] = set()
         # Legacy placeholder kept for compatibility with older tests/callers.
         # Active sessions now use Session.context_manager for all compression logic.
         self.compressor = None
@@ -273,7 +273,7 @@ class Agent:
                 "nonexistent-package, rm important-files"
             ),
             "",
-            "2. LOW RISK operations (read_file, search, exploration):",
+            "2. LOW RISK operations (Read, Grep, AstGrep, Glob, exploration):",
             (
                 "   - If a file is not found, you MAY search for similar files and "
                 "attempt to read the correct one"
@@ -344,14 +344,14 @@ class Agent:
             "======",
             "",
             "The following skills provide specialized instructions for specific tasks.",
-            "When a task matches a skill's description, use the 'skill' tool to load",
+            "When a task matches a skill's description, use the 'Skill' tool to load",
             "its full instructions before proceeding.",
             "",
             catalog,
             "",
             "To activate a skill, use:",
             "  <function_calls>",
-            '    <invoke name="skill">',
+            '    <invoke name="Skill">',
             '      <parameter name="name">skill-name</parameter>',
             "    </invoke>",
             "  </function_calls>",
@@ -458,11 +458,13 @@ class Agent:
                     "agent.stream.llm_call.start",
                     tool_round=tool_round,
                     message_count=len(messages),
-                    tool_definition_count=len(definitions()),
+                    tool_definition_count=len(
+                        definitions(discovered=self._get_discovered_tools())
+                    ),
                 )
                 event_stream = self.llm.chat_stream(
                     messages=messages,
-                    tools=definitions(),
+                    tools=definitions(discovered=self._get_discovered_tools()),
                     system=self.system_prompt,
                     max_tokens=64000,
                 )
@@ -671,7 +673,7 @@ class Agent:
                 messages = self.session.get_messages_for_llm()
                 response = self.llm.chat(
                     messages=messages,
-                    tools=definitions(),
+                    tools=definitions(discovered=self._get_discovered_tools()),
                     system=self.system_prompt,
                     max_tokens=64000,
                 )
@@ -824,6 +826,22 @@ class Agent:
         output = f"{sandbox_result.stdout}{sandbox_result.stderr}".strip()
         return output or "(no output)"
 
+    def _get_discovered_tools(self) -> set[str]:
+        """Return the discovered-tool set, initializing stub agents on demand."""
+        if not hasattr(self, "_discovered_tools"):
+            self._discovered_tools = set()
+        return self._discovered_tools
+
+    def _make_tool_context(self):
+        """Construct the shared tool execution context."""
+        from bourbon.tools import ToolContext
+
+        return ToolContext(
+            workdir=self.workdir,
+            skill_manager=self.skills,
+            on_tools_discovered=self._get_discovered_tools().update,
+        )
+
     def _execute_regular_tool(
         self,
         tool_name: str,
@@ -832,7 +850,6 @@ class Agent:
         skip_policy_check: bool = False,
     ) -> str:
         """Execute one tool call with policy, audit, and sandbox integration."""
-        tool_handler_fn = handler(tool_name)
         tool_metadata = get_tool_with_metadata(tool_name)
 
         if not skip_policy_check:
@@ -856,10 +873,7 @@ class Agent:
                 )
                 return f"Requires approval: {decision.reason}"
 
-        if tool_handler_fn is None:
-            return f"Unknown tool: {tool_name}"
-
-        if tool_name == "bash" and getattr(self.sandbox, "enabled", False):
+        if tool_metadata and tool_metadata.is_destructive and getattr(self.sandbox, "enabled", False):
             sandbox_result = self.sandbox.execute(
                 tool_input.get("command", ""), tool_name=tool_name
             )
@@ -874,10 +888,8 @@ class Agent:
             return output
 
         try:
-            call_input = dict(tool_input)
-            if tool_name in {"bash", "read_file", "write_file", "edit_file"}:
-                call_input.setdefault("workdir", self.workdir)
-            output = tool_handler_fn(**call_input)
+            ctx = self._make_tool_context()
+            output = get_registry().call(tool_name, tool_input, ctx)
         except Exception as e:
             return f"Error executing {tool_name}: {e}"
 
@@ -938,14 +950,6 @@ class Agent:
                     output = self.todos.update(tool_input.get("items", []))
                 except ValueError as e:
                     output = f"Error: {e}"
-            elif tool_name == "skill":
-                # skill tool is handled by registered handler, but we keep
-                # this for backward compatibility during transition
-                try:
-                    skill_name = tool_input.get("name", "")
-                    output = self.skills.activate(skill_name)
-                except Exception as e:
-                    output = f"Error activating skill '{skill_name}': {e}"
             else:
                 output = self._execute_regular_tool(tool_name, tool_input)
                 if self.pending_confirmation:
@@ -992,8 +996,9 @@ class Agent:
     def _generate_options(self, tool_name: str, tool_input: dict, error_output: str) -> list[str]:
         """Generate options for user based on the failed operation."""
         options = []
+        tool_metadata = get_tool_with_metadata(tool_name)
 
-        if tool_name == "bash":
+        if tool_metadata and tool_metadata.is_destructive:
             command = tool_input.get("command", "")
 
             # Package installation errors
@@ -1015,7 +1020,7 @@ class Agent:
                 options.append("Retry the same command")
                 options.append("Try a modified version")
 
-        elif tool_name in ("write_file", "edit_file"):
+        elif tool_metadata and not tool_metadata.is_read_only and not tool_metadata.is_destructive:
             options.append("Retry with different permissions")
             options.append("Try writing to a different location")
 

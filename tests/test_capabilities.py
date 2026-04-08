@@ -39,17 +39,17 @@ def test_inferred_context_default_lists_are_not_shared():
 
 def test_extracts_paths_for_file_tools():
     read_context = infer_capabilities(
-        "read_file",
+        "Read",
         {"path": "src/app.py"},
         [CapabilityType.EXEC],
     )
     write_context = infer_capabilities(
-        "write_file",
+        "Write",
         {"path": "notes/todo.txt"},
         [],
     )
     edit_context = infer_capabilities(
-        "edit_file",
+        "Edit",
         {"path": "docs/spec.md"},
         [],
     )
@@ -64,7 +64,7 @@ def test_extracts_paths_for_file_tools():
 
 def test_bash_basic_returns_exec_only_and_no_paths():
     context = infer_capabilities(
-        "bash",
+        "Bash",
         {"command": "echo hello"},
         [CapabilityType.EXEC],
     )
@@ -75,7 +75,7 @@ def test_bash_basic_returns_exec_only_and_no_paths():
 
 def test_bash_ignores_non_command_fields():
     context = infer_capabilities(
-        "bash",
+        "Bash",
         {"command": "echo hello", "path": "src/app.py", "note": "curl https://example.com"},
         [CapabilityType.EXEC],
     )
@@ -86,7 +86,7 @@ def test_bash_ignores_non_command_fields():
 
 def test_bash_pip_install_adds_net():
     context = infer_capabilities(
-        "bash",
+        "Bash",
         {"command": "pip install requests"},
         [CapabilityType.EXEC],
     )
@@ -97,7 +97,7 @@ def test_bash_pip_install_adds_net():
 
 def test_bash_read_detection_adds_file_read():
     context = infer_capabilities(
-        "bash",
+        "Bash",
         {"command": "cat /etc/hosts"},
         [CapabilityType.EXEC],
     )
@@ -108,7 +108,7 @@ def test_bash_read_detection_adds_file_read():
 
 def test_bash_write_detection_adds_file_write():
     context = infer_capabilities(
-        "bash",
+        "Bash",
         {"command": "echo hi > out.txt"},
         [CapabilityType.EXEC],
     )
@@ -119,7 +119,7 @@ def test_bash_write_detection_adds_file_write():
 
 def test_bash_path_like_content_does_not_extract_file_paths():
     context = infer_capabilities(
-        "bash",
+        "Bash",
         {"command": "cat src/app.py"},
         [CapabilityType.EXEC],
     )
@@ -146,3 +146,37 @@ def test_unknown_tool_preserves_base_capabilities_exactly():
 
     assert context.capabilities == base_capabilities
     assert context.file_paths == []
+
+
+class TestCapabilitiesNewNames:
+    def test_new_names_infer_file_capabilities(self):
+        """Canonical tool names should infer the expected file capabilities."""
+        read_context = infer_capabilities("Read", {"path": "src/app.py"}, [])
+        assert CapabilityType.FILE_READ in read_context.capabilities
+        assert read_context.file_paths == ["src/app.py"]
+
+        write_context = infer_capabilities("Write", {"path": "out.txt"}, [])
+        assert CapabilityType.FILE_WRITE in write_context.capabilities
+
+        edit_context = infer_capabilities("Edit", {"path": "notes.md"}, [])
+        assert CapabilityType.FILE_WRITE in edit_context.capabilities
+
+        grep_context = infer_capabilities("Grep", {"path": "src/"}, [])
+        assert CapabilityType.FILE_READ in grep_context.capabilities
+
+        glob_context = infer_capabilities("Glob", {}, [])
+        assert CapabilityType.FILE_READ in glob_context.capabilities
+
+    def test_bash_new_name_infers_net_capability(self):
+        context = infer_capabilities("Bash", {"command": "curl https://example.com"}, [])
+        assert CapabilityType.NET in context.capabilities
+
+    def test_ast_grep_uses_workdir_default_path(self):
+        context = infer_capabilities("AstGrep", {}, [])
+        assert "." in context.file_paths
+
+    def test_stage_b_tools_infer_file_read(self):
+        for tool_name in ("CsvAnalyze", "JsonQuery", "PdfRead", "DocxRead"):
+            context = infer_capabilities(tool_name, {"file_path": "data/file.csv"}, [])
+            assert CapabilityType.FILE_READ in context.capabilities
+            assert context.file_paths == ["data/file.csv"]

@@ -91,5 +91,5 @@ class TestErrorHandlingPolicy:
         )
 
     def test_read_file_example(self, mock_agent):
-        """Must include read_file example."""
-        assert "read_file" in mock_agent.system_prompt
+        """Must include the canonical low-risk file-read tool example."""
+        assert "Read" in mock_agent.system_prompt

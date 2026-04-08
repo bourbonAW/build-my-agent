@@ -11,6 +11,7 @@ from bourbon.access_control.capabilities import (
 from bourbon.access_control.policy import PolicyAction, PolicyDecision, PolicyEngine
 from bourbon.tools import get_tool_with_metadata
 
+
 class AccessController:
     """Evaluates tool calls against configured policies."""
 
@@ -25,6 +26,7 @@ class AccessController:
 
     def evaluate(self, tool_name: str, tool_input: dict) -> PolicyDecision:
         tool_metadata = get_tool_with_metadata(tool_name)
+        canonical_name = tool_metadata.name if tool_metadata else tool_name
         # Capabilities come exclusively from Tool.required_capabilities, which is
         # validated at @register_tool decoration time.  There is no static fallback
         # map: unknown/MCP tools that declare no capabilities produce an empty list
@@ -32,8 +34,8 @@ class AccessController:
         base_caps: list[CapabilityType] = (
             list(tool_metadata.required_capabilities or []) if tool_metadata else []
         )
-        context = infer_capabilities(tool_name, tool_input, base_caps)
+        context = infer_capabilities(canonical_name, tool_input, base_caps)
 
-        if tool_name == "bash":
+        if canonical_name == "Bash":
             return self.engine.evaluate_command(tool_input.get("command", ""), context)
-        return self.engine.evaluate(tool_name, context)
+        return self.engine.evaluate(canonical_name, context)

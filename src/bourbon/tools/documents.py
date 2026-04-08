@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from bourbon.tools import RiskLevel, register_tool
+from bourbon.tools import RiskLevel, ToolContext, register_tool
 
 PDF_TO_TEXT_SCHEMA = {
     "type": "object",
@@ -21,12 +21,6 @@ PDF_TO_TEXT_SCHEMA = {
 }
 
 
-@register_tool(
-    name="pdf_to_text",
-    description="Extract text from PDF file",
-    input_schema=PDF_TO_TEXT_SCHEMA,
-    risk_level=RiskLevel.LOW,
-)
 def pdf_to_text(
     file_path: str,
     page_range: tuple = None,
@@ -89,12 +83,6 @@ DOCX_TO_MARKDOWN_SCHEMA = {
 }
 
 
-@register_tool(
-    name="docx_to_markdown",
-    description="Convert Word document to markdown",
-    input_schema=DOCX_TO_MARKDOWN_SCHEMA,
-    risk_level=RiskLevel.LOW,
-)
 def docx_to_markdown(
     file_path: str,
 ) -> dict:
@@ -143,3 +131,54 @@ def docx_to_markdown(
             "success": False,
             "error": str(e),
         }
+
+
+@register_tool(
+    name="PdfRead",
+    aliases=["pdf_to_text"],
+    description="Extract text from PDF file.",
+    input_schema=PDF_TO_TEXT_SCHEMA,
+    risk_level=RiskLevel.LOW,
+    always_load=False,
+    should_defer=True,
+    is_read_only=True,
+    search_hint="pdf document read extract text",
+    required_capabilities=["file_read"],
+)
+def pdf_read_handler(
+    file_path: str,
+    page_range: list[int] | None = None,
+    *,
+    ctx: ToolContext,
+) -> str:
+    """Tool handler for PdfRead."""
+    resolved = str(ctx.workdir / file_path) if not Path(file_path).is_absolute() else file_path
+    result = pdf_to_text(resolved, page_range)
+    if isinstance(result, dict) and not result.get("success"):
+        return f"Error: {result.get('error', 'Unknown error')}"
+    if isinstance(result, dict):
+        return result.get("text", str(result))
+    return str(result)
+
+
+@register_tool(
+    name="DocxRead",
+    aliases=["docx_to_markdown"],
+    description="Convert Word document to markdown.",
+    input_schema=DOCX_TO_MARKDOWN_SCHEMA,
+    risk_level=RiskLevel.LOW,
+    always_load=False,
+    should_defer=True,
+    is_read_only=True,
+    search_hint="docx word document read convert markdown",
+    required_capabilities=["file_read"],
+)
+def docx_read_handler(file_path: str, *, ctx: ToolContext) -> str:
+    """Tool handler for DocxRead."""
+    resolved = str(ctx.workdir / file_path) if not Path(file_path).is_absolute() else file_path
+    result = docx_to_markdown(resolved)
+    if isinstance(result, dict) and not result.get("success"):
+        return f"Error: {result.get('error', 'Unknown error')}"
+    if isinstance(result, dict):
+        return result.get("text", str(result))
+    return str(result)

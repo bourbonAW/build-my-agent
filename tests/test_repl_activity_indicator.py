@@ -37,8 +37,8 @@ def test_activity_indicator_switches_to_replying_after_chunk():
     assert "Bourbon is replying..." in output
 
 
-def test_activity_indicator_renders_stable_prefix_and_buffers_pending_tail():
-    """Live render should show stable markdown while buffering incomplete tail text."""
+def test_activity_indicator_buffers_pending_tail_text():
+    """Live render should show the current pending tail beneath the status line."""
     from bourbon.repl import StreamingDisplay
 
     display = StreamingDisplay(started_at=100.0)
@@ -46,22 +46,22 @@ def test_activity_indicator_renders_stable_prefix_and_buffers_pending_tail():
 
     output = _render_text(display, now=100.25)
 
-    assert "Heading" in output
+    assert "## Heading" in output
     assert "- ite" in output
-    assert " • ite" not in output
 
 
-def test_activity_indicator_renders_complete_markdown_list_item():
-    """Once a markdown line is complete, it should move into rendered output."""
+def test_activity_indicator_replaces_pending_tail():
+    """Updating the footer tail should replace the prior pending preview."""
     from bourbon.repl import StreamingDisplay
 
     display = StreamingDisplay(started_at=100.0)
-    display.append_chunk("## Heading\n- item\n")
+    display.append_chunk("old tail")
+    display.set_pending_tail("new tail")
 
     output = _render_text(display, now=100.25)
 
-    assert "Heading" in output
-    assert " • item" in output
+    assert "new tail" in output
+    assert "old tail" not in output
 
 
 

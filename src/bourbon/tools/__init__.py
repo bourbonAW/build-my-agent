@@ -4,9 +4,11 @@ Tools are registered in a central registry and provided to the LLM.
 Each tool has a name, description, input schema, and handler function.
 """
 
-from collections.abc import Callable
-from dataclasses import dataclass
+import inspect
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 
@@ -19,7 +21,28 @@ class RiskLevel(Enum):
 
 
 # Type for tool handlers
-ToolHandler = Callable[..., str]
+ToolHandler = Callable[..., str | Coroutine[Any, Any, str]]
+
+_async_runtime: Any | None = None
+
+
+def _get_async_runtime() -> Any:
+    """Get a shared async runtime without importing MCP modules at import time."""
+    global _async_runtime
+    if _async_runtime is None:
+        from bourbon.mcp_client.runtime import AsyncRuntime
+
+        _async_runtime = AsyncRuntime()
+    return _async_runtime
+
+
+@dataclass
+class ToolContext:
+    """Execution context shared across tool handlers."""
+
+    workdir: Path
+    skill_manager: Any | None = None
+    on_tools_discovered: Callable[[set[str]], None] | None = None
 
 
 @dataclass
@@ -33,6 +56,13 @@ class Tool:
     risk_level: RiskLevel = RiskLevel.LOW
     risk_patterns: list[str] | None = None
     required_capabilities: list[str] | None = None
+    aliases: list[str] = field(default_factory=list)
+    always_load: bool = True
+    should_defer: bool = False
+    is_concurrency_safe: bool = False
+    is_read_only: bool = False
+    is_destructive: bool = False
+    search_hint: str | None = None
 
     def __post_init__(self):
         """Initialize default risk patterns and validate capability declarations."""
@@ -51,42 +81,38 @@ class Tool:
                 ) from exc
 
         if self.risk_patterns is None:
-            if self.risk_level == RiskLevel.HIGH:
-                # Default high-risk patterns for bash-like tools
-                if self.name == "bash":
-                    self.risk_patterns = [
-                        "pip install",
-                        "pip3 install",
-                        "pip uninstall",
-                        "pip3 uninstall",
-                        "apt ",
-                        "apt-get ",
-                        "yum ",
-                        "brew ",
-                        "pacman ",
-                        "dnf ",
-                        "rm ",
-                        "rm -",
-                        "rmdir ",
-                        "sudo ",
-                        "su ",
-                        "shutdown",
-                        "reboot",
-                        "halt",
-                        "poweroff",
-                        "mkfs.",
-                        "fdisk",
-                        "dd ",
-                        "> /dev",
-                        "> /sys",
-                        "> /proc",
-                        "curl ",
-                        "wget ",
-                        "| sh",
-                        "| bash",
-                    ]
-                else:
-                    self.risk_patterns = []
+            if self.risk_level == RiskLevel.HIGH and self.is_destructive:
+                self.risk_patterns = [
+                    "pip install",
+                    "pip3 install",
+                    "pip uninstall",
+                    "pip3 uninstall",
+                    "apt ",
+                    "apt-get ",
+                    "yum ",
+                    "brew ",
+                    "pacman ",
+                    "dnf ",
+                    "rm ",
+                    "rm -",
+                    "rmdir ",
+                    "sudo ",
+                    "su ",
+                    "shutdown",
+                    "reboot",
+                    "halt",
+                    "poweroff",
+                    "mkfs.",
+                    "fdisk",
+                    "dd ",
+                    "> /dev",
+                    "> /sys",
+                    "> /proc",
+                    "curl ",
+                    "wget ",
+                    "| sh",
+                    "| bash",
+                ]
             else:
                 self.risk_patterns = []
 
@@ -96,7 +122,7 @@ class Tool:
         For bash tool, checks command content against risk patterns.
         For other tools, returns based on risk_level.
         """
-        if self.risk_level == RiskLevel.HIGH and self.name == "bash":
+        if self.risk_level == RiskLevel.HIGH and self.is_destructive:
             command = tool_input.get("command", "")
             return any(pattern in command for pattern in self.risk_patterns)
         return self.risk_level == RiskLevel.HIGH
@@ -108,30 +134,52 @@ class ToolRegistry:
     def __init__(self):
         """Initialize empty registry."""
         self._tools: dict[str, Tool] = {}
+        self._alias_map: dict[str, str] = {}
 
     def register(self, tool: Tool) -> None:
         """Register a tool."""
         self._tools[tool.name] = tool
+        for alias in tool.aliases:
+            self._alias_map[alias] = tool.name
+
+    def _resolve(self, name: str) -> Tool | None:
+        """Resolve a tool by canonical name or alias."""
+        if name in self._tools:
+            return self._tools[name]
+        canonical = self._alias_map.get(name)
+        return self._tools.get(canonical) if canonical else None
 
     def get(self, name: str) -> Tool | None:
         """Get a tool by name."""
-        return self._tools.get(name)
+        return self._resolve(name)
 
     def get_handler(self, name: str) -> ToolHandler | None:
         """Get a tool handler by name."""
-        tool = self._tools.get(name)
+        tool = self._resolve(name)
         return tool.handler if tool else None
 
     def get_tool(self, name: str) -> Tool | None:
         """Get a full Tool object by name (includes metadata)."""
-        return self._tools.get(name)
+        return self._resolve(name)
 
     def list_tools(self) -> list[Tool]:
         """List all registered tools."""
         return list(self._tools.values())
 
-    def get_tool_definitions(self) -> list[dict]:
+    def call(self, name: str, tool_input: dict, ctx: ToolContext) -> str:
+        """Call a tool handler with a shared execution context."""
+        tool = self._resolve(name)
+        if not tool:
+            return f"Error: Unknown tool '{name}'"
+
+        result = tool.handler(**tool_input, ctx=ctx)
+        if inspect.isawaitable(result):
+            return _get_async_runtime().run(result)
+        return result
+
+    def get_tool_definitions(self, discovered: set[str] | None = None) -> list[dict]:
         """Get tool definitions for LLM API."""
+        discovered = discovered or set()
         return [
             {
                 "name": tool.name,
@@ -139,6 +187,7 @@ class ToolRegistry:
                 "input_schema": tool.input_schema,
             }
             for tool in self._tools.values()
+            if tool.always_load or tool.name in discovered
         ]
 
 
@@ -161,6 +210,13 @@ def register_tool(
     risk_level: RiskLevel = RiskLevel.LOW,
     risk_patterns: list[str] | None = None,
     required_capabilities: list[str] | None = None,
+    aliases: list[str] | None = None,
+    always_load: bool = True,
+    should_defer: bool = False,
+    is_concurrency_safe: bool = False,
+    is_read_only: bool = False,
+    is_destructive: bool = False,
+    search_hint: str | None = None,
 ) -> Callable[[ToolHandler], ToolHandler]:
     """Decorator to register a tool function.
 
@@ -191,6 +247,13 @@ def register_tool(
             risk_level=risk_level,
             risk_patterns=risk_patterns,
             required_capabilities=required_capabilities,
+            aliases=aliases or [],
+            always_load=always_load,
+            should_defer=should_defer,
+            is_concurrency_safe=is_concurrency_safe,
+            is_read_only=is_read_only,
+            is_destructive=is_destructive,
+            search_hint=search_hint,
         )
         get_registry().register(tool)
         return func
@@ -203,26 +266,41 @@ def tool(name: str) -> Tool | None:
     return get_registry().get(name)
 
 
-def handler(name: str) -> ToolHandler | None:
-    """Get a tool handler by name."""
-    # Import tool modules to trigger registration
+def _ensure_imports() -> None:
+    """Lazily import tool modules to trigger registration."""
     from bourbon.tools import base, search, skill_tool  # noqa: F401
 
+    try:
+        from bourbon.tools import tool_search  # noqa: F401
+    except ImportError:
+        pass
+    try:
+        from bourbon.tools import web  # noqa: F401
+    except ImportError:
+        pass
+    try:
+        from bourbon.tools import data  # noqa: F401
+    except ImportError:
+        pass
+    try:
+        from bourbon.tools import documents  # noqa: F401
+    except ImportError:
+        pass
+
+
+def handler(name: str) -> ToolHandler | None:
+    """Get a tool handler by name."""
+    _ensure_imports()
     return get_registry().get_handler(name)
 
 
 def get_tool_with_metadata(name: str) -> Tool | None:
     """Get a tool with full metadata (including risk level)."""
-    # Import tool modules to trigger registration
-    from bourbon.tools import base, search, skill_tool  # noqa: F401
-
+    _ensure_imports()
     return get_registry().get_tool(name)
 
 
-def definitions() -> list[dict]:
+def definitions(discovered: set[str] | None = None) -> list[dict]:
     """Get all tool definitions for LLM."""
-    # Import tool modules to trigger registration
-    # This must be done lazily to avoid circular imports
-    from bourbon.tools import base, search, skill_tool  # noqa: F401
-
-    return get_registry().get_tool_definitions()
+    _ensure_imports()
+    return get_registry().get_tool_definitions(discovered=discovered)

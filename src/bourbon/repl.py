@@ -3,6 +3,7 @@
 import sys
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
@@ -22,7 +23,7 @@ from bourbon.mcp_client import MCPServerNotInstalledError
 
 
 class StreamingDisplay:
-    """Animated renderable for REPL activity plus streamed markdown output."""
+    """Animated renderable for REPL activity plus the current pending text tail."""
 
     FRAMES = [
         "[     ]",
@@ -37,13 +38,17 @@ class StreamingDisplay:
     def __init__(self, started_at: float):
         self.started_at = started_at
         self.has_streamed_text = False
-        self.current_text = ""
+        self.pending_tail = ""
 
     def append_chunk(self, text: str) -> None:
-        """Append streamed text to the live buffer."""
+        """Mark streamed text as active in the live footer."""
         if text:
             self.has_streamed_text = True
-            self.current_text += text
+            self.pending_tail += text
+
+    def set_pending_tail(self, text: str) -> None:
+        """Replace the pending tail shown in the live footer."""
+        self.pending_tail = text
 
     def _frame(self) -> str:
         """Return the current animation frame."""
@@ -64,31 +69,55 @@ class StreamingDisplay:
         return status
 
     def __rich_console__(self, console, options):
-        stable_prefix, pending_tail = _split_stable_markdown(self.current_text)
         renderables = [self._status_text()]
-        if stable_prefix:
-            renderables.append(Markdown(stable_prefix))
-        if pending_tail:
-            renderables.append(Text(pending_tail))
+        if self.pending_tail:
+            renderables.append(Text(self.pending_tail))
         yield Group(*renderables)
 
 
+@dataclass
+class _ActiveStreamState:
+    """Bookkeeping for append-only streaming output."""
+
+    live: Live
+    display: StreamingDisplay
+    full_text: str = ""
+    flushed_text: str = ""
+
+
 def _split_stable_markdown(buffer: str) -> tuple[str, str]:
-    """Split accumulated text into a stable markdown prefix and pending tail."""
+    """Split accumulated text into a committed markdown prefix and pending tail.
+
+    Commit only complete markdown blocks so multi-line structures such as
+    headings, lists, tables, and fenced code blocks stay together.
+    """
     if not buffer:
         return "", ""
 
-    if buffer.endswith("\n"):
-        stable_prefix = buffer
-        pending_tail = ""
-    else:
-        last_newline = buffer.rfind("\n")
-        if last_newline == -1:
-            return "", buffer
-        stable_prefix = buffer[: last_newline + 1]
-        pending_tail = buffer[last_newline + 1 :]
+    fence_count = 0
+    last_block_boundary = 0
+    offset = 0
 
-    return stable_prefix, pending_tail
+    for line in buffer.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            fence_count += 1
+
+        if fence_count % 2 == 0 and line == "\n":
+            last_block_boundary = offset + len(line)
+
+        offset += len(line)
+
+    if last_block_boundary > 0:
+        return buffer[:last_block_boundary], buffer[last_block_boundary:]
+
+    if "\n" not in buffer:
+        return "", buffer
+
+    if buffer.endswith("\n") and fence_count % 2 == 0:
+        return "", buffer
+
+    last_newline = buffer.rfind("\n")
+    return buffer[: last_newline + 1], buffer[last_newline + 1 :]
 
 
 
@@ -174,6 +203,7 @@ class REPL:
                 "bottom-toolbar.text": "#888888",
             }
         )
+        self._active_stream: _ActiveStreamState | None = None
 
     def _get_prompt(self) -> HTML:
         """Generate prompt."""
@@ -219,6 +249,7 @@ class REPL:
         """
         # Format tool input for display
         params = ", ".join(f"{k}={repr(v)[:50]}" for k, v in tool_input.items())
+        self._flush_stream_output(force_pending_tail=True)
         self.console.print(f"[dim]▶ {tool_name}({params})[/dim]")
 
     def _on_tool_end(self, tool_name: str, output: str) -> None:
@@ -236,10 +267,40 @@ class REPL:
             output_preview += f" ({len(output.split(chr(10)))} lines)"
 
         # Use different color based on success/error
+        self._flush_stream_output(force_pending_tail=True)
         if output.startswith("Error"):
             self.console.print(f"[red]✗ {tool_name}: {output_preview}[/red]")
         else:
             self.console.print(f"[green]✓ {tool_name}: {output_preview}[/green]")
+
+    def _print_stream_delta(self, text: str) -> None:
+        """Append a committed markdown delta to the terminal."""
+        if not text:
+            return
+        self.console.print(Markdown(text))
+
+    def _flush_stream_output(self, *, force_pending_tail: bool = False) -> None:
+        """Flush stable streamed output into the append-only terminal timeline."""
+        state = self._active_stream
+        if state is None:
+            return
+
+        stable_prefix, pending_tail = _split_stable_markdown(state.full_text)
+        next_pending_tail = pending_tail
+
+        if len(stable_prefix) > len(state.flushed_text):
+            delta = stable_prefix[len(state.flushed_text) :]
+            self._print_stream_delta(delta)
+            state.flushed_text = stable_prefix
+
+        if force_pending_tail and len(state.full_text) > len(state.flushed_text):
+            forced_tail = state.full_text[len(state.flushed_text) :]
+            self.console.print(Text(forced_tail))
+            state.flushed_text = state.full_text
+            next_pending_tail = ""
+
+        state.display.set_pending_tail(next_pending_tail)
+        state.live.refresh()
 
     def run(self) -> None:
         """Run the REPL loop."""
@@ -307,11 +368,17 @@ class REPL:
                 refresh_per_second=10,
                 transient=True,
             ) as live:
+                self._active_stream = _ActiveStreamState(
+                    live=live,
+                    display=streaming_display,
+                )
+
                 def on_chunk(text: str) -> None:
                     chunks.append(text)
                     streaming_display.append_chunk(text)
-                    # Update live display with accumulated text
-                    current_text = "".join(chunks)
+                    self._active_stream.full_text += text
+                    self._flush_stream_output()
+                    current_text = self._active_stream.full_text
                     debug_log(
                         "repl.stream.chunk",
                         turn_id=turn_id,
@@ -319,20 +386,19 @@ class REPL:
                         chunk_count=len(chunks),
                         current_text_len=len(current_text),
                     )
-                    live.refresh()
-
                 response = self.agent.step_stream(user_input, on_chunk)
+                if self._active_stream.full_text != response:
+                    self._active_stream.full_text = response
+                self._flush_stream_output(force_pending_tail=True)
 
-            # After streaming completes, render the full response with markdown
-            # Check if response contains markdown that needs special rendering
+            self._active_stream = None
+
             debug_log(
                 "repl.stream.response",
                 turn_id=turn_id,
                 response_len=len(response),
                 chunk_count=len(chunks),
             )
-
-            self.console.print(Markdown(response))
             debug_log(
                 "repl.stream.complete",
                 turn_id=turn_id,
@@ -341,6 +407,7 @@ class REPL:
             )
 
         except Exception as e:
+            self._active_stream = None
             debug_log(
                 "repl.stream.error",
                 turn_id=turn_id,

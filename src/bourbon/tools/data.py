@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from bourbon.tools import RiskLevel, register_tool
+from bourbon.tools import RiskLevel, ToolContext, register_tool
 
 CSV_ANALYZE_SCHEMA = {
     "type": "object",
@@ -23,12 +23,6 @@ CSV_ANALYZE_SCHEMA = {
 }
 
 
-@register_tool(
-    name="csv_analyze",
-    description="Analyze CSV file with statistics and grouping",
-    input_schema=CSV_ANALYZE_SCHEMA,
-    risk_level=RiskLevel.LOW,
-)
 def csv_analyze(
     file_path: str,
     operations: list[str] = None,
@@ -118,12 +112,6 @@ JSON_QUERY_SCHEMA = {
 }
 
 
-@register_tool(
-    name="json_query",
-    description="Query JSON file with path expression",
-    input_schema=JSON_QUERY_SCHEMA,
-    risk_level=RiskLevel.LOW,
-)
 def json_query(
     file_path: str,
     query: str = None,
@@ -172,3 +160,55 @@ def json_query(
             "success": False,
             "error": str(e),
         }
+
+
+@register_tool(
+    name="CsvAnalyze",
+    aliases=["csv_analyze"],
+    description="Analyze CSV file with statistics and grouping.",
+    input_schema=CSV_ANALYZE_SCHEMA,
+    risk_level=RiskLevel.LOW,
+    always_load=False,
+    should_defer=True,
+    is_read_only=True,
+    search_hint="csv data analyze statistics spreadsheet",
+    required_capabilities=["file_read"],
+)
+def csv_analyze_handler(
+    file_path: str,
+    operations: list[str] | None = None,
+    *,
+    ctx: ToolContext,
+) -> str:
+    """Tool handler for CsvAnalyze."""
+    resolved = str(ctx.workdir / file_path) if not Path(file_path).is_absolute() else file_path
+    result = csv_analyze(resolved, operations)
+    if isinstance(result, dict) and not result.get("success"):
+        return f"Error: {result.get('error', 'Unknown error')}"
+    return json.dumps(result, indent=2, default=str)
+
+
+@register_tool(
+    name="JsonQuery",
+    aliases=["json_query"],
+    description="Query JSON file with path expression.",
+    input_schema=JSON_QUERY_SCHEMA,
+    risk_level=RiskLevel.LOW,
+    always_load=False,
+    should_defer=True,
+    is_read_only=True,
+    search_hint="json query filter jq data",
+    required_capabilities=["file_read"],
+)
+def json_query_handler(
+    file_path: str,
+    query: str | None = None,
+    *,
+    ctx: ToolContext,
+) -> str:
+    """Tool handler for JsonQuery."""
+    resolved = str(ctx.workdir / file_path) if not Path(file_path).is_absolute() else file_path
+    result = json_query(resolved, query)
+    if isinstance(result, dict) and not result.get("success"):
+        return f"Error: {result.get('error', 'Unknown error')}"
+    return json.dumps(result, indent=2, default=str)

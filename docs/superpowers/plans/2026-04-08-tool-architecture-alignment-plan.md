@@ -32,7 +32,7 @@
 - Modify: `src/bourbon/tools/__init__.py`
 - Modify: `tests/test_tools_registry.py`
 
-- [ ] **Step 1: 写失败测试——ToolContext 存在且有正确字段**
+- [x] **Step 1: 写失败测试——ToolContext 存在且有正确字段**
 
 新增到 `tests/test_tools_registry.py`：
 
@@ -57,7 +57,7 @@ class TestToolContext:
         assert "WebFetch" in discovered
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 ```bash
 cd /home/hf/github_project/build-my-agent
@@ -66,7 +66,7 @@ pytest tests/test_tools_registry.py::TestToolContext -v
 
 期望：`ImportError: cannot import name 'ToolContext'`
 
-- [ ] **Step 3: 实现 ToolContext**
+- [x] **Step 3: 实现 ToolContext**
 
 在 `src/bourbon/tools/__init__.py` 顶部，`class RiskLevel` 之前添加（需要先 import 相关模块）：
 
@@ -99,7 +99,7 @@ class ToolContext:
     on_tools_discovered: Callable[[set[str]], None] | None = None
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 ```bash
 pytest tests/test_tools_registry.py::TestToolContext -v
@@ -109,7 +109,7 @@ pytest tests/test_tools_registry.py::TestToolContext -v
 
 ---
 
-- [ ] **Step 5: 写失败测试——Tool 新字段**
+- [x] **Step 5: 写失败测试——Tool 新字段**
 
 追加到 `tests/test_tools_registry.py`：
 
@@ -163,7 +163,7 @@ class TestToolNewFields:
         assert t.is_high_risk_operation({"command": "echo hello"}) is False
 ```
 
-- [ ] **Step 6: 运行确认失败**
+- [x] **Step 6: 运行确认失败**
 
 ```bash
 pytest tests/test_tools_registry.py::TestToolNewFields -v
@@ -171,7 +171,7 @@ pytest tests/test_tools_registry.py::TestToolNewFields -v
 
 期望：`TypeError` 或字段不存在
 
-- [ ] **Step 7: 为 Tool dataclass 新增字段**
+- [x] **Step 7: 为 Tool dataclass 新增字段**
 
 在 `src/bourbon/tools/__init__.py` 的 `Tool` dataclass 中新增字段（在 `required_capabilities` 之后）：
 
@@ -225,7 +225,7 @@ def is_high_risk_operation(self, tool_input: dict) -> bool:
     return self.risk_level == RiskLevel.HIGH
 ```
 
-- [ ] **Step 8: 运行确认通过**
+- [x] **Step 8: 运行确认通过**
 
 ```bash
 pytest tests/test_tools_registry.py::TestToolNewFields -v
@@ -235,7 +235,7 @@ pytest tests/test_tools_registry.py::TestToolNewFields -v
 
 ---
 
-- [ ] **Step 9: 写失败测试——ToolRegistry alias-aware + call()**
+- [x] **Step 9: 写失败测试——ToolRegistry alias-aware + call()**
 
 追加到 `tests/test_tools_registry.py`：
 
@@ -325,7 +325,7 @@ class TestToolRegistryAliases:
         assert "DeferredTool" in names
 ```
 
-- [ ] **Step 10: 运行确认失败**
+- [x] **Step 10: 运行确认失败**
 
 ```bash
 pytest tests/test_tools_registry.py::TestToolRegistryAliases -v
@@ -333,7 +333,7 @@ pytest tests/test_tools_registry.py::TestToolRegistryAliases -v
 
 期望：`AttributeError: 'ToolRegistry' object has no attribute '_alias_map'`
 
-- [ ] **Step 11: 重构 ToolRegistry**
+- [x] **Step 11: 重构 ToolRegistry**
 
 替换 `src/bourbon/tools/__init__.py` 中的 `ToolRegistry` 类：
 
@@ -394,7 +394,7 @@ class ToolRegistry:
         ]
 ```
 
-- [ ] **Step 12: 运行确认通过**
+- [x] **Step 12: 运行确认通过**
 
 ```bash
 pytest tests/test_tools_registry.py::TestToolRegistryAliases -v
@@ -404,7 +404,7 @@ pytest tests/test_tools_registry.py::TestToolRegistryAliases -v
 
 ---
 
-- [ ] **Step 13: 更新 register_tool 装饰器 + _ensure_imports() + 顶层函数**
+- [x] **Step 13: 更新 register_tool 装饰器 + _ensure_imports() + 顶层函数**
 
 替换 `src/bourbon/tools/__init__.py` 中的 `register_tool`、`handler`、`get_tool_with_metadata`、`definitions` 函数：
 
@@ -486,7 +486,7 @@ def tool(name: str) -> Tool | None:
     return get_registry().get(name)
 ```
 
-- [ ] **Step 14: 运行全量测试确认基础设施完好**
+- [x] **Step 14: 运行全量测试确认基础设施完好**
 
 ```bash
 pytest tests/test_tools_registry.py tests/test_tools_base.py tests/test_tools_search.py tests/test_risk_level.py tests/test_capabilities.py -v
@@ -494,7 +494,7 @@ pytest tests/test_tools_registry.py tests/test_tools_base.py tests/test_tools_se
 
 期望：全部 PASS（原有测试因 handler 签名未变，仍可通过）
 
-- [ ] **Step 15: 确认既有工具名测试无需改动（工具重命名在 Chunk 2）**
+- [x] **Step 15: 确认既有工具名测试无需改动（工具重命名在 Chunk 2）**
 
 Chunk 1 只新增基础设施层，不改变工具的实际注册名。`test_tools_are_registered` 中的旧名（`bash`、`read_file` 等）和 `test_alias_lookup_via_global_functions` 的别名测试，均在 Chunk 2 完成工具重命名后一并更新（见 Task 2 Step 1）。
 
@@ -533,7 +533,7 @@ git commit -m "feat(tools): add ToolContext, Tool new fields, alias-aware ToolRe
 - Modify: `src/bourbon/tools/base.py`
 - No test changes needed (test_tools_base.py tests helper functions directly)
 
-- [ ] **Step 1: 写失败测试——新工具名注册 + handler 包装调用 ctx.workdir**
+- [x] **Step 1: 写失败测试——新工具名注册 + handler 包装调用 ctx.workdir**
 
 追加到 `tests/test_tools_registry.py`（新 class + 更新已有测试）：
 
@@ -603,7 +603,7 @@ def test_handler_returns_correct_function(self):
     assert bash_alias is not None
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 pytest tests/test_tools_registry.py::TestBaseToolsRenamed -v
@@ -611,7 +611,7 @@ pytest tests/test_tools_registry.py::TestBaseToolsRenamed -v
 
 期望：`AssertionError: 'Bash' not in ...`
 
-- [ ] **Step 3: 修改 base.py——保留 helper 函数，新增 ctx-aware 注册 handler**
+- [x] **Step 3: 修改 base.py——保留 helper 函数，新增 ctx-aware 注册 handler**
 
 在 `src/bourbon/tools/base.py` 中，**保留所有现有 helper 函数不变**（`safe_path`、`run_bash`、`read_file`、`write_file`、`edit_file`）。
 
@@ -707,7 +707,7 @@ def edit_handler(path: str, old_text: str, new_text: str, *, ctx: ToolContext) -
 from bourbon.tools import RiskLevel, ToolContext, register_tool
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 ```bash
 pytest tests/test_tools_registry.py::TestBaseToolsRenamed tests/test_tools_base.py -v
@@ -734,7 +734,7 @@ Bash: is_destructive=True; Read: is_read_only=True + is_concurrency_safe=True"
 - Modify: `src/bourbon/tools/search.py`
 - No test changes needed (test_tools_search.py tests helper functions directly)
 
-- [ ] **Step 1: 写失败测试——Grep/AstGrep/Glob 注册**
+- [x] **Step 1: 写失败测试——Grep/AstGrep/Glob 注册**
 
 追加到 `tests/test_tools_registry.py`：
 
@@ -774,7 +774,7 @@ class TestSearchToolsRenamed:
         assert t.is_concurrency_safe is True
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 pytest tests/test_tools_registry.py::TestSearchToolsRenamed -v
@@ -782,7 +782,7 @@ pytest tests/test_tools_registry.py::TestSearchToolsRenamed -v
 
 期望：`AssertionError: 'Grep' not in ...`
 
-- [ ] **Step 3: 修改 search.py——保留 helper 函数，重命名注册 + 新增 Glob**
+- [x] **Step 3: 修改 search.py——保留 helper 函数，重命名注册 + 新增 Glob**
 
 在 `src/bourbon/tools/search.py` 底部，替换 `@register_tool` 注册代码：
 
@@ -906,7 +906,7 @@ def glob_handler(pattern: str, path: str = ".", *, ctx: ToolContext) -> str:
 
 在 `search.py` 顶部添加 `from pathlib import Path`（如未有）。
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 ```bash
 pytest tests/test_tools_registry.py::TestSearchToolsRenamed tests/test_tools_search.py -v
@@ -932,7 +932,7 @@ All tools: is_read_only=True, is_concurrency_safe=True"
 **Files:**
 - Modify: `src/bourbon/tools/skill_tool.py`
 
-- [ ] **Step 1: 写失败测试——Skill/SkillResource 注册 + ctx.skill_manager 优先**
+- [x] **Step 1: 写失败测试——Skill/SkillResource 注册 + ctx.skill_manager 优先**
 
 追加到 `tests/test_tools_registry.py`：
 
@@ -963,7 +963,7 @@ class TestSkillToolRenamed:
         assert "mocked skill content" in result
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 pytest tests/test_tools_registry.py::TestSkillToolRenamed -v
@@ -971,7 +971,7 @@ pytest tests/test_tools_registry.py::TestSkillToolRenamed -v
 
 期望：`AssertionError: 'Skill' not in ...`
 
-- [ ] **Step 3: 修改 skill_tool.py**
+- [x] **Step 3: 修改 skill_tool.py**
 
 保留原有函数 `get_skill_manager()`、`skill_tool()`、`skill_read_resource_tool()` **不变**（这些是被测试直接调用的 helper）。
 
@@ -1065,7 +1065,7 @@ def skill_resource_handler(skill_name: str, path: str, *, ctx: ToolContext) -> s
 from bourbon.tools import RiskLevel, ToolContext, register_tool
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 ```bash
 pytest tests/test_tools_registry.py::TestSkillToolRenamed tests/test_skills_new.py -v
@@ -1095,7 +1095,7 @@ Skill: is_read_only=False (aligns with Claude Code semantics)"
 - Modify: `src/bourbon/tools/data.py`
 - Modify: `src/bourbon/tools/documents.py`
 
-- [ ] **Step 1: 写失败测试——Stage-B 工具注册为 deferred**
+- [x] **Step 1: 写失败测试——Stage-B 工具注册为 deferred**
 
 新建 `tests/test_tools_stage_b.py`：
 
@@ -1131,7 +1131,7 @@ class TestStageBDeferred:
         assert t.name == "WebFetch"
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 pytest tests/test_tools_stage_b.py -v
@@ -1139,7 +1139,7 @@ pytest tests/test_tools_stage_b.py -v
 
 期望：失败（WebFetch 不存在或仍在默认 prompt 中）
 
-- [ ] **Step 3: 修改 web.py**
+- [x] **Step 3: 修改 web.py**
 
 保留原 `fetch_url()` helper 函数不变。替换底部注册代码：
 
@@ -1173,7 +1173,7 @@ async def web_fetch_handler(url: str, *, ctx: ToolContext) -> str:
     return str(result)
 ```
 
-- [ ] **Step 4: 修改 data.py**
+- [x] **Step 4: 修改 data.py**
 
 保留原 helper 函数（`csv_analyze`、`json_query`）及其 schema 常量（`CSV_ANALYZE_SCHEMA`、`JSON_QUERY_SCHEMA`）不变。在文件顶部 import 行增加 `ToolContext`，在文件底部替换 `@register_tool` 注册代码：
 
@@ -1235,7 +1235,7 @@ def json_query_handler(
     return json.dumps(result, indent=2, default=str)
 ```
 
-- [ ] **Step 5: 修改 documents.py**
+- [x] **Step 5: 修改 documents.py**
 
 保留原 helper 函数（`pdf_to_text`、`docx_to_markdown`）及其 schema 常量不变。在文件顶部 import 行增加 `ToolContext`，在文件底部替换 `@register_tool` 注册代码：
 
@@ -1298,7 +1298,7 @@ def docx_read_handler(
     return str(result)
 ```
 
-- [ ] **Step 6: 运行确认通过**
+- [x] **Step 6: 运行确认通过**
 
 ```bash
 pytest tests/test_tools_stage_b.py tests/tools/test_web.py tests/tools/test_data.py tests/tools/test_documents.py -v
@@ -1327,7 +1327,7 @@ WebFetch async handler wrapped by AsyncRuntime in ToolRegistry.call()"
 - Modify: `src/bourbon/access_control/__init__.py`
 - Modify: `tests/test_capabilities.py`
 
-- [ ] **Step 1: 写失败测试——新工具名 capability 推断**
+- [x] **Step 1: 写失败测试——新工具名 capability 推断**
 
 在 `tests/test_capabilities.py` 末尾追加（同时保留旧测试——通过 canonicalize 后旧名路由到新名，access_control 集成测试覆盖）：
 
@@ -1367,7 +1367,7 @@ class TestCapabilitiesNewNames:
             assert ctx.file_paths == ["data/file.csv"]
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 pytest tests/test_capabilities.py::TestCapabilitiesNewNames -v
@@ -1375,7 +1375,7 @@ pytest tests/test_capabilities.py::TestCapabilitiesNewNames -v
 
 期望：各 capability 推断返回 0（新名不在旧 _FILE_TOOL_CAPABILITIES 中）
 
-- [ ] **Step 3: 更新 capabilities.py**
+- [x] **Step 3: 更新 capabilities.py**
 
 替换 `_FILE_TOOL_CAPABILITIES`、`_SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH`，更新 `infer_capabilities()` 中的 `if tool_name == "bash":` 分支：
 
@@ -1441,7 +1441,7 @@ def _extract_path(tool_input: object) -> str | None:
     return None
 ```
 
-- [ ] **Step 4: 更新 access_control/__init__.py——加 canonicalize**
+- [x] **Step 4: 更新 access_control/__init__.py——加 canonicalize**
 
 替换 `evaluate()` 方法：
 
@@ -1460,7 +1460,7 @@ def evaluate(self, tool_name: str, tool_input: dict) -> PolicyDecision:
     return self.engine.evaluate(canonical_name, context)
 ```
 
-- [ ] **Step 5: 更新 tests/test_capabilities.py 旧测试**
+- [x] **Step 5: 更新 tests/test_capabilities.py 旧测试**
 
 将旧测试中所有直接调用 `infer_capabilities` 时使用的旧名（`"read_file"`、`"write_file"`、`"edit_file"`、`"rg_search"`、`"ast_grep_search"`、`"bash"`）替换为新主名。示例：
 
@@ -1482,7 +1482,7 @@ def test_extracts_paths_for_file_tools():
 
 对 `test_capabilities.py` 中其他直接调用 `infer_capabilities` 的测试做同样替换（逐一确认文件中所有旧名引用）。
 
-- [ ] **Step 6: 运行确认通过**
+- [x] **Step 6: 运行确认通过**
 
 ```bash
 pytest tests/test_capabilities.py tests/test_access_controller.py tests/test_agent_security_integration.py -v
@@ -1512,7 +1512,7 @@ test_capabilities.py: updated to use new canonical names"
 - Create: `src/bourbon/tools/tool_search.py`
 - Create: `tests/test_tool_search.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `tests/test_tool_search.py`：
 
@@ -1591,7 +1591,7 @@ class TestToolSearch:
         assert all(isinstance(n, str) for n in discovered)
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 pytest tests/test_tool_search.py -v
@@ -1599,7 +1599,7 @@ pytest tests/test_tool_search.py -v
 
 期望：`AssertionError: 'ToolSearch' not in ...`
 
-- [ ] **Step 3: 创建 tool_search.py**
+- [x] **Step 3: 创建 tool_search.py**
 
 新建 `src/bourbon/tools/tool_search.py`：
 
@@ -1685,7 +1685,7 @@ def tool_search_handler(query: str, max_results: int = 5, *, ctx: ToolContext) -
     return "\n".join(lines)
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 ```bash
 pytest tests/test_tool_search.py -v
@@ -1712,7 +1712,7 @@ Calls ctx.on_tools_discovered(matched_names) to update Agent's discovered set."
 - Modify: `src/bourbon/agent.py`
 - Modify: `tests/test_agent_streaming.py` (可能需要补充测试)
 
-- [ ] **Step 1: 写失败测试——_discovered_tools 和 definitions 调用**
+- [x] **Step 1: 写失败测试——_discovered_tools 和 definitions 调用**
 
 新建 `tests/test_agent_tool_discovery.py`：
 
@@ -1787,7 +1787,7 @@ class TestAgentDiscoveredTools:
             assert found, "definitions() was never called with discovered= kwarg"
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 pytest tests/test_agent_tool_discovery.py -v
@@ -1795,7 +1795,7 @@ pytest tests/test_agent_tool_discovery.py -v
 
 期望：`AttributeError: 'Agent' object has no attribute '_discovered_tools'`
 
-- [ ] **Step 3: 修改 agent.py——添加 _discovered_tools 和 _make_tool_context()**
+- [x] **Step 3: 修改 agent.py——添加 _discovered_tools 和 _make_tool_context()**
 
 在 `Agent.__init__()` 中（找到合适位置，如 `self.skills` 初始化之后）添加：
 
@@ -1816,7 +1816,7 @@ def _make_tool_context(self) -> "ToolContext":
     )
 ```
 
-- [ ] **Step 4: 修改 agent.py——更新 3 处 definitions() 调用**
+- [x] **Step 4: 修改 agent.py——更新 3 处 definitions() 调用**
 
 先确认所有调用点：
 
@@ -1840,7 +1840,7 @@ grep -n "definitions()" src/bourbon/agent.py  # 应无输出
 grep -n "definitions(discovered=" src/bourbon/agent.py  # 应有 3 处
 ```
 
-- [ ] **Step 5: 运行部分测试确认通过**
+- [x] **Step 5: 运行部分测试确认通过**
 
 ```bash
 pytest tests/test_agent_tool_discovery.py::TestAgentDiscoveredTools::test_agent_has_discovered_tools_attr tests/test_agent_tool_discovery.py::TestAgentDiscoveredTools::test_make_tool_context_passes_workdir -v
@@ -1848,7 +1848,7 @@ pytest tests/test_agent_tool_discovery.py::TestAgentDiscoveredTools::test_agent_
 
 期望：PASS
 
-- [ ] **Step 6: 修改 _execute_regular_tool()——改为 registry.call()**
+- [x] **Step 6: 修改 _execute_regular_tool()——改为 registry.call()**
 
 在 `_execute_regular_tool()` 中（行 833 附近），替换旧的 handler 调用：
 
@@ -1931,7 +1931,7 @@ def _execute_regular_tool(
     return output
 ```
 
-- [ ] **Step 7: 修改 _execute_tools()——删除 skill 手动分支，保留其他**
+- [x] **Step 7: 修改 _execute_tools()——删除 skill 手动分支，保留其他**
 
 在 `_execute_tools()` 中找到 `elif tool_name == "skill":` 分支（行 947 附近），删除它：
 
@@ -1952,7 +1952,7 @@ pytest tests/test_skills_new.py -v
 # 确保 skill 相关测试通过（Skill 现在走 registry.call() + ctx.skill_manager）
 ```
 
-- [ ] **Step 8: 修改 _generate_options() 中的工具名检查（行 1024）**
+- [x] **Step 8: 修改 _generate_options() 中的工具名检查（行 1024）**
 
 ```python
 # 改前
@@ -1961,7 +1961,7 @@ elif tool_name in ("write_file", "edit_file"):
 elif tool_metadata and not tool_metadata.is_read_only and not tool_metadata.is_destructive:
 ```
 
-- [ ] **Step 9: 运行全量测试**
+- [x] **Step 9: 运行全量测试**
 
 ```bash
 pytest tests/ -v --tb=short 2>&1 | tail -100
@@ -1969,7 +1969,7 @@ pytest tests/ -v --tb=short 2>&1 | tail -100
 
 期望：全部 PASS（或仅 stage-b 相关依赖 skip）
 
-- [ ] **Step 10: 若有测试失败，逐一修复后重新运行**
+- [x] **Step 10: 若有测试失败，逐一修复后重新运行**
 
 常见问题：
 - `test_agent_streaming.py` 中若有直接调用旧工具名 → 通过 alias 应该能工作
@@ -1993,7 +1993,7 @@ git commit -m "feat(agent): add _discovered_tools + ToolContext integration
 
 ### Task 9: 最终回归验证
 
-- [ ] **Step 1: 运行完整测试套件**
+- [x] **Step 1: 运行完整测试套件**
 
 ```bash
 cd /home/hf/github_project/build-my-agent

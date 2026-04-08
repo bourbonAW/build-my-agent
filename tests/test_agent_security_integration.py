@@ -112,10 +112,15 @@ def test_agent_init_creates_security_components(monkeypatch, tmp_path: Path) -> 
 def test_execute_tools_denies_when_policy_blocks(monkeypatch) -> None:
     agent = make_agent_stub()
     agent.access_controller.evaluate.return_value = deny_decision()
-    monkeypatch.setattr("bourbon.agent.handler", lambda name: lambda **kwargs: "should not run")
+    registry = MagicMock()
+    registry.call.return_value = "should not run"
+    monkeypatch.setattr("bourbon.agent.get_registry", lambda: registry)
     monkeypatch.setattr(
         "bourbon.agent.get_tool_with_metadata",
-        lambda name: SimpleNamespace(is_high_risk_operation=lambda tool_input: False),
+        lambda name: SimpleNamespace(
+            is_destructive=False,
+            is_high_risk_operation=lambda tool_input: False,
+        ),
     )
 
     results = agent._execute_tools(
@@ -136,6 +141,7 @@ def test_execute_tools_denies_when_policy_blocks(monkeypatch) -> None:
             "content": "Denied: file_read: deny (file.deny: ~/.ssh/**)",
         }
     ]
+    registry.call.assert_not_called()
     policy_event = agent.audit.record.call_args_list[0].args[0]
     assert policy_event.event_type == EventType.POLICY_DECISION
 
@@ -143,11 +149,15 @@ def test_execute_tools_denies_when_policy_blocks(monkeypatch) -> None:
 def test_need_approval_executes_once_after_user_approves(monkeypatch) -> None:
     agent = make_agent_stub()
     agent.access_controller.evaluate.return_value = approval_decision()
-    tool_handler = MagicMock(return_value="installed")
-    monkeypatch.setattr("bourbon.agent.handler", lambda name: tool_handler)
+    registry = MagicMock()
+    registry.call = MagicMock(return_value="installed")
+    monkeypatch.setattr("bourbon.agent.get_registry", lambda: registry)
     monkeypatch.setattr(
         "bourbon.agent.get_tool_with_metadata",
-        lambda name: SimpleNamespace(is_high_risk_operation=lambda tool_input: False),
+        lambda name: SimpleNamespace(
+            is_destructive=False,
+            is_high_risk_operation=lambda tool_input: False,
+        ),
     )
 
     results = agent._execute_tools(
@@ -167,7 +177,7 @@ def test_need_approval_executes_once_after_user_approves(monkeypatch) -> None:
     output = agent._handle_confirmation_response("Approve and execute")
 
     assert output == "installed"
-    assert tool_handler.call_count == 1
+    assert registry.call.call_count == 1
     assert agent.access_controller.evaluate.call_count == 1
     assert agent.pending_confirmation is None
 
@@ -183,11 +193,15 @@ def test_bash_uses_sandbox_when_enabled(monkeypatch) -> None:
         timed_out=False,
         resource_usage=ResourceUsage(cpu_time=0.1, memory_peak="1M"),
     )
-    tool_handler = MagicMock(return_value="unsandboxed")
-    monkeypatch.setattr("bourbon.agent.handler", lambda name: tool_handler)
+    registry = MagicMock()
+    registry.call = MagicMock(return_value="unsandboxed")
+    monkeypatch.setattr("bourbon.agent.get_registry", lambda: registry)
     monkeypatch.setattr(
         "bourbon.agent.get_tool_with_metadata",
-        lambda name: SimpleNamespace(is_high_risk_operation=lambda tool_input: False),
+        lambda name: SimpleNamespace(
+            is_destructive=True,
+            is_high_risk_operation=lambda tool_input: False,
+        ),
     )
 
     results = agent._execute_tools(
@@ -195,7 +209,7 @@ def test_bash_uses_sandbox_when_enabled(monkeypatch) -> None:
     )
 
     assert results == [{"type": "tool_result", "tool_use_id": "tool-1", "content": "hello\nwarn"}]
-    tool_handler.assert_not_called()
+    registry.call.assert_not_called()
     assert agent.sandbox.execute.call_count == 1
     event_types = [call.args[0].event_type for call in agent.audit.record.call_args_list]
     assert event_types == [EventType.POLICY_DECISION, EventType.TOOL_CALL]

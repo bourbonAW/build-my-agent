@@ -3,8 +3,9 @@
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
-from bourbon.tools import RiskLevel, register_tool
+from bourbon.tools import RiskLevel, ToolContext, register_tool
 
 
 def rg_search(
@@ -186,9 +187,32 @@ def ast_grep_search(
         return f"Error during search: {e}"
 
 
+def glob_files(pattern: str, path: str = ".", *, workdir: Path | None = None) -> str:
+    """Find files matching a glob pattern."""
+    cwd = workdir or Path.cwd()
+    base = Path(path) if Path(path).is_absolute() else cwd / path
+
+    try:
+        matches = sorted(base.glob(pattern))
+    except Exception as e:
+        return f"Error: {e}"
+
+    truncated = len(matches) > 100
+    matches = matches[:100]
+
+    if not matches:
+        return f"No files matching '{pattern}'"
+
+    lines = [str(match.relative_to(cwd) if match.is_relative_to(cwd) else match) for match in matches]
+    if truncated:
+        lines.append("... (results truncated to 100 files)")
+    return "\n".join(lines)
+
+
 # Register tools
 @register_tool(
-    name="rg_search",
+    name="Grep",
+    aliases=["rg_search"],
     description="Search files using ripgrep (regex-based text search).",
     input_schema={
         "type": "object",
@@ -213,20 +237,26 @@ def ast_grep_search(
         "required": ["pattern"],
     },
     risk_level=RiskLevel.LOW,
+    is_read_only=True,
+    is_concurrency_safe=True,
     required_capabilities=["file_read"],
 )
-def rg_search_tool(
+def grep_handler(
     pattern: str,
     path: str = ".",
     glob: str | None = None,
     case_sensitive: bool = False,
+    *,
+    ctx: ToolContext,
 ) -> str:
-    """Tool handler for rg_search."""
-    return rg_search(pattern, path, glob, case_sensitive)
+    """Tool handler for Grep."""
+    resolved_path = str(ctx.workdir / path) if not Path(path).is_absolute() else path
+    return rg_search(pattern, resolved_path, glob, case_sensitive)
 
 
 @register_tool(
-    name="ast_grep_search",
+    name="AstGrep",
+    aliases=["ast_grep_search"],
     description="Search code using ast-grep (structural/AST-based search).",
     input_schema={
         "type": "object",
@@ -247,12 +277,44 @@ def rg_search_tool(
         "required": ["pattern"],
     },
     risk_level=RiskLevel.LOW,
+    is_read_only=True,
+    is_concurrency_safe=True,
     required_capabilities=["file_read"],
 )
-def ast_grep_search_tool(
+def ast_grep_handler(
     pattern: str,
     path: str = ".",
     language: str | None = None,
+    *,
+    ctx: ToolContext,
 ) -> str:
-    """Tool handler for ast_grep_search."""
-    return ast_grep_search(pattern, path, language)
+    """Tool handler for AstGrep."""
+    resolved_path = str(ctx.workdir / path) if not Path(path).is_absolute() else path
+    return ast_grep_search(pattern, resolved_path, language)
+
+
+@register_tool(
+    name="Glob",
+    description="Find files matching a glob pattern (e.g. '**/*.py', 'src/**/*.ts').",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "pattern": {
+                "type": "string",
+                "description": "Glob pattern, e.g. '**/*.py'",
+            },
+            "path": {
+                "type": "string",
+                "description": "Base directory to search (default: workspace root)",
+            },
+        },
+        "required": ["pattern"],
+    },
+    risk_level=RiskLevel.LOW,
+    is_read_only=True,
+    is_concurrency_safe=True,
+    required_capabilities=["file_read"],
+)
+def glob_handler(pattern: str, path: str = ".", *, ctx: ToolContext) -> str:
+    """Tool handler for Glob."""
+    return glob_files(pattern, path, workdir=ctx.workdir)

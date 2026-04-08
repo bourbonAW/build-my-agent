@@ -23,14 +23,19 @@ class InferredContext:
 
 
 _FILE_TOOL_CAPABILITIES = {
-    "read_file": CapabilityType.FILE_READ,
-    "write_file": CapabilityType.FILE_WRITE,
-    "edit_file": CapabilityType.FILE_WRITE,
-    "rg_search": CapabilityType.FILE_READ,
-    "ast_grep_search": CapabilityType.FILE_READ,
+    "Read": CapabilityType.FILE_READ,
+    "Write": CapabilityType.FILE_WRITE,
+    "Edit": CapabilityType.FILE_WRITE,
+    "Grep": CapabilityType.FILE_READ,
+    "AstGrep": CapabilityType.FILE_READ,
+    "Glob": CapabilityType.FILE_READ,
+    "CsvAnalyze": CapabilityType.FILE_READ,
+    "JsonQuery": CapabilityType.FILE_READ,
+    "PdfRead": CapabilityType.FILE_READ,
+    "DocxRead": CapabilityType.FILE_READ,
 }
 
-_SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH = {"rg_search", "ast_grep_search"}
+_SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH = {"Grep", "AstGrep"}
 
 _BASH_NET_PATTERNS = (
     "curl ",
@@ -76,7 +81,7 @@ def infer_capabilities(
     capabilities = list(base_capabilities)
     file_paths: list[str] = []
 
-    if tool_name == "bash":
+    if tool_name == "Bash":
         command = _bash_command(tool_input)
         if _contains_any(command, _BASH_NET_PATTERNS):
             capabilities.append(CapabilityType.NET)
@@ -113,6 +118,9 @@ def _extract_path(tool_input: object) -> str | None:
         path = tool_input.get("path")
         if isinstance(path, str) and path:
             return path
+        file_path = tool_input.get("file_path")
+        if isinstance(file_path, str) and file_path:
+            return file_path
         return None
     if isinstance(tool_input, str) and tool_input:
         return tool_input

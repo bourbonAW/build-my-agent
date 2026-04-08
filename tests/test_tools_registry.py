@@ -4,7 +4,10 @@ This test ensures tools are properly registered when imported.
 This is a critical test - without it, tools won't be available to the agent.
 """
 
+from pathlib import Path
+
 from bourbon import tools
+from bourbon.tools import RiskLevel, Tool, ToolContext, ToolRegistry
 
 
 class TestToolRegistration:
@@ -26,12 +29,14 @@ class TestToolRegistration:
         # Verify expected tools exist
         tool_names = {d["name"] for d in defs}
         expected_tools = {
-            "bash",
-            "read_file",
-            "write_file",
-            "edit_file",
-            "rg_search",
-            "ast_grep_search",
+            "Bash",
+            "Read",
+            "Write",
+            "Edit",
+            "Grep",
+            "AstGrep",
+            "Skill",
+            "SkillResource",
         }
 
         for expected in expected_tools:
@@ -42,13 +47,22 @@ class TestToolRegistration:
         # Ensure tools are registered first
         tools.definitions()
 
-        # bash handler
-        bash = tools.handler("bash")
+        bash = tools.handler("Bash")
         assert bash is not None, "bash handler not found"
+        bash_alias = tools.handler("bash")
+        assert bash_alias is not None, "bash alias handler not found"
 
         # Unknown handler
         unknown = tools.handler("nonexistent_tool")
         assert unknown is None
+
+    def test_alias_lookup_via_global_functions(self):
+        """Legacy tool names should still resolve via aliases."""
+        tools.definitions()
+        assert tools.handler("bash") is not None
+        assert tools.handler("read_file") is not None
+        assert tools.handler("rg_search") is not None
+        assert tools.get_tool_with_metadata("edit_file") is not None
 
     def test_tool_definitions_format(self):
         """Test that tool definitions have correct format for LLM APIs."""
@@ -84,23 +98,20 @@ class TestToolRegistration:
         assert reg1 is reg2, "Registry should be a singleton"
 
     def test_tool_count_consistency(self):
-        """Test that definitions() and list_tools() return consistent counts."""
+        """Default definitions should include only always-loaded tools."""
         registry = tools.get_registry()
 
         # Trigger registration
         defs = tools.definitions()
 
-        # Both should return same count
-        assert len(defs) == len(registry.list_tools()), "Inconsistent tool counts"
+        always_loaded = [tool for tool in registry.list_tools() if tool.always_load]
+        assert len(defs) == len(always_loaded), "Default definitions should exclude deferred tools"
 
     def test_handler_is_callable(self):
         """Test that returned handlers can be called."""
-        # Get bash handler
-        bash = tools.handler("bash")
+        bash = tools.handler("Bash")
         assert bash is not None
 
-        # Should be callable with command argument
-        # Note: We don't actually call it to avoid side effects in tests
         import inspect
 
         sig = inspect.signature(bash)
@@ -109,12 +120,260 @@ class TestToolRegistration:
 
     def test_required_capabilities_metadata(self):
         """Tool metadata should expose declared required capabilities."""
-        assert tools.get_tool_with_metadata("bash").required_capabilities == ["exec"]
-        assert tools.get_tool_with_metadata("read_file").required_capabilities == ["file_read"]
-        assert tools.get_tool_with_metadata("write_file").required_capabilities == ["file_write"]
-        assert tools.get_tool_with_metadata("edit_file").required_capabilities == ["file_write"]
-        assert tools.get_tool_with_metadata("rg_search").required_capabilities == ["file_read"]
-        assert tools.get_tool_with_metadata("ast_grep_search").required_capabilities == [
-            "file_read"
-        ]
-        assert tools.get_tool_with_metadata("skill").required_capabilities == ["skill"]
+        assert tools.get_tool_with_metadata("Bash").required_capabilities == ["exec"]
+        assert tools.get_tool_with_metadata("Read").required_capabilities == ["file_read"]
+        assert tools.get_tool_with_metadata("Write").required_capabilities == ["file_write"]
+        assert tools.get_tool_with_metadata("Edit").required_capabilities == ["file_write"]
+        assert tools.get_tool_with_metadata("Grep").required_capabilities == ["file_read"]
+        assert tools.get_tool_with_metadata("AstGrep").required_capabilities == ["file_read"]
+        assert tools.get_tool_with_metadata("Skill").required_capabilities == ["skill"]
+
+
+class TestToolContext:
+    def test_tool_context_fields(self):
+        ctx = ToolContext(workdir=Path("/tmp"))
+        assert ctx.workdir == Path("/tmp")
+        assert ctx.skill_manager is None
+        assert ctx.on_tools_discovered is None
+
+    def test_tool_context_with_callbacks(self):
+        discovered = set()
+        ctx = ToolContext(
+            workdir=Path("/tmp"),
+            on_tools_discovered=discovered.update,
+        )
+        ctx.on_tools_discovered({"WebFetch"})
+        assert "WebFetch" in discovered
+
+
+class TestToolNewFields:
+    def test_tool_has_new_fields_with_defaults(self):
+        def dummy_handler(*, ctx: ToolContext) -> str:
+            return "ok"
+
+        t = Tool(
+            name="TestTool",
+            description="test",
+            input_schema={"type": "object", "properties": {}},
+            handler=dummy_handler,
+        )
+        assert t.aliases == []
+        assert t.always_load is True
+        assert t.should_defer is False
+        assert t.is_concurrency_safe is False
+        assert t.is_read_only is False
+        assert t.is_destructive is False
+        assert t.search_hint is None
+
+    def test_tool_is_destructive_drives_risk_patterns(self):
+        """is_destructive=True + HIGH risk -> risk_patterns auto-populated."""
+
+        def dummy(*, ctx: ToolContext) -> str:
+            return "ok"
+
+        t = Tool(
+            name="DangerTool",
+            description="d",
+            input_schema={"type": "object", "properties": {}},
+            handler=dummy,
+            risk_level=RiskLevel.HIGH,
+            is_destructive=True,
+        )
+        assert len(t.risk_patterns) > 0
+        assert "rm " in t.risk_patterns
+
+    def test_tool_is_high_risk_operation_uses_is_destructive(self):
+        def dummy(*, ctx: ToolContext) -> str:
+            return "ok"
+
+        t = Tool(
+            name="BashLike",
+            description="d",
+            input_schema={"type": "object", "properties": {}},
+            handler=dummy,
+            risk_level=RiskLevel.HIGH,
+            is_destructive=True,
+        )
+        assert t.is_high_risk_operation({"command": "rm -rf /tmp/foo"}) is True
+        assert t.is_high_risk_operation({"command": "echo hello"}) is False
+
+
+class TestToolRegistryAliases:
+    def setup_method(self):
+        """Each test gets an isolated registry to avoid global pollution."""
+        self.registry = ToolRegistry()
+
+    def _make_tool(self, name: str, aliases: list[str] | None = None) -> Tool:
+        def handler(*, ctx: ToolContext) -> str:
+            return f"called {name}"
+
+        return Tool(
+            name=name,
+            description="test",
+            input_schema={"type": "object", "properties": {}},
+            handler=handler,
+            aliases=aliases or [],
+        )
+
+    def test_alias_lookup_via_resolve(self):
+        tool = self._make_tool("NewName", aliases=["old_name"])
+        self.registry.register(tool)
+        assert self.registry._resolve("NewName") is tool
+        assert self.registry._resolve("old_name") is tool
+        assert self.registry._resolve("nonexistent") is None
+
+    def test_get_is_alias_aware(self):
+        tool = self._make_tool("Read", aliases=["read_file"])
+        self.registry.register(tool)
+        assert self.registry.get("read_file") is tool
+
+    def test_get_handler_is_alias_aware(self):
+        tool = self._make_tool("Bash", aliases=["bash"])
+        self.registry.register(tool)
+        h = self.registry.get_handler("bash")
+        assert h is not None
+
+    def test_call_injects_ctx(self):
+        called_with = {}
+
+        def handler(command: str, *, ctx: ToolContext) -> str:
+            called_with["ctx"] = ctx
+            called_with["command"] = command
+            return "done"
+
+        tool = Tool(
+            name="Bash",
+            description="d",
+            input_schema={"type": "object", "properties": {}},
+            handler=handler,
+            aliases=["bash"],
+        )
+        self.registry.register(tool)
+        ctx = ToolContext(workdir=Path("/tmp"))
+        result = self.registry.call("bash", {"command": "echo hi"}, ctx)
+        assert result == "done"
+        assert called_with["ctx"] is ctx
+        assert called_with["command"] == "echo hi"
+
+    def test_call_unknown_tool_returns_error(self):
+        ctx = ToolContext(workdir=Path("/tmp"))
+        result = self.registry.call("nonexistent", {}, ctx)
+        assert "Unknown tool" in result
+
+    def test_get_tool_definitions_filters_always_load(self):
+        core = self._make_tool("CoreTool")
+        core.always_load = True
+        deferred = self._make_tool("DeferredTool")
+        deferred.always_load = False
+        deferred.should_defer = True
+        self.registry.register(core)
+        self.registry.register(deferred)
+
+        defs = self.registry.get_tool_definitions()
+        names = {d["name"] for d in defs}
+        assert "CoreTool" in names
+        assert "DeferredTool" not in names
+
+    def test_get_tool_definitions_includes_discovered(self):
+        core = self._make_tool("CoreTool")
+        deferred = self._make_tool("DeferredTool")
+        deferred.always_load = False
+        deferred.should_defer = True
+        self.registry.register(core)
+        self.registry.register(deferred)
+
+        defs = self.registry.get_tool_definitions(discovered={"DeferredTool"})
+        names = {d["name"] for d in defs}
+        assert "DeferredTool" in names
+
+
+class TestBaseToolsRenamed:
+    def test_new_names_in_definitions(self):
+        defs = tools.definitions()
+        names = {d["name"] for d in defs}
+        assert "Bash" in names
+        assert "Read" in names
+        assert "Write" in names
+        assert "Edit" in names
+
+    def test_read_handler_uses_ctx_workdir(self, tmp_path):
+        ctx = ToolContext(workdir=tmp_path)
+        (tmp_path / "test.txt").write_text("hello")
+        result = tools.get_registry().call("Read", {"path": "test.txt"}, ctx)
+        assert "hello" in result
+
+    def test_bash_is_destructive(self):
+        tool = tools.get_tool_with_metadata("Bash")
+        assert tool is not None
+        assert tool.is_destructive is True
+        assert tool.risk_level.value == "high"
+
+    def test_read_is_read_only(self):
+        tool = tools.get_tool_with_metadata("Read")
+        assert tool is not None
+        assert tool.is_read_only is True
+        assert tool.is_concurrency_safe is True
+
+    def test_write_edit_not_read_only(self):
+        write_tool = tools.get_tool_with_metadata("Write")
+        edit_tool = tools.get_tool_with_metadata("Edit")
+        assert write_tool is not None
+        assert edit_tool is not None
+        assert write_tool.is_read_only is False
+        assert edit_tool.is_read_only is False
+
+
+class TestSearchToolsRenamed:
+    def test_grep_glob_registered(self):
+        defs = tools.definitions()
+        names = {d["name"] for d in defs}
+        assert "Grep" in names
+        assert "AstGrep" in names
+        assert "Glob" in names
+
+    def test_glob_finds_files(self, tmp_path):
+        (tmp_path / "a.py").write_text("")
+        (tmp_path / "b.py").write_text("")
+        (tmp_path / "c.txt").write_text("")
+        ctx = ToolContext(workdir=tmp_path)
+        result = tools.get_registry().call("Glob", {"pattern": "*.py"}, ctx)
+        assert "a.py" in result
+        assert "b.py" in result
+        assert "c.txt" not in result
+
+    def test_glob_truncates_at_100(self, tmp_path):
+        for i in range(110):
+            (tmp_path / f"f{i}.py").write_text("")
+        ctx = ToolContext(workdir=tmp_path)
+        result = tools.get_registry().call("Glob", {"pattern": "*.py"}, ctx)
+        assert "truncated" in result.lower() or "100" in result
+
+    def test_grep_is_read_only_and_concurrency_safe(self):
+        tool = tools.get_tool_with_metadata("Grep")
+        assert tool is not None
+        assert tool.is_read_only is True
+        assert tool.is_concurrency_safe is True
+
+
+class TestSkillToolRenamed:
+    def test_skill_skillresource_registered(self):
+        defs = tools.definitions()
+        names = {d["name"] for d in defs}
+        assert "Skill" in names
+        assert "SkillResource" in names
+
+    def test_skill_is_not_read_only(self):
+        tool = tools.get_tool_with_metadata("Skill")
+        assert tool is not None
+        assert tool.is_read_only is False
+
+    def test_skill_uses_ctx_skill_manager_when_provided(self, tmp_path):
+        from unittest.mock import MagicMock
+
+        mock_manager = MagicMock()
+        mock_manager.is_activated.return_value = False
+        mock_manager.activate.return_value = "mocked skill content"
+        ctx = ToolContext(workdir=tmp_path, skill_manager=mock_manager)
+        result = tools.get_registry().call("Skill", {"name": "nonexistent-skill"}, ctx)
+        mock_manager.activate.assert_called_once_with("nonexistent-skill")
+        assert "mocked skill content" in result

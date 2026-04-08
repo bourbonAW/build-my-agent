@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from bourbon.tools import RiskLevel, register_tool
+from bourbon.tools import RiskLevel, ToolContext, register_tool
 
 
 def _is_valid_url(url: str) -> bool:
@@ -38,12 +38,6 @@ FETCH_URL_SCHEMA = {
 }
 
 
-@register_tool(
-    name="fetch_url",
-    description="Fetch content from URL",
-    input_schema=FETCH_URL_SCHEMA,
-    risk_level=RiskLevel.MEDIUM,
-)
 async def fetch_url(
     url: str,
     timeout: int = 30,
@@ -86,3 +80,25 @@ async def fetch_url(
             "url": url,
             "error": str(e),
         }
+
+
+@register_tool(
+    name="WebFetch",
+    aliases=["fetch_url"],
+    description="Fetch and extract content from a URL.",
+    input_schema=FETCH_URL_SCHEMA,
+    risk_level=RiskLevel.MEDIUM,
+    always_load=False,
+    should_defer=True,
+    search_hint="web fetch url http download browser",
+    required_capabilities=["net"],
+)
+async def web_fetch_handler(url: str, *, ctx: ToolContext) -> str:
+    """Tool handler for WebFetch."""
+    del ctx
+    result = await fetch_url(url)
+    if isinstance(result, dict) and not result.get("success"):
+        return f"Error: {result.get('error', 'Unknown error')}"
+    if isinstance(result, dict):
+        return result.get("text", str(result))
+    return str(result)

@@ -3,7 +3,7 @@
 import subprocess
 from pathlib import Path
 
-from bourbon.tools import RiskLevel, register_tool
+from bourbon.tools import RiskLevel, ToolContext, register_tool
 
 
 def safe_path(path: str, workdir: Path) -> Path:
@@ -208,7 +208,8 @@ def edit_file(
 
 # Register tools with schemas
 @register_tool(
-    name="bash",
+    name="Bash",
+    aliases=["bash"],
     description="Run a shell command in the workspace.",
     input_schema={
         "type": "object",
@@ -221,15 +222,17 @@ def edit_file(
         "required": ["command"],
     },
     risk_level=RiskLevel.HIGH,
+    is_destructive=True,
     required_capabilities=["exec"],
 )
-def bash_tool(command: str, workdir: Path | None = None) -> str:
-    """Tool handler for bash."""
-    return run_bash(command, workdir=workdir)
+def bash_handler(command: str, *, ctx: ToolContext) -> str:
+    """Tool handler for Bash."""
+    return run_bash(command, workdir=ctx.workdir)
 
 
 @register_tool(
-    name="read_file",
+    name="Read",
+    aliases=["read_file"],
     description="Read the contents of a file.",
     input_schema={
         "type": "object",
@@ -246,19 +249,23 @@ def bash_tool(command: str, workdir: Path | None = None) -> str:
         "required": ["path"],
     },
     risk_level=RiskLevel.LOW,
+    is_read_only=True,
+    is_concurrency_safe=True,
     required_capabilities=["file_read"],
 )
-def read_file_tool(
+def read_handler(
     path: str,
     limit: int | None = None,
-    workdir: Path | None = None,
+    *,
+    ctx: ToolContext,
 ) -> str:
-    """Tool handler for read_file."""
-    return read_file(path, workdir=workdir, limit=limit)
+    """Tool handler for Read."""
+    return read_file(path, workdir=ctx.workdir, limit=limit)
 
 
 @register_tool(
-    name="write_file",
+    name="Write",
+    aliases=["write_file"],
     description="Write content to a file (creates directories if needed).",
     input_schema={
         "type": "object",
@@ -277,17 +284,19 @@ def read_file_tool(
     risk_level=RiskLevel.MEDIUM,
     required_capabilities=["file_write"],
 )
-def write_file_tool(
+def write_handler(
     path: str,
     content: str,
-    workdir: Path | None = None,
+    *,
+    ctx: ToolContext,
 ) -> str:
-    """Tool handler for write_file."""
-    return write_file(path, content, workdir=workdir)
+    """Tool handler for Write."""
+    return write_file(path, content, workdir=ctx.workdir)
 
 
 @register_tool(
-    name="edit_file",
+    name="Edit",
+    aliases=["edit_file"],
     description="Replace exact text in a file (only first occurrence).",
     input_schema={
         "type": "object",
@@ -310,11 +319,12 @@ def write_file_tool(
     risk_level=RiskLevel.MEDIUM,
     required_capabilities=["file_write"],
 )
-def edit_file_tool(
+def edit_handler(
     path: str,
     old_text: str,
     new_text: str,
-    workdir: Path | None = None,
+    *,
+    ctx: ToolContext,
 ) -> str:
-    """Tool handler for edit_file."""
-    return edit_file(path, old_text, new_text, workdir=workdir)
+    """Tool handler for Edit."""
+    return edit_file(path, old_text, new_text, workdir=ctx.workdir)
