@@ -840,7 +840,9 @@ def ast_grep_handler(
     *,
     ctx: ToolContext,
 ) -> str:
-    return ast_grep_search(pattern, path, language)
+    from pathlib import Path
+    resolved_path = str(ctx.workdir / path) if not Path(path).is_absolute() else path
+    return ast_grep_search(pattern, resolved_path, language)
 
 
 def glob_files(pattern: str, path: str = ".", *, workdir: Path | None = None) -> str:
@@ -1094,7 +1096,7 @@ Skill: is_read_only=False (aligns with Claude Code semantics)"
 
 import pytest
 
-pytest.importorskip("httpx", reason="Stage-B web dependencies not installed")
+pytest.importorskip("aiohttp", reason="Stage-B web dependencies not installed")
 
 from bourbon.tools import definitions, get_tool_with_metadata
 
@@ -1156,8 +1158,10 @@ from bourbon.tools import RiskLevel, ToolContext, register_tool
 )
 async def web_fetch_handler(url: str, *, ctx: ToolContext) -> str:
     result = await fetch_url(url)
+    if isinstance(result, dict) and not result.get("success"):
+        return f"Error: {result.get('error', 'Unknown error')}"
     if isinstance(result, dict):
-        return result.get("content", str(result))
+        return result.get("text", str(result))
     return str(result)
 ```
 
@@ -1188,7 +1192,9 @@ def csv_analyze_handler(
     ctx: ToolContext,
 ) -> str:
     import json
-    result = csv_analyze(file_path, operations)
+    from pathlib import Path
+    resolved = str(ctx.workdir / file_path) if not Path(file_path).is_absolute() else file_path
+    result = csv_analyze(resolved, operations)
     if isinstance(result, dict) and not result.get("success"):
         return f"Error: {result.get('error', 'Unknown error')}"
     return json.dumps(result, indent=2, default=str)
@@ -1213,7 +1219,9 @@ def json_query_handler(
     ctx: ToolContext,
 ) -> str:
     import json
-    result = json_query(file_path, query)
+    from pathlib import Path
+    resolved = str(ctx.workdir / file_path) if not Path(file_path).is_absolute() else file_path
+    result = json_query(resolved, query)
     if isinstance(result, dict) and not result.get("success"):
         return f"Error: {result.get('error', 'Unknown error')}"
     return json.dumps(result, indent=2, default=str)
@@ -1245,7 +1253,9 @@ def pdf_read_handler(
     *,
     ctx: ToolContext,
 ) -> str:
-    result = pdf_to_text(file_path, page_range)
+    from pathlib import Path
+    resolved = str(ctx.workdir / file_path) if not Path(file_path).is_absolute() else file_path
+    result = pdf_to_text(resolved, page_range)
     if isinstance(result, dict) and not result.get("success"):
         return f"Error: {result.get('error', 'Unknown error')}"
     if isinstance(result, dict):
@@ -1270,7 +1280,9 @@ def docx_read_handler(
     *,
     ctx: ToolContext,
 ) -> str:
-    result = docx_to_markdown(file_path)
+    from pathlib import Path
+    resolved = str(ctx.workdir / file_path) if not Path(file_path).is_absolute() else file_path
+    result = docx_to_markdown(resolved)
     if isinstance(result, dict) and not result.get("success"):
         return f"Error: {result.get('error', 'Unknown error')}"
     if isinstance(result, dict):
@@ -1338,6 +1350,13 @@ class TestCapabilitiesNewNames:
     def test_glob_uses_workdir_default_path(self):
         ctx = infer_capabilities("AstGrep", {}, [])
         assert "." in ctx.file_paths
+
+    def test_stage_b_tools_infer_file_read(self):
+        """Stage-B 工具通过 file_path 键正确推断 FILE_READ。"""
+        for tool_name in ("CsvAnalyze", "JsonQuery", "PdfRead", "DocxRead"):
+            ctx = infer_capabilities(tool_name, {"file_path": "data/file.csv"}, [])
+            assert CapabilityType.FILE_READ in ctx.capabilities, f"{tool_name} should have FILE_READ"
+            assert ctx.file_paths == ["data/file.csv"]
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -1354,12 +1373,17 @@ pytest tests/test_capabilities.py::TestCapabilitiesNewNames -v
 
 ```python
 _FILE_TOOL_CAPABILITIES = {
-    "Read":    CapabilityType.FILE_READ,
-    "Write":   CapabilityType.FILE_WRITE,
-    "Edit":    CapabilityType.FILE_WRITE,
-    "Grep":    CapabilityType.FILE_READ,
-    "AstGrep": CapabilityType.FILE_READ,
-    "Glob":    CapabilityType.FILE_READ,
+    "Read":       CapabilityType.FILE_READ,
+    "Write":      CapabilityType.FILE_WRITE,
+    "Edit":       CapabilityType.FILE_WRITE,
+    "Grep":       CapabilityType.FILE_READ,
+    "AstGrep":    CapabilityType.FILE_READ,
+    "Glob":       CapabilityType.FILE_READ,
+    # Stage-B tools（使用 file_path 字段）
+    "CsvAnalyze": CapabilityType.FILE_READ,
+    "JsonQuery":  CapabilityType.FILE_READ,
+    "PdfRead":    CapabilityType.FILE_READ,
+    "DocxRead":   CapabilityType.FILE_READ,
 }
 
 _SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH = {"Grep", "AstGrep"}
@@ -1392,6 +1416,21 @@ def infer_capabilities(
         return InferredContext(capabilities, file_paths)
 
     return InferredContext(_dedupe(capabilities), file_paths)
+```
+
+同时扩展 `_extract_path()` 以支持 Stage-B 工具使用的 `file_path` 字段：
+
+```python
+def _extract_path(tool_input: object) -> str | None:
+    if isinstance(tool_input, Mapping):
+        # 支持 path（核心工具）和 file_path（Stage-B 工具）两种键
+        path = tool_input.get("path") or tool_input.get("file_path")
+        if isinstance(path, str) and path:
+            return path
+        return None
+    if isinstance(tool_input, str) and tool_input:
+        return tool_input
+    return None
 ```
 
 - [ ] **Step 4: 更新 access_control/__init__.py——加 canonicalize**
@@ -1509,7 +1548,7 @@ class TestToolSearch:
 
     def test_token_scoring_matches_webfetch(self):
         """'fetch web' query 应命中 WebFetch（若已注册）。"""
-        pytest.importorskip("httpx")
+        pytest.importorskip("aiohttp")
         discovered: set[str] = set()
         ctx = ToolContext(
             workdir=Path("/tmp"),
@@ -1680,9 +1719,8 @@ import pytest
 class TestAgentDiscoveredTools:
     def _make_agent(self, tmp_path):
         from bourbon.agent import Agent
-        from bourbon.llm import LLMClient
-        mock_llm = MagicMock(spec=LLMClient)
-        return Agent(workdir=tmp_path, llm=mock_llm)
+        from bourbon.config import Config
+        return Agent(config=Config(), workdir=tmp_path)
 
     def test_agent_has_discovered_tools_attr(self, tmp_path):
         agent = self._make_agent(tmp_path)
@@ -1713,14 +1751,17 @@ class TestAgentDiscoveredTools:
         with patch("bourbon.agent.definitions") as mock_defs:
             mock_defs.return_value = []
             try:
-                agent._run_conversation_loop("test")
+                agent._run_conversation_loop()  # 无参数
             except Exception:
                 pass
             # 验证 definitions 被调用时传入了 discovered
+            found = False
             for call in mock_defs.call_args_list:
                 if call.kwargs.get("discovered") is not None:
                     assert "WebFetch" in call.kwargs["discovered"]
+                    found = True
                     break
+            assert found, "definitions() was never called with discovered= kwarg"
 ```
 
 - [ ] **Step 2: 运行确认失败**
