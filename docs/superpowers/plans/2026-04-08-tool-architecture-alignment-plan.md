@@ -1520,7 +1520,6 @@ test_capabilities.py: updated to use new canonical names"
 """Tests for ToolSearch deferred tool discovery."""
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -1723,21 +1722,23 @@ Calls ctx.on_tools_discovered(matched_names) to update Agent's discovered set."
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestAgentDiscoveredTools:
-    def _make_agent(self, tmp_path):
-        """Create Agent via real __init__, patching create_client to avoid LLM init.
+    def _make_agent(self, tmp_path: Path):
+        """Create Agent via real __init__ without touching real home/session state.
 
-        Agent.__init__ calls create_client(config) which raises if no API key.
-        Match the pattern used in test_agent_streaming.py and
-        test_agent_security_integration.py: bypass LLM creation with a mock.
+        Agent.__init__ sets _discovered_tools, so this test should exercise the
+        real constructor. Patch create_client() to avoid API-key/network issues,
+        and patch Path.home() so session files are created under pytest's tmp_path
+        instead of ~/.bourbon/sessions.
         """
         from bourbon.agent import Agent
         from bourbon.config import Config
 
-        with patch("bourbon.agent.create_client", return_value=MagicMock()):
+        with (
+            patch("bourbon.agent.create_client", return_value=MagicMock()),
+            patch("bourbon.agent.Path.home", return_value=tmp_path),
+        ):
             agent = Agent(config=Config(), workdir=tmp_path)
         return agent
 
@@ -1766,7 +1767,7 @@ class TestAgentDiscoveredTools:
 
     def test_definitions_called_with_discovered(self, tmp_path):
         agent = self._make_agent(tmp_path)
-        # __init__ already creates session; limit rounds and inject WebFetch
+        # __init__ already created a tmpdir-backed session; limit rounds and inject WebFetch
         agent._discovered_tools.add("WebFetch")
         agent._max_tool_rounds = 1
 
