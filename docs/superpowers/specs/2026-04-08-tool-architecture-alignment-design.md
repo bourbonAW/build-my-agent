@@ -258,7 +258,7 @@ def _ensure_imports():
 | `documents.py` | `pdf_to_text` | `PdfRead` | `["pdf_to_text"]` |
 | `documents.py` | `docx_to_markdown` | `DocxRead` | `["docx_to_markdown"]` |
 
-`WebFetch` 的 handler 保持 `async def`，由 `ToolRegistry.call()` 的 `asyncio.run()` 包装统一处理。
+`WebFetch` 的 handler 保持 `async def`，由 `ToolRegistry.call()` 的 `AsyncRuntime.run()` 透明包装处理。
 
 #### access_control 同步更新
 
@@ -489,7 +489,7 @@ def skill_handler(name: str, *, ctx: ToolContext) -> str:
 
 第 2 轮 LLM 调用
 └── prompt 工具（11 个）= always_load + _discovered_tools
-└── 模型现在可以调用 WebFetch（async handler 由 asyncio.run 透明包装）
+└── 模型现在可以调用 WebFetch（async handler 由 AsyncRuntime 透明包装）
 ```
 
 ---
@@ -499,39 +499,75 @@ def skill_handler(name: str, *, ctx: ToolContext) -> str:
 ```
 src/bourbon/tools/
 ├── __init__.py          # 重构：ToolContext（+skill_manager）、Tool 新字段、
-│                        #        ToolRegistry（_alias_map, _resolve, call+asyncio.run）
+│                        #        ToolRegistry（_alias_map, _resolve, call+AsyncRuntime）
+│                        #        _async_runtime 模块级单例（AsyncRuntime）
 │                        #        register_tool 新参数、_ensure_imports()（含 Stage-B try/except）
 │                        #        get/get_handler/get_tool 改为 alias-aware
-├── base.py              # 重命名：Bash(is_destructive=True)/Read/Write/Edit，handler→ctx
-├── search.py            # 重命名：Grep/AstGrep，新增 Glob
-├── skill_tool.py        # 重命名：Skill/SkillResource，handler 改 ctx，优先 ctx.skill_manager
+├── base.py              # 重命名：Bash/Read/Write/Edit；原 helper 函数保留不动（供测试直接调用）；
+│                        #        新增 ctx-aware 注册 handler 包装层（调用原 helper）
+├── search.py            # 同上：Grep/AstGrep 重命名 + 新增 Glob；原 helper 保留
+├── skill_tool.py        # 同上：Skill/SkillResource 重命名；ctx-aware handler 优先用 ctx.skill_manager
 ├── tool_search.py       # 新建：ToolSearch 工具
-├── web.py               # 重命名：WebFetch(should_defer=True)，保持 async handler
-├── data.py              # 重命名：CsvAnalyze/JsonQuery(should_defer=True)，handler→ctx
-└── documents.py         # 重命名：PdfRead/DocxRead(should_defer=True)，handler→ctx
+├── web.py               # 重命名：WebFetch(should_defer=True)；原 fetch_url() helper 保留；
+│                        #        handler 为 async，由 AsyncRuntime 包装
+├── data.py              # 重命名：CsvAnalyze/JsonQuery(should_defer=True)；原 helper 保留
+└── documents.py         # 重命名：PdfRead/DocxRead(should_defer=True)；原 helper 保留
 
 src/bourbon/agent.py
 ├── 新增 _discovered_tools: set[str]
 ├── 新增 _make_tool_context()（传入 self.skills 和 on_tools_discovered）
-├── 改 _execute_tools() → registry.call(name, input, ctx)
+├── 改 _execute_regular_tool() 内部：registry.call(name, input, ctx) 替换旧 handler 调用
+│   （_execute_tools() 分发结构不变，compress/TodoWrite 特殊路径保留）
 ├── 改 3 处 definitions() → definitions(discovered=self._discovered_tools)
 ├── 改 5 处 hardcoded 工具名 → 基于 Tool 属性判断
-└── 删除 skill 手动分支（行 947）
+└── 删除 skill 手动分支（行 947）：
+    _execute_tools() 中 `elif tool_name == "skill":` 分支删除，
+    Skill 工具统一走 _execute_regular_tool() → registry.call() 路径
 
 src/bourbon/access_control/
 ├── capabilities.py      # 工具名映射：旧名 → 新名（Bash/Read/Grep 等）
-└── __init__.py          # 同步工具名引用
+└── __init__.py          # evaluate() 入口加 canonicalize，工具名引用同步
 ```
 
 ---
 
 ## 向后兼容策略
 
-1. **aliases + alias-aware 查找**：所有查找路径（`get`、`get_handler`、`get_tool`、`_resolve`）均经过 alias map，旧工具名的测试代码和历史对话无需修改。
-2. **access_control 同步**：工具名映射改为新名，alias 机制保证运行时路由正确，不影响 capability 推断逻辑。
-3. **async handler 透明包装**：`registry.call()` 用 `inspect.isawaitable + asyncio.run()` 包装，调用方无感知。
-4. **Stage-B 行为改进**：原来 Stage-B 根本未注册；重构后注册但 `should_defer=True`，需 ToolSearch 才进 prompt，是正向改进。
-5. **skill_manager 降级**：`ctx.skill_manager` 有值时用 Agent 级，无值时降级到全局 `_skill_manager`，测试中直接调用 `skill_handler` 不受影响。
+1. **保留原 helper 函数 API**：aliases 只覆盖工具名路由，无法覆盖测试中直接 import Python 函数的用法。
+   现有测试直接调用 `run_bash()`、`read_file()`、`fetch_url()`、`csv_analyze()`、`skill_tool()` 等，
+   依赖它们的无 ctx 签名和结构化返回值。
+   **策略**：原 helper 函数保留不动；重构只新增一层 ctx-aware 注册 handler，thin-wrap 原 helper：
+   ```python
+   # base.py
+   def run_bash(command: str, workdir: Path | None = None, ...) -> str: ...  # 保留原函数
+
+   @register_tool(name="Bash", aliases=["bash"], is_destructive=True, ...)
+   def bash_handler(command: str, *, ctx: ToolContext) -> str:
+       return run_bash(command, workdir=ctx.workdir)  # 包装层
+
+   # web.py
+   async def fetch_url(url: str) -> dict: ...  # 保留原函数（测试直接调用）
+
+   @register_tool(name="WebFetch", aliases=["fetch_url"], should_defer=True, ...)
+   async def web_fetch_handler(url: str, *, ctx: ToolContext) -> str:
+       result = await fetch_url(url)
+       return str(result)  # handler 返回 str，原函数返回 dict（测试验证原函数）
+   ```
+   测试文件 `test_web.py`、`test_data.py`、`test_documents.py`、`test_skills_new.py` 无需修改。
+
+2. **aliases + alias-aware 查找**：所有查找路径（`get`、`get_handler`、`get_tool`、`_resolve`）均经过 alias map，
+   历史对话中的旧工具名调用无需修改。
+
+3. **access_control canonicalize**：`evaluate()` 入口先 resolve alias 得到主名，capability 推断始终用主名，
+   旧名调用（`read_file`、`bash`）路由到新名映射，文件路径约束不丢失。
+
+4. **async handler 透明包装**：`registry.call()` 用 `inspect.isawaitable + AsyncRuntime.run()` 包装，
+   调用方无感知；复用仓库已有 `AsyncRuntime`，不引入 `asyncio.run()` 的事件循环冲突。
+
+5. **Stage-B 行为改进**：原来 Stage-B 根本未注册；重构后注册但 `should_defer=True`，需 ToolSearch 才进 prompt，是正向改进。
+
+6. **skill_manager 降级**：`ctx.skill_manager` 有值时用 Agent 级，无值时降级到全局 `_skill_manager`，
+   单元测试直接调用 skill handler 时不受影响。
 
 ---
 
@@ -553,7 +589,7 @@ src/bourbon/access_control/
 1. **Step 1**：重构 `src/bourbon/tools/__init__.py`
    - `ToolContext`（含 `skill_manager`、`on_tools_discovered`）
    - `Tool` 新字段、`__post_init__` 改 `is_destructive`
-   - `ToolRegistry`：`_alias_map`、`_resolve()`、`call()`（asyncio.run 包装）、`get_tool_definitions`
+   - `ToolRegistry`：`_alias_map`、`_resolve()`、`call()`（AsyncRuntime 包装）、`get_tool_definitions`
    - `register_tool()` 新参数
    - 顶层函数 alias-aware + `_ensure_imports()`（含 Stage-B try/except）
    - ✅ 验证：所有现有测试通过
