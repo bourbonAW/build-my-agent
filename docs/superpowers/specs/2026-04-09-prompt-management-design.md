@@ -23,6 +23,7 @@ This design introduces a dedicated `src/bourbon/prompt/` package that is async-n
 - Section-level caching (deferred to future)
 - API-level `cache_control` markers (deferred to future)
 - Async migration of `Agent`, `LLMClient`, or `REPL` (separate task)
+- Per-turn `git status` caching — accepted known cost (~5ms per turn); deferred optimization
 
 ---
 
@@ -101,12 +102,13 @@ class PromptBuilder:
         self._append_prompt = append_prompt
 
     async def build(self, ctx: PromptContext) -> str:
-        if self._custom_prompt:
+        # Use `is not None` to allow empty string as a valid custom prompt
+        if self._custom_prompt is not None:
             base = self._custom_prompt
         else:
             base = await self._assemble_sections(ctx)
 
-        if self._append_prompt:
+        if self._append_prompt is not None:
             base = base + "\n\n" + self._append_prompt
 
         return base
@@ -125,31 +127,40 @@ class PromptBuilder:
 
 ---
 
-## Static Sections (`sections.py`)
+## Sections (`sections.py`)
 
-Each section is a `PromptSection` with a hardcoded string. Content quality follows Claude Code's prompt conventions: direct, structured, no fluff.
+Sections fall into two kinds based on their `content` field type:
 
-| order | name | Summary |
-|-------|------|---------|
-| 10 | `identity` | "You are Bourbon, a general-purpose AI assistant working in {workdir}." + capability overview |
-| 20 | `task_guidelines` | Use TodoWrite for multi-step tasks; do not repeat explored actions; always invoke tools rather than describing them |
-| 30 | `error_handling` | HIGH/MEDIUM/LOW risk rules matching current `_build_system_prompt()` content |
-| 40 | `task_adaptability` | Coding / investment / data / general task hints |
+- **Static** (`content: str`): hardcoded string, evaluated once at module import time
+- **Dynamic** (`content: Callable`): async factory called on each `build()`, receives `PromptContext`
 
-Note: `identity` is the only section that references `workdir`. Since workdir is available in `PromptContext`, it will be formatted into the string at build time (making it technically dynamic). It is implemented as a dynamic section with a trivial factory:
+Both kinds can appear in `DEFAULT_SECTIONS` — the distinction is about content evaluation timing, not about which list a section belongs to.
+
+| order | name | Kind | Summary |
+|-------|------|------|---------|
+| 10 | `identity` | dynamic | "You are Bourbon, working in {workdir}." — needs `ctx.workdir` at build time |
+| 20 | `task_guidelines` | static | Use TodoWrite; no repeated actions; always invoke tools |
+| 30 | `error_handling` | static | HIGH/MEDIUM/LOW risk rules matching current `_build_system_prompt()` content |
+| 40 | `task_adaptability` | static | Coding / investment / data / general task hints |
+
+`identity` is dynamic because it embeds `ctx.workdir`:
 
 ```python
 async def identity_section(ctx: PromptContext) -> str:
     return (
         f"You are Bourbon, a general-purpose AI assistant working in {ctx.workdir}.\n\n"
         "You can help with coding, data analysis, investment research, writing, "
-        "and general knowledge work."
+        "and general knowledge work.\n\n"
+        "You have access to:\n"
+        "- Built-in tools for file operations, code search, and execution\n"
+        "- Specialized Skills for domain-specific tasks\n"
+        "- MCP tools for external integrations (databases, APIs, etc.)"
     )
 
 IDENTITY = PromptSection(name="identity", order=10, content=identity_section)
 ```
 
-All other sections are pure static strings.
+`DEFAULT_SECTIONS` contains all four sections above (including the dynamic `identity`). The `DYNAMIC_SECTIONS` list in `dynamic.py` contains the skills and MCP sections.
 
 ---
 
@@ -163,6 +174,9 @@ async def skills_section(ctx: PromptContext) -> str:
     catalog = ctx.skill_manager.get_catalog()
     if not catalog:
         return ""
+    # Note: activation instruction format simplified from the XML <function_calls>
+    # example in the old _get_skills_section() — relies on LLM understanding
+    # "use the Skill tool" from tool definitions, which is cleaner and sufficient.
     return "\n".join([
         "SKILLS",
         "======",
@@ -172,8 +186,6 @@ async def skills_section(ctx: PromptContext) -> str:
         "its full instructions before proceeding.",
         "",
         catalog,
-        "",
-        "To activate a skill, use the Skill tool with the skill name.",
     ])
 
 
@@ -188,11 +200,19 @@ async def mcp_tools_section(ctx: PromptContext) -> str:
     if not mcp_tools:
         return ""
 
+    # MCPManager registers tools as "{server_name}-{tool_name}" (hyphen separator,
+    # not colon) for LLM compatibility — see mcp_client/manager.py.
+    # To group by server without ambiguity (server names may contain "-"),
+    # match against known server prefixes rather than splitting blindly.
+    server_names = [s.name for s in ctx.mcp_manager.config.servers]
     server_tools: dict[str, list[str]] = {}
     for tool_name in mcp_tools:
-        if ":" in tool_name:
-            server, tool = tool_name.split(":", 1)
-            server_tools.setdefault(server, []).append(tool)
+        matched_server = next(
+            (s for s in server_names if tool_name.startswith(f"{s}-")), None
+        )
+        if matched_server:
+            tool = tool_name[len(matched_server) + 1:]
+            server_tools.setdefault(matched_server, []).append(tool)
 
     lines = [
         "MCP TOOLS",
@@ -204,7 +224,7 @@ async def mcp_tools_section(ctx: PromptContext) -> str:
     for server, tools in sorted(server_tools.items()):
         lines.append(f"  {server}:")
         for t in sorted(tools):
-            lines.append(f"    - {server}:{t}")
+            lines.append(f"    - {server}-{t}")
         lines.append("")
     lines.append("Use these tools just like any other tool.")
     return "\n".join(lines)
@@ -310,6 +330,7 @@ __all__ = [
 **Added in `__init__`:**
 ```python
 from bourbon.prompt import ALL_SECTIONS, PromptBuilder, PromptContext, ContextInjector
+from bourbon.tools import _get_async_runtime  # existing AsyncRuntime bridge
 
 self._prompt_ctx = PromptContext(
     workdir=self.workdir,
@@ -318,11 +339,14 @@ self._prompt_ctx = PromptContext(
 )
 self._prompt_builder = PromptBuilder(
     sections=ALL_SECTIONS,
-    custom_prompt=system_prompt,
+    custom_prompt=system_prompt,   # None = use default sections
+    append_prompt=None,            # Not exposed via Agent.__init__ yet; reserved for future use
 )
 self._context_injector = ContextInjector()
 
-# Bridge async → sync during transition period
+# Bridge async → sync during transition period.
+# _get_async_runtime() returns the shared AsyncRuntime singleton from bourbon.tools.
+# Removed once full-stack async migration lands (separate task).
 self.system_prompt = _get_async_runtime().run(
     self._prompt_builder.build(self._prompt_ctx)
 )
@@ -330,16 +354,19 @@ self.system_prompt = _get_async_runtime().run(
 
 **In `step()` and `step_stream()`:**
 ```python
-# Rebuild system prompt each turn (dynamic sections refresh automatically)
+# Rebuild system prompt each turn (dynamic sections — skills, MCP — refresh automatically)
 self.system_prompt = _get_async_runtime().run(
     self._prompt_builder.build(self._prompt_ctx)
 )
 
-# Inject env context into user message
+# Inject env context: creates enriched string for LLM only.
+# The original user_input (without injection) is stored in the transcript via session.add_message().
+# enriched_input is passed to the LLM as the final user turn in _run_conversation_loop().
 enriched_input = _get_async_runtime().run(
     self._context_injector.inject(user_input, self._prompt_ctx)
 )
-# Use enriched_input when creating TranscriptMessage
+# session.add_message() uses original user_input (for clean transcript storage)
+# LLM receives enriched_input (with system-reminder prepended)
 ```
 
 **`_finalize_mcp_initialization()` simplification:**
@@ -374,7 +401,7 @@ Each component is independently testable:
 - **`builder.py`**: Test with mock sections (static + dynamic), verify ordering, custom_prompt override, append_prompt behavior
 - **`sections.py`**: Snapshot tests for section content
 - **`dynamic.py`**: Unit tests with mock `SkillManager` / `MCPManager`
-- **`context.py`**: Test git detection (mock subprocess), date injection, fallback when not a git repo
+- **`context.py`**: Test git detection (mock subprocess), date injection, fallback when not a git repo, empty `user_message` edge case
 - **`agent.py` integration**: Existing tests continue to work; verify system_prompt is rebuilt on each step
 
 ---
@@ -383,8 +410,12 @@ Each component is independently testable:
 
 1. Create `src/bourbon/prompt/` with all new files
 2. Update `agent.py` to use new module (delete 3 methods, add 3 attributes)
-3. Run existing test suite — no behavior change expected
-4. When full-stack async migration lands, remove `_get_async_runtime().run(...)` wrappers
+3. Run existing test suite — minor behavior differences to expect:
+   - When no skills are available, system prompt no longer contains `"(No skills available)"` (now omitted entirely)
+   - System prompt is now rebuilt on every `step()` call, not just at init/MCP connect
+   - Skills activation instruction format simplified: XML `<function_calls>` example removed; LLM relies on tool definitions
+   - **Bug fix**: `_get_mcp_section()` in `agent.py` never rendered any tools (used `:` separator while tools use `-`). New `mcp_tools_section()` correctly uses `-`, so MCP tools will now appear in the system prompt for the first time
+4. When full-stack async migration lands, remove `_get_async_runtime().run(...)` wrappers (separate cleanup ticket)
 
 ---
 
