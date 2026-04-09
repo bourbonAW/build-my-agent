@@ -307,7 +307,7 @@ class TranscriptStore:
         summaries = []
         for meta_file in session_dir.glob("*.meta.json"):
             try:
-                session_id = UUID(meta_file.stem.replace(".meta", ""))
+                session_id = UUID(meta_file.name.removesuffix(".meta.json"))
                 metadata = self.load_metadata(project_name, session_id)
                 if metadata:
                     summaries.append(

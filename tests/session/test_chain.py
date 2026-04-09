@@ -199,7 +199,7 @@ class TestCompactManifestRoundTrip:
 
         # Step 2: simulate maybe_compact appending boundary to transcript
         boundary_msg = chain.get(result.boundary_uuid)
-        disk_transcript.append(boundary_msg)
+        disk_transcript.append(copy.deepcopy(boundary_msg))
 
         # Step 3: persist manifest
         saved_overrides = dict(result.parent_uuid_overrides)
@@ -251,7 +251,7 @@ class TestCompactManifestRoundTrip:
 
         # Append boundary to disk transcript
         boundary_msg = chain.get(result.boundary_uuid)
-        disk_transcript.append(boundary_msg)
+        disk_transcript.append(copy.deepcopy(boundary_msg))
 
         # Without parent_uuid_overrides: disk's first_preserved (msgs[3] deepcopy)
         # has parent_uuid still pointing to msgs[2].uuid (original value)

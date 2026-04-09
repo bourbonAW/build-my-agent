@@ -164,6 +164,48 @@ def test_step_stream_handles_tool_calls():
     assert chunks == ["Done"]
 
 
+def test_step_stream_persists_usage_to_session_message():
+    """step_stream sets usage on the assistant message stored in the session."""
+    from bourbon.agent import Agent
+    from bourbon.config import Config
+    from bourbon.session.types import MessageRole
+
+    config = Config()
+    agent = object.__new__(Agent)
+    agent.config = config
+    agent.workdir = Path.cwd()
+    _setup_mock_session(agent)
+    agent._rounds_without_todo = 0
+    agent._max_tool_rounds = 50
+    agent.pending_confirmation = None
+    agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    class MockLLM:
+        def chat_stream(self, **kwargs):
+            yield {"type": "text", "text": "Hello"}
+            yield {"type": "usage", "input_tokens": 11, "output_tokens": 7}
+            yield {"type": "stop", "stop_reason": "end_turn"}
+
+    agent.llm = MockLLM()
+    agent.system_prompt = "You are a test agent"
+
+    agent.step_stream("test", lambda _text: None)
+
+    messages = agent.session.get_messages_for_llm()
+    assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 1
+
+    # Verify usage is persisted to the transcript message
+    chain = agent.session.chain
+    transcript_msgs = chain.build_active_chain()
+    assistant_transcript = [m for m in transcript_msgs if m.role == MessageRole.ASSISTANT]
+    assert len(assistant_transcript) == 1
+    assert assistant_transcript[0].usage is not None, "streaming path must persist usage to session message"
+    assert assistant_transcript[0].usage.input_tokens == 11
+    assert assistant_transcript[0].usage.output_tokens == 7
+    assert assistant_transcript[0].usage.total_tokens == 18
+
+
 def test_step_stream_returns_confirmation_prompt_when_tool_sets_pending_confirmation():
     """step_stream returns the formatted confirmation prompt for follow-up UI handling."""
     from bourbon.agent import Agent, PendingConfirmation

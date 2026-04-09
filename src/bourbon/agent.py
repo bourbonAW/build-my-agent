@@ -554,6 +554,12 @@ class Agent:
 
                 # Add assistant response to Session
                 assistant_msg = self._build_assistant_transcript_message(content)
+                if self.token_usage["total_tokens"] > 0:
+                    assistant_msg.usage = TokenUsage(
+                        input_tokens=self.token_usage["input_tokens"],
+                        output_tokens=self.token_usage["output_tokens"],
+                        total_tokens=self.token_usage["total_tokens"],
+                    )
                 self.session.add_message(assistant_msg)
                 self.session.save()
 
@@ -1074,13 +1080,6 @@ class Agent:
             content=content,
             source_tool_uuid=source_assistant_uuid,
         )
-
-    def _auto_compact(self) -> None:
-        """Perform automatic context compression.
-
-        DEPRECATED: Use session.maybe_compact() instead.
-        """
-        self.session.maybe_compact()
 
     def _manual_compact(self) -> None:
         """Perform manual context compression."""
