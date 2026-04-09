@@ -23,7 +23,7 @@ This design introduces a dedicated `src/bourbon/prompt/` package that is async-n
 - Section-level caching (deferred to future)
 - API-level `cache_control` markers (deferred to future)
 - Async migration of `Agent`, `LLMClient`, or `REPL` (separate task)
-- Per-turn `git status` caching — accepted known cost (~5ms per turn); deferred optimization
+- Per-turn `git status` caching — accepted known cost; 2s timeout guards the critical path
 
 ---
 
@@ -248,7 +248,26 @@ Injects environment context (workdir, date, git status) into **human-authored tu
 
 **Scope**: injection applies only at the `step()` / `step_stream()` entry point — i.e., when a real human types input. It does NOT apply to:
 - Tool result turns (role=user, but machine-generated)
-- Synthetic confirmation/continuation turns added inside `_handle_confirmation_response()`
+- Confirmation response text added inside `_handle_confirmation_response()` (yes/no continuations)
+
+**Pending confirmation path**: when `self.pending_confirmation` is set, `step()` / `step_stream()` short-circuit to `_handle_confirmation_response()` before the inject+add_message block. The system_prompt rebuild MUST happen before this short-circuit so that both paths see a fresh prompt:
+
+```python
+def step(self, user_input: str) -> str:
+    # Rebuild prompt first, before any short-circuit — both paths need a fresh prompt
+    self.system_prompt = _get_async_runtime().run(
+        self._prompt_builder.build(self._prompt_ctx)
+    )
+    
+    if self.pending_confirmation:
+        return self._handle_confirmation_response(user_input)  # no injection here
+
+    # Only inject for non-confirmation human input
+    enriched_input = _get_async_runtime().run(
+        self._context_injector.inject(user_input, self._prompt_ctx)
+    )
+    ...
+```
 
 **Session storage**: the enriched message (with `<system-reminder>`) is stored in the session and returned by `session.get_messages_for_llm()`. The session is an LLM transcript, not a user-display artifact, so storing the enriched version is correct and ensures both `_run_conversation_loop()` and `_run_stream_loop()` see it without any additional plumbing.
 
@@ -276,6 +295,8 @@ class ContextInjector:
             parts.append(f"Git status:\n{git_info}")
         return "\n".join(parts)
 
+    _GIT_TIMEOUT = 2.0  # seconds; large repos on slow I/O should not block user input
+
     async def _get_git_status(self, workdir: Path) -> str | None:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -283,7 +304,13 @@ class ContextInjector:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await proc.communicate()
+            try:
+                stdout, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=self._GIT_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                return None
             if proc.returncode == 0:
                 return stdout.decode().strip()
             return None
@@ -362,12 +389,16 @@ self.system_prompt = _get_async_runtime().run(
 )
 ```
 
-**In `step()` and `step_stream()`:**
+**In `step()` and `step_stream()` (expanded to show pending_confirmation handling):**
 ```python
-# Rebuild system prompt each turn (dynamic sections — skills, MCP — refresh automatically)
+# Rebuild system prompt FIRST — before any short-circuit path (including pending_confirmation)
 self.system_prompt = _get_async_runtime().run(
     self._prompt_builder.build(self._prompt_ctx)
 )
+
+# Short-circuit for confirmation responses: fresh prompt but no injection
+if self.pending_confirmation:
+    return self._handle_confirmation_response(user_input)
 
 # Inject env context into the human-authored user message.
 # The enriched string (with <system-reminder>) is what gets stored in the session
@@ -434,9 +465,27 @@ Each component is independently testable:
 
 1. Create `src/bourbon/prompt/` with all new files
 2. Update `agent.py` to use new module (delete 3 methods, add 3 attributes)
-3. Update the following tests that directly depend on removed internals:
-   - **`tests/test_agent_error_policy.py`** (line ~52): calls `agent._build_system_prompt()` directly → replace with `agent.system_prompt` assertion or call `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))`
-   - **`tests/test_mcp_sync_runtime.py`** (line ~49): asserts `initialize_mcp_sync()` immediately refreshes `agent.system_prompt` → update assertion to check that `agent.step()` produces a prompt containing MCP tools (since prompt is now rebuilt per-step, not per-MCP-init)
+3. Update the following tests that directly depend on removed internals or bypassed `__init__`:
+
+   **Tests calling removed methods directly:**
+   - **`tests/test_agent_error_policy.py`** (line ~52): calls `agent._build_system_prompt()` directly → replace with `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))` and assert the result string
+   - **`tests/test_mcp_sync_runtime.py`** (line ~49): asserts `initialize_mcp_sync()` immediately refreshes `agent.system_prompt` → replace with: call `initialize_mcp_sync()`, then call `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))` and assert the resulting string contains the MCP tool name. Do NOT use `agent.step()` as the observable because `step()` returns assistant text, not the prompt
+
+   **Tests that bypass `__init__` via `Agent.__new__` and call `step()` / `step_stream()` directly:**
+   These tests construct a partial Agent object by hand and will fail with `AttributeError` because `_prompt_builder`, `_prompt_ctx`, and `_context_injector` are not set.
+   - **`tests/test_agent_streaming.py`** (line ~45): uses `object.__new__(Agent)` fixture → add the three new attributes to the fixture setup
+   - **`tests/test_debug_logging.py`** (line ~38): similar `__new__`-based fixture → same fix
+
+   **Pattern for all `__new__`-based fixtures:**
+   ```python
+   agent = object.__new__(Agent)
+   # ... existing fixture setup ...
+   # Add new prompt attributes:
+   agent._prompt_ctx = PromptContext(workdir=agent.workdir, skill_manager=None, mcp_manager=None)
+   agent._prompt_builder = PromptBuilder(sections=[], custom_prompt="test prompt")
+   agent._context_injector = ContextInjector()
+   ```
+   Any test fixture that calls `step()` or `step_stream()` must include these three attributes.
 4. Behavior differences to document in test deltas:
    - When no skills are available, system prompt no longer contains `"(No skills available)"` (now omitted entirely)
    - System prompt rebuilt every `step()` call, not just at init/MCP connect
