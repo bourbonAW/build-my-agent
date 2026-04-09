@@ -30,6 +30,7 @@ from bourbon.session.types import (
 from bourbon.skills import SkillManager
 from bourbon.todos import TodoManager
 from bourbon.tools import (
+    ToolContext,
     definitions,
     get_registry,
     get_tool_with_metadata,
@@ -833,15 +834,11 @@ class Agent:
         return output or "(no output)"
 
     def _get_discovered_tools(self) -> set[str]:
-        """Return the discovered-tool set, initializing stub agents on demand."""
-        if not hasattr(self, "_discovered_tools"):
-            self._discovered_tools = set()
+        """Return the discovered-tool set (initialized in __init__)."""
         return self._discovered_tools
 
-    def _make_tool_context(self):
+    def _make_tool_context(self) -> ToolContext:
         """Construct the shared tool execution context."""
-        from bourbon.tools import ToolContext
-
         return ToolContext(
             workdir=self.workdir,
             skill_manager=self.skills,

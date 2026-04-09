@@ -63,12 +63,9 @@ def tool_search_handler(query: str, max_results: int = 5, *, ctx: ToolContext) -
     if not tokens:
         return f"No tools found matching '{query}'"
 
-    scored_tools = sorted(
-        deferred_tools,
-        key=lambda tool: _score(tool, tokens),
-        reverse=True,
-    )
-    matches = [tool for tool in scored_tools if _score(tool, tokens) > 0][:max_results]
+    scores = {tool.name: _score(tool, tokens) for tool in deferred_tools}
+    scored_tools = sorted(deferred_tools, key=lambda tool: scores[tool.name], reverse=True)
+    matches = [tool for tool in scored_tools if scores[tool.name] > 0][:max_results]
 
     if ctx.on_tools_discovered and matches:
         ctx.on_tools_discovered({tool.name for tool in matches})

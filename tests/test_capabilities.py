@@ -175,6 +175,18 @@ class TestCapabilitiesNewNames:
         context = infer_capabilities("AstGrep", {}, [])
         assert "." in context.file_paths
 
+    def test_glob_uses_workdir_default_path_when_no_path_given(self):
+        """Glob with no path argument should default to workdir ('.') for audit."""
+        context = infer_capabilities("Glob", {}, [])
+        assert CapabilityType.FILE_READ in context.capabilities
+        assert "." in context.file_paths, "Glob with no path should default to '.' like Grep/AstGrep"
+
+    def test_glob_with_explicit_path_uses_that_path(self):
+        """Glob with explicit path should use that path, not default."""
+        context = infer_capabilities("Glob", {"path": "src/"}, [])
+        assert CapabilityType.FILE_READ in context.capabilities
+        assert context.file_paths == ["src/"]
+
     def test_stage_b_tools_infer_file_read(self):
         for tool_name in ("CsvAnalyze", "JsonQuery", "PdfRead", "DocxRead"):
             context = infer_capabilities(tool_name, {"file_path": "data/file.csv"}, [])

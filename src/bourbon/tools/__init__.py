@@ -66,6 +66,13 @@ class Tool:
 
     def __post_init__(self):
         """Initialize default risk patterns and validate capability declarations."""
+        # Enforce that deferred tools are never unconditionally loaded.
+        if self.should_defer and self.always_load:
+            raise ValueError(
+                f"Tool '{self.name}': should_defer=True implies always_load=False; "
+                "set always_load=False explicitly."
+            )
+
         # Validate and normalise required_capabilities at construction time so
         # typos in @register_tool decorators are caught at import, not at runtime.
         if self.required_capabilities is not None:
@@ -221,11 +228,19 @@ def register_tool(
     """Decorator to register a tool function.
 
     Args:
-        name: Tool name
-        description: Tool description
+        name: Canonical tool name (PascalCase, e.g. "Bash", "Read")
+        description: Tool description shown in LLM tool list
         input_schema: JSON schema for tool inputs
         risk_level: Risk level (LOW/MEDIUM/HIGH)
         risk_patterns: Patterns that make operation high-risk (for bash-like tools)
+        required_capabilities: Access control capabilities required (e.g. ["exec"])
+        aliases: Legacy names that resolve to this tool (e.g. ["bash", "run_bash"])
+        always_load: If True, included in every LLM call's tool list (default True)
+        should_defer: If True, tool is hidden until discovered via ToolSearch; implies always_load=False
+        is_concurrency_safe: If True, tool can be called concurrently with others
+        is_read_only: If True, tool makes no side-effects (safe for parallel use)
+        is_destructive: If True, enables automatic risk_patterns population for HIGH-risk tools
+        search_hint: Extra keywords for ToolSearch scoring (space-separated)
 
     Example:
         @register_tool(
@@ -268,12 +283,8 @@ def tool(name: str) -> Tool | None:
 
 def _ensure_imports() -> None:
     """Lazily import tool modules to trigger registration."""
-    from bourbon.tools import base, search, skill_tool  # noqa: F401
+    from bourbon.tools import base, search, skill_tool, tool_search  # noqa: F401
 
-    try:
-        from bourbon.tools import tool_search  # noqa: F401
-    except ImportError:
-        pass
     try:
         from bourbon.tools import web  # noqa: F401
     except ImportError:

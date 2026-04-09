@@ -35,7 +35,7 @@ _FILE_TOOL_CAPABILITIES = {
     "DocxRead": CapabilityType.FILE_READ,
 }
 
-_SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH = {"Grep", "AstGrep"}
+_SEARCH_TOOLS_WITH_WORKDIR_DEFAULT_PATH = {"Grep", "AstGrep", "Glob"}
 
 _BASH_NET_PATTERNS = (
     "curl ",

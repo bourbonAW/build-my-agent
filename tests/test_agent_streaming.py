@@ -15,6 +15,7 @@ def _setup_mock_session(agent, tmp_path=None):
     mgr = SessionManager(store=store, project_name="test", project_dir=str(agent.workdir))
     agent.session = mgr.create_session()
     agent._session_manager = mgr
+    agent._discovered_tools = set()
 
 
 def test_get_session_tokens_returns_estimate():

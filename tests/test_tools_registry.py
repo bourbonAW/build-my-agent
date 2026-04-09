@@ -146,6 +146,59 @@ class TestToolContext:
         assert "WebFetch" in discovered
 
 
+class TestToolConstraints:
+    def test_should_defer_true_with_always_load_true_raises(self):
+        """should_defer=True implies always_load=False; combining them is a misconfiguration."""
+
+        def dummy(*, ctx: ToolContext) -> str:
+            return "ok"
+
+        import pytest
+
+        with pytest.raises(ValueError, match="should_defer"):
+            Tool(
+                name="BadTool",
+                description="bad",
+                input_schema={"type": "object", "properties": {}},
+                handler=dummy,
+                should_defer=True,
+                always_load=True,
+            )
+
+    def test_should_defer_false_with_always_load_true_is_valid(self):
+        """Normal tools with always_load=True are fine."""
+
+        def dummy(*, ctx: ToolContext) -> str:
+            return "ok"
+
+        t = Tool(
+            name="NormalTool",
+            description="normal",
+            input_schema={"type": "object", "properties": {}},
+            handler=dummy,
+            should_defer=False,
+            always_load=True,
+        )
+        assert t.always_load is True
+
+    def test_should_defer_true_with_always_load_false_is_valid(self):
+        """Deferred tools with always_load=False are the intended pattern."""
+
+        def dummy(*, ctx: ToolContext) -> str:
+            return "ok"
+
+        t = Tool(
+            name="DeferredTool",
+            description="deferred",
+            input_schema={"type": "object", "properties": {}},
+            handler=dummy,
+            should_defer=True,
+            always_load=False,
+        )
+        assert t.should_defer is True
+        assert t.always_load is False
+
+
 class TestToolNewFields:
     def test_tool_has_new_fields_with_defaults(self):
         def dummy_handler(*, ctx: ToolContext) -> str:
