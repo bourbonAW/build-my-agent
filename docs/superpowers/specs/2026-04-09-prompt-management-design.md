@@ -202,9 +202,13 @@ async def mcp_tools_section(ctx: PromptContext) -> str:
 
     # MCPManager registers tools as "{server_name}-{tool_name}" (hyphen separator,
     # not colon) for LLM compatibility — see mcp_client/manager.py.
-    # To group by server without ambiguity (server names may contain "-"),
-    # match against known server prefixes rather than splitting blindly.
-    server_names = [s.name for s in ctx.mcp_manager.config.servers]
+    # Use longest-prefix-first matching to handle server names that share a prefix
+    # (e.g., servers "foo" and "foo-bar": "foo-bar-baz" must match "foo-bar", not "foo").
+    server_names = sorted(
+        [s.name for s in ctx.mcp_manager.config.servers],
+        key=len,
+        reverse=True,   # longest first
+    )
     server_tools: dict[str, list[str]] = {}
     for tool_name in mcp_tools:
         matched_server = next(
@@ -240,7 +244,13 @@ DYNAMIC_SECTIONS: list[PromptSection] = [
 
 ## ContextInjector (`context.py`)
 
-Injects environment context (workdir, date, git status) into each user message as a `<system-reminder>` block, following Claude Code's pattern of wrapping dynamic per-turn context in user messages rather than rebuilding the system prompt.
+Injects environment context (workdir, date, git status) into **human-authored turns only** as a `<system-reminder>` block prepended to the message content. This follows Claude Code's pattern of injecting per-turn dynamic context via user messages rather than rebuilding the system prompt.
+
+**Scope**: injection applies only at the `step()` / `step_stream()` entry point — i.e., when a real human types input. It does NOT apply to:
+- Tool result turns (role=user, but machine-generated)
+- Synthetic confirmation/continuation turns added inside `_handle_confirmation_response()`
+
+**Session storage**: the enriched message (with `<system-reminder>`) is stored in the session and returned by `session.get_messages_for_llm()`. The session is an LLM transcript, not a user-display artifact, so storing the enriched version is correct and ensures both `_run_conversation_loop()` and `_run_stream_loop()` see it without any additional plumbing.
 
 ```python
 import asyncio
@@ -249,7 +259,7 @@ from datetime import date
 
 
 class ContextInjector:
-    """Prepends <system-reminder> with env context to each user message."""
+    """Prepends <system-reminder> with env context to a human-authored user message."""
 
     async def inject(self, user_message: str, ctx: PromptContext) -> str:
         env_info = await self._get_env_info(ctx)
@@ -359,14 +369,22 @@ self.system_prompt = _get_async_runtime().run(
     self._prompt_builder.build(self._prompt_ctx)
 )
 
-# Inject env context: creates enriched string for LLM only.
-# The original user_input (without injection) is stored in the transcript via session.add_message().
-# enriched_input is passed to the LLM as the final user turn in _run_conversation_loop().
+# Inject env context into the human-authored user message.
+# The enriched string (with <system-reminder>) is what gets stored in the session
+# and thus returned by session.get_messages_for_llm() in both _run_conversation_loop()
+# and _run_stream_loop() without any additional plumbing.
 enriched_input = _get_async_runtime().run(
     self._context_injector.inject(user_input, self._prompt_ctx)
 )
-# session.add_message() uses original user_input (for clean transcript storage)
-# LLM receives enriched_input (with system-reminder prepended)
+
+# Add enriched message to session (replaces the old session.add_message(user_input) call)
+user_msg = TranscriptMessage(
+    role=MessageRole.USER,
+    content=[TextBlock(text=enriched_input)],  # enriched, not original
+)
+self.session.add_message(user_msg)
+# _run_conversation_loop() / _run_stream_loop() then call session.get_messages_for_llm()
+# and naturally see the enriched message — no changes needed in those loops.
 ```
 
 **`_finalize_mcp_initialization()` simplification:**
@@ -385,10 +403,16 @@ Agent.__init__()
   └─ PromptBuilder(ALL_SECTIONS, custom_prompt?)
        └─ build(PromptContext) ──async──► str  →  self.system_prompt
 
-Agent.step(user_input)
-  ├─ PromptBuilder.build(ctx) ──async──► system_prompt  (refreshes dynamic sections)
-  ├─ ContextInjector.inject(user_input, ctx) ──async──► enriched user message
-  └─ LLM.chat(messages, system=system_prompt)
+Agent.step(user_input)                         # human-authored input only
+  ├─ PromptBuilder.build(ctx) ──async──► self.system_prompt  (refreshes dynamic sections)
+  ├─ ContextInjector.inject(user_input, ctx) ──async──► enriched_input
+  ├─ session.add_message(enriched_input)        # enriched stored in session
+  └─ _run_conversation_loop()
+       └─ session.get_messages_for_llm()  ──► [... enriched user msg ...]
+            └─ LLM.chat(messages, system=self.system_prompt)
+
+Note: tool result turns added inside the loop are NOT injected — they go through
+session.add_message() directly, bypassing ContextInjector.
 ```
 
 ---
@@ -402,7 +426,7 @@ Each component is independently testable:
 - **`sections.py`**: Snapshot tests for section content
 - **`dynamic.py`**: Unit tests with mock `SkillManager` / `MCPManager`
 - **`context.py`**: Test git detection (mock subprocess), date injection, fallback when not a git repo, empty `user_message` edge case
-- **`agent.py` integration**: Existing tests continue to work; verify system_prompt is rebuilt on each step
+- **`agent.py` integration**: See Migration Path for specific tests that require updates; verify system_prompt is rebuilt on each step and session messages contain `<system-reminder>`
 
 ---
 
@@ -410,12 +434,16 @@ Each component is independently testable:
 
 1. Create `src/bourbon/prompt/` with all new files
 2. Update `agent.py` to use new module (delete 3 methods, add 3 attributes)
-3. Run existing test suite — minor behavior differences to expect:
+3. Update the following tests that directly depend on removed internals:
+   - **`tests/test_agent_error_policy.py`** (line ~52): calls `agent._build_system_prompt()` directly → replace with `agent.system_prompt` assertion or call `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))`
+   - **`tests/test_mcp_sync_runtime.py`** (line ~49): asserts `initialize_mcp_sync()` immediately refreshes `agent.system_prompt` → update assertion to check that `agent.step()` produces a prompt containing MCP tools (since prompt is now rebuilt per-step, not per-MCP-init)
+4. Behavior differences to document in test deltas:
    - When no skills are available, system prompt no longer contains `"(No skills available)"` (now omitted entirely)
-   - System prompt is now rebuilt on every `step()` call, not just at init/MCP connect
-   - Skills activation instruction format simplified: XML `<function_calls>` example removed; LLM relies on tool definitions
-   - **Bug fix**: `_get_mcp_section()` in `agent.py` never rendered any tools (used `:` separator while tools use `-`). New `mcp_tools_section()` correctly uses `-`, so MCP tools will now appear in the system prompt for the first time
-4. When full-stack async migration lands, remove `_get_async_runtime().run(...)` wrappers (separate cleanup ticket)
+   - System prompt rebuilt every `step()` call, not just at init/MCP connect
+   - Skills activation instruction format simplified: XML `<function_calls>` example removed
+   - **Bug fix**: MCP tools now appear in system prompt (old `_get_mcp_section()` used `:` separator and never rendered anything)
+   - User messages stored in session now contain `<system-reminder>` prefix
+5. When full-stack async migration lands, remove `_get_async_runtime().run(...)` wrappers (separate cleanup ticket)
 
 ---
 
