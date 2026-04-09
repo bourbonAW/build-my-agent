@@ -15,6 +15,7 @@ from bourbon.config import Config
 from bourbon.debug import debug_log
 from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
+from bourbon.prompt import ALL_SECTIONS, ContextInjector, PromptBuilder, PromptContext
 from bourbon.sandbox import SandboxManager
 from bourbon.session.manager import Session, SessionManager
 from bourbon.session.storage import TranscriptStore
@@ -31,6 +32,7 @@ from bourbon.skills import SkillManager
 from bourbon.todos import TodoManager
 from bourbon.tools import (
     ToolContext,
+    _get_async_runtime,
     definitions,
     get_registry,
     get_tool_with_metadata,
@@ -104,9 +106,21 @@ class Agent:
             workdir=self.workdir,
         )
 
-        # Build system prompt (will be updated after MCP connect)
-        self._custom_system_prompt = system_prompt
-        self.system_prompt = system_prompt or self._build_system_prompt()
+        # Build system prompt using prompt module
+        self._prompt_ctx = PromptContext(
+            workdir=self.workdir,
+            skill_manager=self.skills,
+            mcp_manager=self.mcp,
+        )
+        self._prompt_builder = PromptBuilder(
+            sections=ALL_SECTIONS,
+            custom_prompt=system_prompt,
+            append_prompt=None,
+        )
+        self._context_injector = ContextInjector()
+        self.system_prompt = _get_async_runtime().run(
+            self._prompt_builder.build(self._prompt_ctx)
+        )
 
         # Initialize Session system
         session_dir = Path.home() / ".bourbon" / "sessions"
@@ -219,160 +233,25 @@ class Agent:
         self.mcp.disconnect_all_sync(timeout=timeout)
 
     def _finalize_mcp_initialization(self, results: dict) -> dict:
-        """Update prompt state after MCP initialization."""
-        if results and not self._custom_system_prompt:
-            summary = self.mcp.get_connection_summary()
-            if summary["total_tools"] > 0:
-                self.system_prompt = self._build_system_prompt()
+        """MCP init complete; next step() call will rebuild system_prompt automatically."""
         return results
-
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with skills and instructions."""
-        lines = [
-            f"You are Bourbon, a general-purpose AI assistant working in {self.workdir}.",
-            "",
-            "You can help users with a wide variety of tasks including coding, data analysis,",
-            "investment research, writing, and general knowledge work.",
-            "",
-            "You have access to:",
-            "- Built-in tools for file operations, code search, and execution",
-            (
-                "- Specialized Skills for domain-specific tasks "
-                "(investment analysis, project management, etc.)"
-            ),
-            "- MCP tools for external integrations (databases, APIs, etc.)",
-            "",
-            "When working on multi-step tasks, use TodoWrite to track progress.",
-            "",
-            "IMPORTANT: Do not repeat the same actions. If you've already explored or analyzed,",
-            "provide a summary and move forward. Avoid getting stuck in loops.",
-            "",
-            "CRITICAL: When you want to use a tool, you MUST use the tool_calls format.",
-            "Do not just describe what you plan to do - actually invoke the tools.",
-            "",
-            self._get_skills_section(),
-            "",
-            self._get_mcp_section(),
-            "",
-            "TASK ADAPTABILITY:",
-            "- For coding tasks: Use code search, file editing, and testing tools",
-            "- For investment tasks: Activate investment-agent skill for portfolio analysis",
-            "- For data tasks: Use file operations and data processing tools",
-            "- For general questions: Use your knowledge and available tools as needed",
-            "",
-            "CRITICAL ERROR HANDLING RULES:",
-            (
-                "1. HIGH RISK operations (software install/uninstall, version changes, "
-                "system commands, destructive operations):"
-            ),
-            (
-                "   - If the operation fails (e.g., version not found, package unavailable), "
-                "you MUST STOP and ask the user for confirmation"
-            ),
-            (
-                "   - NEVER automatically switch versions, install alternatives, or change "
-                "parameters without user approval"
-            ),
-            (
-                "   - Examples: pip install package==wrong_version, apt install "
-                "nonexistent-package, rm important-files"
-            ),
-            "",
-            "2. LOW RISK operations (Read, Grep, AstGrep, Glob, exploration):",
-            (
-                "   - If a file is not found, you MAY search for similar files and "
-                "attempt to read the correct one"
-            ),
-            "   - If search returns no results, you MAY adjust patterns and retry",
-            "   - Always report what you found and what action you took",
-            "",
-            "3. MEDIUM RISK operations (file modifications):",
-            "   - If write/edit fails, report the error and ask before attempting alternatives",
-            "",
-        ]
-        return "\n".join(lines)
-
-    def _get_mcp_section(self) -> str:
-        """Generate MCP tools section for system prompt.
-
-        Returns information about available MCP tools.
-        """
-        if not hasattr(self, "mcp"):
-            return ""
-
-        summary = self.mcp.get_connection_summary()
-
-        if not summary["enabled"] or summary["total_tools"] == 0:
-            return ""
-
-        mcp_tools = self.mcp.list_mcp_tools()
-        if not mcp_tools:
-            return ""
-
-        lines = [
-            "MCP TOOLS",
-            "=========",
-            "",
-            "The following external tools are available from MCP servers:",
-            "",
-        ]
-
-        # Group tools by server
-        server_tools: dict[str, list[str]] = {}
-        for tool_name in mcp_tools:
-            if ":" in tool_name:
-                server, tool = tool_name.split(":", 1)
-                server_tools.setdefault(server, []).append(tool)
-
-        for server, tools in sorted(server_tools.items()):
-            lines.append(f"  {server}:")
-            for tool in sorted(tools):
-                lines.append(f"    - {server}:{tool}")
-            lines.append("")
-
-        lines.append("Use these tools just like any other tool.")
-
-        return "\n".join(lines)
-
-    def _get_skills_section(self) -> str:
-        """Generate skills section for system prompt.
-
-        Returns catalog of available skills with activation instructions.
-        """
-        catalog = self.skills.get_catalog()
-
-        if not catalog:
-            return "(No skills available)"
-
-        lines = [
-            "SKILLS",
-            "======",
-            "",
-            "The following skills provide specialized instructions for specific tasks.",
-            "When a task matches a skill's description, use the 'Skill' tool to load",
-            "its full instructions before proceeding.",
-            "",
-            catalog,
-            "",
-            "To activate a skill, use:",
-            "  <function_calls>",
-            '    <invoke name="Skill">',
-            '      <parameter name="name">skill-name</parameter>',
-            "    </invoke>",
-            "  </function_calls>",
-        ]
-        return "\n".join(lines)
 
     def step(self, user_input: str) -> str:
         """Process one user input and return assistant response."""
-        # Check if we're resuming from a pending confirmation
+        self.system_prompt = _get_async_runtime().run(
+            self._prompt_builder.build(self._prompt_ctx)
+        )
+
         if self.pending_confirmation:
             return self._handle_confirmation_response(user_input)
 
-        # Add user message via Session
+        enriched_input = _get_async_runtime().run(
+            self._context_injector.inject(user_input, self._prompt_ctx)
+        )
+
         user_msg = TranscriptMessage(
             role=MessageRole.USER,
-            content=[TextBlock(text=user_input)],
+            content=[TextBlock(text=enriched_input)],
         )
         self.session.add_message(user_msg)
         self.session.save()
@@ -409,7 +288,10 @@ class Agent:
             has_pending_confirmation=bool(self.pending_confirmation),
         )
 
-        # Check if we're resuming from a pending confirmation
+        self.system_prompt = _get_async_runtime().run(
+            self._prompt_builder.build(self._prompt_ctx)
+        )
+
         if self.pending_confirmation:
             response = self._handle_confirmation_response(user_input)
             debug_log(
@@ -420,10 +302,13 @@ class Agent:
             )
             return response
 
-        # Add user message via Session
+        enriched_input = _get_async_runtime().run(
+            self._context_injector.inject(user_input, self._prompt_ctx)
+        )
+
         user_msg = TranscriptMessage(
             role=MessageRole.USER,
-            content=[TextBlock(text=user_input)],
+            content=[TextBlock(text=enriched_input)],
         )
         self.session.add_message(user_msg)
         self.session.save()
