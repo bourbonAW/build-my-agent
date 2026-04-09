@@ -156,6 +156,10 @@ class Agent:
         # Pending confirmation for high-risk operation failures
         self.pending_confirmation: PendingConfirmation | None = None
 
+        # Track consecutive failures per tool to limit retries
+        self._tool_consecutive_failures: dict[str, int] = {}
+        self._max_tool_consecutive_failures = 3
+
         # Track token usage across all steps
         self.token_usage = {
             "input_tokens": 0,
@@ -890,10 +894,23 @@ class Agent:
             )
             return output
 
+        # Check if this tool has exceeded consecutive failure limit.
+        # Use getattr fallback to support Agent.__new__-constructed stubs in tests.
+        _failures_map = getattr(self, "_tool_consecutive_failures", {})
+        failures = _failures_map.get(tool_name, 0)
+        if failures >= self._max_tool_consecutive_failures:
+            # Reset counter so the tool is recoverable after the LLM backs off.
+            _failures_map.pop(tool_name, None)
+            return (
+                f"Error: Tool '{tool_name}' has failed {failures} consecutive times. "
+                "Do not retry this tool. Try a different approach or tool."
+            )
+
         try:
             ctx = self._make_tool_context()
             output = get_registry().call(tool_name, tool_input, ctx)
         except Exception as e:
+            _failures_map[tool_name] = failures + 1
             return f"Error executing {tool_name}: {e}"
 
         self.audit.record(
@@ -902,6 +919,10 @@ class Agent:
                 tool_input_summary=str(tool_input)[:200],
             )
         )
+
+        # Reset on any successful execution (no exception).
+        # Do not inspect output text — tool output may legitimately start with "Error".
+        _failures_map.pop(tool_name, None)
 
         if (
             tool_metadata
