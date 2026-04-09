@@ -310,6 +310,7 @@ class ContextInjector:
                 )
             except asyncio.TimeoutError:
                 proc.kill()
+                await proc.wait()  # reap zombie to avoid resource leak
                 return None
             if proc.returncode == 0:
                 return stdout.decode().strip()
@@ -467,25 +468,43 @@ Each component is independently testable:
 2. Update `agent.py` to use new module (delete 3 methods, add 3 attributes)
 3. Update the following tests that directly depend on removed internals or bypassed `__init__`:
 
-   **Tests calling removed methods directly:**
-   - **`tests/test_agent_error_policy.py`** (line ~52): calls `agent._build_system_prompt()` directly → replace with `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))` and assert the result string
-   - **`tests/test_mcp_sync_runtime.py`** (line ~49): asserts `initialize_mcp_sync()` immediately refreshes `agent.system_prompt` → replace with: call `initialize_mcp_sync()`, then call `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))` and assert the resulting string contains the MCP tool name. Do NOT use `agent.step()` as the observable because `step()` returns assistant text, not the prompt
+   **Tests calling removed methods directly — all also use `__new__` fixtures:**
+   These tests call removed methods AND construct partial Agent objects, so both fixes apply.
+
+   - **`tests/test_agent_error_policy.py`** (line ~32 fixture, ~52 call):
+     1. Add the three new prompt attributes to the `__new__` fixture (see pattern below)
+     2. Replace `agent._build_system_prompt()` call with `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))` and assert the result string
+
+   - **`tests/test_mcp_sync_runtime.py`** (line ~40 fixture, ~49 assertion):
+     1. Add the three new prompt attributes to the `__new__` fixture (see pattern below)
+     2. Replace the `initialize_mcp_sync()` → `agent.system_prompt` assertion chain with: call `initialize_mcp_sync()`, then call `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))` and assert the result contains the MCP tool name
+     3. The mock `MCPManager` must expose all fields that `mcp_tools_section()` reads:
+        ```python
+        mock_mcp.get_connection_summary.return_value = {
+            "enabled": True,
+            "total_tools": 1,
+        }
+        mock_mcp.list_mcp_tools.return_value = ["myserver-mytool"]
+        mock_mcp.config.servers = [SimpleNamespace(name="myserver")]
+        ```
+        The current test mocks only `connect_all_sync()` and `get_connection_summary()["total_tools"]`; without `enabled`, `list_mcp_tools()`, and `config.servers`, `mcp_tools_section()` returns empty string and the assertion will never pass.
 
    **Tests that bypass `__init__` via `Agent.__new__` and call `step()` / `step_stream()` directly:**
-   These tests construct a partial Agent object by hand and will fail with `AttributeError` because `_prompt_builder`, `_prompt_ctx`, and `_context_injector` are not set.
-   - **`tests/test_agent_streaming.py`** (line ~45): uses `object.__new__(Agent)` fixture → add the three new attributes to the fixture setup
-   - **`tests/test_debug_logging.py`** (line ~38): similar `__new__`-based fixture → same fix
+   These construct a partial Agent object and will fail with `AttributeError` on the new attributes.
+   - **`tests/test_agent_streaming.py`** (line ~45): `object.__new__(Agent)` fixture → add three new attributes
+   - **`tests/test_debug_logging.py`** (line ~38): same pattern → same fix
 
-   **Pattern for all `__new__`-based fixtures:**
+   **Pattern for all `__new__`-based fixtures** (applies to all four tests above):
    ```python
    agent = object.__new__(Agent)
    # ... existing fixture setup ...
    # Add new prompt attributes:
+   from bourbon.prompt import PromptBuilder, PromptContext, ContextInjector
    agent._prompt_ctx = PromptContext(workdir=agent.workdir, skill_manager=None, mcp_manager=None)
    agent._prompt_builder = PromptBuilder(sections=[], custom_prompt="test prompt")
    agent._context_injector = ContextInjector()
    ```
-   Any test fixture that calls `step()` or `step_stream()` must include these three attributes.
+   Any test fixture that calls `step()`, `step_stream()`, or `_prompt_builder.build()` must include these three attributes.
 4. Behavior differences to document in test deltas:
    - When no skills are available, system prompt no longer contains `"(No skills available)"` (now omitted entirely)
    - System prompt rebuilt every `step()` call, not just at init/MCP connect
