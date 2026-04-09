@@ -41,8 +41,14 @@ def test_agent_step_stream_emits_debug_events():
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
+    agent._discovered_tools = set()
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     agent.system_prompt = "You are a test agent"
+    from bourbon.prompt import ContextInjector, PromptBuilder, PromptContext
+
+    agent._prompt_ctx = PromptContext(workdir=agent.workdir, skill_manager=None, mcp_manager=None)
+    agent._prompt_builder = PromptBuilder(sections=[], custom_prompt="test prompt")
+    agent._context_injector = ContextInjector()
 
     # Setup session
     base = Path(tempfile.mkdtemp())

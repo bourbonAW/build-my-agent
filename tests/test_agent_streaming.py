@@ -18,6 +18,15 @@ def _setup_mock_session(agent, tmp_path=None):
     agent._discovered_tools = set()
 
 
+def _setup_prompt_state(agent):
+    """Set up prompt attributes for tests that bypass Agent.__init__."""
+    from bourbon.prompt import ContextInjector, PromptBuilder, PromptContext
+
+    agent._prompt_ctx = PromptContext(workdir=agent.workdir, skill_manager=None, mcp_manager=None)
+    agent._prompt_builder = PromptBuilder(sections=[], custom_prompt="test prompt")
+    agent._context_injector = ContextInjector()
+
+
 def test_get_session_tokens_returns_estimate():
     """get_session_tokens returns estimated token count."""
     from bourbon.agent import Agent
@@ -49,6 +58,7 @@ def test_step_stream_calls_callback_for_chunks():
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
+    _setup_prompt_state(agent)
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     # Mock LLM
@@ -89,6 +99,7 @@ def test_step_stream_updates_token_usage():
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
+    _setup_prompt_state(agent)
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     class MockLLM:
@@ -119,6 +130,7 @@ def test_step_stream_handles_tool_calls():
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
+    _setup_prompt_state(agent)
     agent.on_tool_start = None
     agent.on_tool_end = None
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
@@ -179,6 +191,7 @@ def test_step_stream_persists_usage_to_session_message():
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
+    _setup_prompt_state(agent)
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     class MockLLM:
@@ -220,6 +233,7 @@ def test_step_stream_returns_confirmation_prompt_when_tool_sets_pending_confirma
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
+    _setup_prompt_state(agent)
     agent.on_tool_start = None
     agent.on_tool_end = None
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
@@ -268,6 +282,7 @@ def test_step_stream_handles_multiple_tool_calls_per_turn():
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
     agent.pending_confirmation = None
+    _setup_prompt_state(agent)
     agent.on_tool_start = None
     agent.on_tool_end = None
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
