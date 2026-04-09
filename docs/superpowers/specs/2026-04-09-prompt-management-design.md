@@ -429,4 +429,4 @@ Each component is independently testable:
 | `src/bourbon/prompt/sections.py` | New |
 | `src/bourbon/prompt/dynamic.py` | New |
 | `src/bourbon/prompt/context.py` | New |
-| `src/bourbon/agent.py` | Remove 3 methods, add 3 attributes, update step() |
+| `src/bourbon/agent.py` | Remove 3 methods, add 3 attributes, update step() and step_stream() |
