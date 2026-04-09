@@ -176,6 +176,18 @@ ALL_AGENT_DISALLOWED_TOOLS = {
 ### Agent Type Configurations
 
 ```python
+class SubagentErrorCode(Enum):
+    """Standardized error codes for subagent failures."""
+    USER_ABORT = "user_abort"
+    MAX_TURNS_EXCEEDED = "max_turns_exceeded"
+    LLM_ERROR = "llm_error"
+    LLM_RETRY_EXHAUSTED = "llm_retry_exhausted"
+    TOOL_PERMISSION_DENIED = "tool_permission_denied"
+    TOOL_NOT_FOUND = "tool_not_found"
+    SESSION_ERROR = "session_error"
+    UNKNOWN_ERROR = "unknown_error"
+
+
 AGENT_TYPE_CONFIGS = {
     "default": AgentDefinition(
         agent_type="default",
@@ -480,6 +492,114 @@ tests/test_subagent/
 
 ---
 
+## Configuration
+
+```python
+# ~/.bourbon/config.toml
+
+[subagent]
+# Storage settings
+result_storage_dir = "~/.bourbon/subagent_results/"  # Task output persistence
+max_result_size_mb = 10                              # Max stored result size
+
+# Concurrency limits
+max_concurrent_tasks = 10          # Maximum parallel async tasks
+thread_pool_timeout = 300          # Seconds before thread pool shutdown
+
+# Default behaviors
+default_max_turns = 50
+default_timeout_seconds = 600      # 10 minutes default timeout
+enable_checkpointing = true        # Save progress during long tasks
+
+# Agent-specific overrides
+[subagent.agent_overrides]
+coder.max_turns = 100
+explore.timeout_seconds = 300
+```
+
+## Integration with Existing Systems
+
+### Access Control Integration
+
+Subagents inherit the parent's `AccessController` for permission evaluation:
+
+```python
+class SubagentContext:
+    def __init__(self, parent_agent: Agent, agent_def: AgentDefinition):
+        # Share parent's access controller
+        self.access_controller = parent_agent.access_controller
+    
+    def check_tool_permission(self, tool_name: str, tool_input: dict) -> PolicyDecision:
+        # Use parent's policy evaluation
+        return self.access_controller.evaluate(tool_name, tool_input)
+```
+
+Tool calls within subagents are logged through the parent's audit system:
+- Tool name and input summary
+- Subagent task_id (for traceability)
+- Policy decision (allow/deny/need_approval)
+
+### Audit Logging Integration
+
+```python
+def log_subagent_tool_call(
+    task_id: str,
+    tool_name: str,
+    tool_input: dict,
+    decision: PolicyDecision,
+    parent_audit: AuditLogger,
+):
+    """Log subagent tool calls with parent audit logger."""
+    parent_audit.record(
+        AuditEvent.subagent_tool_call(
+            task_id=task_id,
+            tool_name=tool_name,
+            tool_input_summary=str(tool_input)[:200],
+            decision=decision.action.value,
+            capabilities_required=[
+                cap.value for cap in decision.decisions
+            ],
+        )
+    )
+```
+
+### Sandbox Integration
+
+Destructive operations in subagents respect the parent's sandbox configuration:
+
+```python
+class SubagentManager:
+    def _execute_destructive_tool(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        task: SubagentTask,
+    ) -> str:
+        if self.parent_agent.sandbox.enabled:
+            return self.parent_agent.sandbox.execute(
+                tool_input.get("command", ""),
+                tool_name=tool_name,
+            )
+        # Fall back to regular execution
+        return self._execute_regular_tool(tool_name, tool_input)
+```
+
+### Session Storage Integration
+
+Subagent results are stored in a dedicated subdirectory:
+
+```
+~/.bourbon/sessions/
+└── <project_name>/
+    ├── <session_id>.json           # Main session metadata
+    ├── transcripts/
+    │   └── <session_id>.jsonl      # Main session transcript
+    └── subagents/                   # Subagent results
+        ├── <task_id>.json           # Task metadata
+        ├── <task_id>.jsonl          # Subagent transcript
+        └── <task_id>.result.txt     # Final result output
+```
+
 ## Security Considerations
 
 1. **No Recursion**: Subagents cannot spawn subagents (enforced by tool filtering)
@@ -487,6 +607,8 @@ tests/test_subagent/
 3. **Path Safety**: Subagents inherit parent's workdir sandboxing
 4. **Resource Limits**: max_turns prevents infinite execution
 5. **Cancellation**: Users can kill runaway tasks via `/task stop`
+6. **Audit Trail**: All subagent tool calls logged through parent's audit system
+7. **Result Isolation**: Subagent results stored separately from main session
 
 ---
 
