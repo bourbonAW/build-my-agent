@@ -13,7 +13,7 @@ def _make_repl():
     repl = object.__new__(REPL)
     repl.console = MagicMock()
     repl.agent = MagicMock()
-    repl._handle_pending_confirmation = MagicMock()
+    repl._handle_permission_request = MagicMock()
     repl._active_stream = None
     return repl
 
@@ -28,7 +28,7 @@ def test_process_input_streaming_renders_markdown():
         return "Hello **world**"
 
     repl.agent.step_stream.side_effect = step_stream
-    repl.agent.pending_confirmation = None
+    repl.agent.active_permission_request = None
 
     with patch('bourbon.repl.Live') as mock_live:
         mock_live.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -37,7 +37,30 @@ def test_process_input_streaming_renders_markdown():
 
     # Should print the final markdown-rendered output
     repl.console.print.assert_called()
-    repl._handle_pending_confirmation.assert_not_called()
+    repl._handle_permission_request.assert_not_called()
+
+
+def test_process_input_streaming_renders_final_pending_markdown_as_markdown():
+    """Final pending markdown tail should not be force-flushed as raw text."""
+    repl = _make_repl()
+
+    def step_stream(_user_input, _on_chunk):
+        return "Hello **world**"
+
+    repl.agent.step_stream.side_effect = step_stream
+    repl.agent.active_permission_request = None
+
+    with patch("bourbon.repl.Live") as mock_live:
+        mock_live.return_value.__enter__ = MagicMock(return_value=MagicMock())
+        mock_live.return_value.__exit__ = MagicMock(return_value=False)
+        repl._process_input_streaming("hi")
+
+    printed_args = [call.args[0] for call in repl.console.print.call_args_list if call.args]
+    markdown_calls = [arg for arg in printed_args if isinstance(arg, Markdown)]
+    text_calls = [arg for arg in printed_args if isinstance(arg, Text)]
+
+    assert any(getattr(arg, "markup", "") == "Hello **world**" for arg in markdown_calls)
+    assert not any(arg.plain == "Hello **world**" for arg in text_calls)
 
 
 def test_process_input_streaming_does_not_reprint_streamed_response():
@@ -49,7 +72,7 @@ def test_process_input_streaming_does_not_reprint_streamed_response():
         return "Hello world"
 
     repl.agent.step_stream.side_effect = step_stream
-    repl.agent.pending_confirmation = None
+    repl.agent.active_permission_request = None
 
     with patch('bourbon.repl.Live') as mock_live:
         mock_live.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -58,7 +81,7 @@ def test_process_input_streaming_does_not_reprint_streamed_response():
 
     # The console.print is called multiple times (for newlines and final output)
     # but should not print the same text twice
-    repl._handle_pending_confirmation.assert_not_called()
+    repl._handle_permission_request.assert_not_called()
 
 
 def test_process_input_streaming_prints_stable_markdown_during_stream():
@@ -71,7 +94,7 @@ def test_process_input_streaming_prints_stable_markdown_during_stream():
         return "First line\nSecond"
 
     repl.agent.step_stream.side_effect = step_stream
-    repl.agent.pending_confirmation = None
+    repl.agent.active_permission_request = None
 
     with patch("bourbon.repl.Live") as mock_live:
         mock_live.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -84,7 +107,8 @@ def test_process_input_streaming_prints_stable_markdown_during_stream():
 
     assert len(markdown_calls) >= 1
     assert any(getattr(arg, "markup", "") == "First line\n" for arg in markdown_calls)
-    assert any(arg.plain == "Second" for arg in text_calls)
+    assert any(getattr(arg, "markup", "") == "Second" for arg in markdown_calls)
+    assert not any(arg.plain == "Second" for arg in text_calls)
 
 
 def test_process_input_streaming_interleaves_tool_events_with_text_timeline():
@@ -99,7 +123,7 @@ def test_process_input_streaming_interleaves_tool_events_with_text_timeline():
         return "Intro line\npartial\nDone"
 
     repl.agent.step_stream.side_effect = step_stream
-    repl.agent.pending_confirmation = None
+    repl.agent.active_permission_request = None
 
     with patch("bourbon.repl.Live") as mock_live:
         mock_live.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -123,7 +147,9 @@ def test_process_input_streaming_interleaves_tool_events_with_text_timeline():
         i for i, arg in enumerate(printed_args) if isinstance(arg, str) and "✓ bash:" in arg
     )
     done_index = next(
-        i for i, arg in enumerate(printed_args) if isinstance(arg, Text) and arg.plain == "Done"
+        i
+        for i, arg in enumerate(printed_args)
+        if isinstance(arg, Markdown) and getattr(arg, "markup", "") == "Done"
     )
 
     assert intro_index < partial_index < tool_start_index < tool_end_index < done_index
@@ -137,7 +163,7 @@ def test_process_input_streaming_renders_ordered_list_as_markdown():
         return "Next steps:\n1. one\n2. two"
 
     repl.agent.step_stream.side_effect = step_stream
-    repl.agent.pending_confirmation = None
+    repl.agent.active_permission_request = None
 
     with patch("bourbon.repl.Live") as mock_live:
         mock_live.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -161,7 +187,7 @@ def test_process_input_streaming_keeps_list_block_together_until_blank_line():
         return "Summary\n\n1. one\n2. two\n\nNext paragraph"
 
     repl.agent.step_stream.side_effect = step_stream
-    repl.agent.pending_confirmation = None
+    repl.agent.active_permission_request = None
 
     with patch("bourbon.repl.Live") as mock_live:
         mock_live.return_value.__enter__ = MagicMock(return_value=MagicMock())
@@ -186,7 +212,7 @@ def test_process_input_streaming_does_not_print_raw_ansi_clear_sequence():
         return "A paragraph\n\n1. one\n2. two"
 
     repl.agent.step_stream.side_effect = step_stream
-    repl.agent.pending_confirmation = None
+    repl.agent.active_permission_request = None
 
     with patch("bourbon.repl.Live") as mock_live:
         mock_live.return_value.__enter__ = MagicMock(return_value=MagicMock())

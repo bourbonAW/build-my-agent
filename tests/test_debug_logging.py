@@ -40,7 +40,7 @@ def test_agent_step_stream_emits_debug_events():
     agent.workdir = Path.cwd()
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
     agent._discovered_tools = set()
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     agent.system_prompt = "You are a test agent"
@@ -84,7 +84,7 @@ def test_repl_process_input_streaming_emits_debug_events():
     repl = object.__new__(REPL)
     repl.console = MagicMock()
     repl.agent = MagicMock()
-    repl._handle_pending_confirmation = MagicMock()
+    repl._handle_permission_request = MagicMock()
 
     def step_stream(_user_input, on_chunk):
         on_chunk("Hello ")
@@ -92,7 +92,7 @@ def test_repl_process_input_streaming_emits_debug_events():
         return "Hello world"
 
     repl.agent.step_stream.side_effect = step_stream
-    repl.agent.pending_confirmation = None
+    repl.agent.active_permission_request = None
 
     live_mock = MagicMock()
 

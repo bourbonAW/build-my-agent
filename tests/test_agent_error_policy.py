@@ -63,7 +63,7 @@ def mock_agent():
     agent.messages = []
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
     return agent
 
 

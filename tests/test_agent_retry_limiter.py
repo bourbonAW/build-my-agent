@@ -12,7 +12,7 @@ def _make_stub() -> Agent:
     agent = object.__new__(Agent)
     agent.workdir = Path("/tmp")
     agent._max_tool_consecutive_failures = 3
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
 
     # Access controller: always allow
     ac = MagicMock()

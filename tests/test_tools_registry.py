@@ -428,5 +428,5 @@ class TestSkillToolRenamed:
         mock_manager.activate.return_value = "mocked skill content"
         ctx = ToolContext(workdir=tmp_path, skill_manager=mock_manager)
         result = tools.get_registry().call("Skill", {"name": "nonexistent-skill"}, ctx)
-        mock_manager.activate.assert_called_once_with("nonexistent-skill")
+        mock_manager.activate.assert_called_once_with("nonexistent-skill", args="")
         assert "mocked skill content" in result

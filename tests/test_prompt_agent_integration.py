@@ -4,8 +4,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from bourbon.agent import Agent, PendingConfirmation
+from bourbon.agent import Agent
 from bourbon.config import Config
+from bourbon.permissions import PermissionRequest, SessionPermissionStore
 from bourbon.prompt import ALL_SECTIONS, ContextInjector, PromptBuilder, PromptContext
 from bourbon.session.manager import SessionManager
 from bourbon.session.storage import TranscriptStore
@@ -25,7 +26,8 @@ def _make_agent() -> Agent:
     agent.compressor = None
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
+    agent.session_permissions = SessionPermissionStore()
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     agent._discovered_tools = set()
     agent._tool_consecutive_failures = {}
@@ -104,25 +106,25 @@ def test_step_stores_enriched_message_with_system_reminder():
     assert "<system-reminder>" in text
 
 
-def test_step_rebuilds_prompt_before_pending_confirmation_shortcircuit():
-    """pending_confirmation path: prompt rebuilt BEFORE short-circuit, inject() never called."""
+def test_step_rebuilds_prompt_before_pending_request_shortcircuit():
+    """Pending permission path: prompt rebuilt BEFORE short-circuit, inject() never called."""
     agent = _make_agent()
-    agent.pending_confirmation = PendingConfirmation(
+    agent.active_permission_request = PermissionRequest(
+        request_id="req-1",
+        tool_use_id="tool-1",
         tool_name="Bash",
         tool_input={"command": "rm -rf /"},
-        error_output="Error: permission denied",
-        options=["Retry", "Skip"],
+        title="Bash command",
+        description="rm -rf /",
+        reason="exec: need_approval (command.need_approval: rm *)",
     )
     agent.llm = MockLLM()
     agent._prompt_builder = PromptBuilder(sections=[], custom_prompt="rebuilt-confirmation-prompt")
 
     inject_spy = AsyncMock(return_value="should not be called")
-    with (
-        patch.object(agent._context_injector, "inject", new=inject_spy),
-        patch.object(agent, "_handle_confirmation_response", return_value="ok") as handle_spy,
-    ):
-        agent.step("yes")
+    with patch.object(agent._context_injector, "inject", new=inject_spy):
+        result = agent.step("yes")
 
     inject_spy.assert_not_called()
-    handle_spy.assert_called_once_with("yes")
+    assert result == "Error: Permission request pending. Resolve it before sending new input."
     assert agent.system_prompt == "rebuilt-confirmation-prompt"

@@ -5,12 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 from bourbon.access_control.capabilities import CapabilityType
 from bourbon.access_control.policy import CapabilityDecision, PolicyAction, PolicyDecision
 from bourbon.agent import Agent
 from bourbon.audit.events import EventType
 from bourbon.config import Config
+from bourbon.permissions import PermissionChoice, SessionPermissionStore
 from bourbon.sandbox.runtime import ResourceUsage, SandboxResult
 
 
@@ -53,10 +55,16 @@ def make_agent_stub() -> Agent:
     agent._tool_consecutive_failures = {}
     agent._max_tool_consecutive_failures = 3
     agent._discovered_tools = set()
-    agent.pending_confirmation = None
     agent.audit = MagicMock()
     agent.access_controller = MagicMock()
     agent.sandbox = MagicMock(enabled=False)
+    agent.session_permissions = SessionPermissionStore()
+    agent.active_permission_request = None
+    agent.suspended_tool_round = None
+    agent.session = MagicMock()
+    agent.session.add_message = MagicMock()
+    agent.session.save = MagicMock()
+    agent._run_conversation_loop = MagicMock(return_value="Mock")
     return agent
 
 
@@ -134,7 +142,8 @@ def test_execute_tools_denies_when_policy_blocks(monkeypatch) -> None:
                 "name": "read_file",
                 "input": {"path": "~/.ssh/id_rsa"},
             }
-        ]
+        ],
+        source_assistant_uuid=uuid4(),
     )
 
     assert results == [
@@ -171,18 +180,20 @@ def test_need_approval_executes_once_after_user_approves(monkeypatch) -> None:
                 "name": "bash",
                 "input": {"command": "pip install flask"},
             }
-        ]
+        ],
+        source_assistant_uuid=uuid4(),
     )
 
-    assert results[0]["content"].startswith("Requires approval:")
-    assert agent.pending_confirmation is not None
+    assert results == []
+    assert agent.active_permission_request is not None
+    assert agent.active_permission_request.tool_use_id == "tool-1"
 
-    output = agent._handle_confirmation_response("Approve and execute")
+    output = agent.resume_permission_request(PermissionChoice.ALLOW_ONCE)
 
-    assert output == "installed"
+    assert output == "Mock"
     assert registry.call.call_count == 1
     assert agent.access_controller.evaluate.call_count == 1
-    assert agent.pending_confirmation is None
+    assert agent.active_permission_request is None
 
 
 def test_bash_uses_sandbox_when_enabled(monkeypatch) -> None:
@@ -208,7 +219,8 @@ def test_bash_uses_sandbox_when_enabled(monkeypatch) -> None:
     )
 
     results = agent._execute_tools(
-        [{"type": "tool_use", "id": "tool-1", "name": "bash", "input": {"command": "ls -la"}}]
+        [{"type": "tool_use", "id": "tool-1", "name": "bash", "input": {"command": "ls -la"}}],
+        source_assistant_uuid=uuid4(),
     )
 
     assert results == [{"type": "tool_result", "tool_use_id": "tool-1", "content": "hello\nwarn"}]
@@ -230,3 +242,24 @@ def test_read_file_tool_uses_agent_workdir(monkeypatch, tmp_path: Path) -> None:
     output = agent._execute_regular_tool("read_file", {"path": "note.txt"})
 
     assert output == "hello from workdir"
+
+
+def test_failed_high_risk_command_returns_plain_error_without_followup_prompt(monkeypatch) -> None:
+    agent = make_agent_stub()
+    agent.access_controller.evaluate.return_value = allow_decision()
+    registry = MagicMock()
+    registry.call.return_value = "Error: command failed"
+    monkeypatch.setattr("bourbon.agent.get_registry", lambda: registry)
+    monkeypatch.setattr(
+        "bourbon.agent.get_tool_with_metadata",
+        lambda name: SimpleNamespace(
+            is_destructive=True,
+            is_high_risk_operation=lambda tool_input: True,
+        ),
+    )
+
+    output = agent._execute_regular_tool("Bash", {"command": "pip install broken"})
+
+    assert output == "Error: command failed"
+    assert agent.active_permission_request is None
+    assert agent.suspended_tool_round is None

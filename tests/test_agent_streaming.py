@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from bourbon.permissions import PermissionChoice, PermissionRequest, SuspendedToolRound
 from bourbon.session.manager import SessionManager
 from bourbon.session.storage import TranscriptStore
 
@@ -59,7 +60,7 @@ def test_step_stream_calls_callback_for_chunks():
     _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
     _setup_prompt_state(agent)
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
@@ -100,7 +101,7 @@ def test_step_stream_updates_token_usage():
     _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
     _setup_prompt_state(agent)
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
@@ -131,7 +132,7 @@ def test_step_stream_handles_tool_calls():
     _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
     _setup_prompt_state(agent)
     agent.on_tool_start = None
     agent.on_tool_end = None
@@ -163,7 +164,7 @@ def test_step_stream_handles_tool_calls():
     agent.system_prompt = "You are a test agent"
 
     # Mock _execute_tools to return simple result
-    agent._execute_tools = lambda tools: [
+    agent._execute_tools = lambda tools, source_assistant_uuid: [
         {"type": "tool_result", "tool_use_id": "tool-1", "content": "file.txt"}
     ]
 
@@ -192,7 +193,7 @@ def test_step_stream_persists_usage_to_session_message():
     _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
     _setup_prompt_state(agent)
     agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
@@ -224,9 +225,9 @@ def test_step_stream_persists_usage_to_session_message():
     assert assistant_transcript[0].usage.total_tokens == 18
 
 
-def test_step_stream_returns_confirmation_prompt_when_tool_sets_pending_confirmation():
-    """step_stream returns the formatted confirmation prompt for follow-up UI handling."""
-    from bourbon.agent import Agent, PendingConfirmation
+def test_step_stream_exposes_active_permission_request_when_tool_round_suspends():
+    """step_stream should stop and expose the pending permission request for the REPL."""
+    from bourbon.agent import Agent
     from bourbon.config import Config
 
     config = Config()
@@ -236,7 +237,7 @@ def test_step_stream_returns_confirmation_prompt_when_tool_sets_pending_confirma
     _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
     _setup_prompt_state(agent)
     agent.on_tool_start = None
     agent.on_tool_end = None
@@ -256,12 +257,15 @@ def test_step_stream_returns_confirmation_prompt_when_tool_sets_pending_confirma
     agent.llm = MockLLM()
     agent.system_prompt = "You are a test agent"
 
-    def mock_execute(_tools):
-        agent.pending_confirmation = PendingConfirmation(
+    def mock_execute(_tools, source_assistant_uuid):
+        agent.active_permission_request = PermissionRequest(
+            request_id="req-1",
+            tool_use_id="tool-1",
             tool_name="bash",
             tool_input={"command": "pip install thing"},
-            error_output="Install failed",
-            options=["Install latest version"],
+            title="Bash command",
+            description="pip install thing",
+            reason="exec: need_approval (command.need_approval: pip install *)",
         )
         return []
 
@@ -269,8 +273,9 @@ def test_step_stream_returns_confirmation_prompt_when_tool_sets_pending_confirma
 
     result = agent.step_stream("install thing", lambda _text: None)
 
-    assert "HIGH-RISK OPERATION FAILED" in result
-    assert "Operation: bash" in result
+    assert result == ""
+    assert agent.active_permission_request is not None
+    assert agent.active_permission_request.tool_name == "bash"
 
 
 def test_step_stream_handles_multiple_tool_calls_per_turn():
@@ -285,7 +290,7 @@ def test_step_stream_handles_multiple_tool_calls_per_turn():
     _setup_mock_session(agent)
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
-    agent.pending_confirmation = None
+    agent.active_permission_request = None
     _setup_prompt_state(agent)
     agent.on_tool_start = None
     agent.on_tool_end = None
@@ -324,7 +329,7 @@ def test_step_stream_handles_multiple_tool_calls_per_turn():
     # Track which tool blocks were passed to _execute_tools
     executed_tools = []
 
-    def mock_execute(tools):
+    def mock_execute(tools, source_assistant_uuid):
         executed_tools.extend(tools)
         return [{"type": "tool_result", "tool_use_id": t["id"], "content": "ok"} for t in tools]
 
@@ -339,30 +344,45 @@ def test_step_stream_handles_multiple_tool_calls_per_turn():
     assert result == "Done"
 
 
-def test_handle_confirmation_response_persists_session_metadata():
-    """High-risk confirmation follow-up should persist updated session metadata."""
-    from bourbon.agent import Agent, PendingConfirmation
+def test_resume_permission_request_persists_session_metadata():
+    """Permission resume should persist the generated tool-result turn in session metadata."""
+    from bourbon.agent import Agent
     from bourbon.config import Config
+    from uuid import uuid4
 
     agent = object.__new__(Agent)
     agent.config = Config()
     agent.workdir = Path.cwd()
     _setup_mock_session(agent)
-    agent.pending_confirmation = PendingConfirmation(
+    agent.session_permissions = type("Store", (), {"add": lambda self, candidate: None})()
+    request = PermissionRequest(
+        request_id="req-1",
+        tool_use_id="tool-1",
         tool_name="bash",
         tool_input={"command": "pip install thing"},
-        error_output="Install failed",
-        options=["Retry"],
-        confirmation_type="high_risk_failure",
+        title="Bash command",
+        description="pip install thing",
+        reason="exec: need_approval (command.need_approval: pip install *)",
+    )
+    agent.active_permission_request = request
+    agent.suspended_tool_round = SuspendedToolRound(
+        source_assistant_uuid=uuid4(),
+        tool_use_blocks=[
+            {"type": "tool_use", "id": "tool-1", "name": "bash", "input": {"command": "pip install thing"}}
+        ],
+        completed_results=[],
+        next_tool_index=0,
+        active_request=request,
     )
     agent._run_conversation_loop = lambda: "continued"
 
-    result = agent._handle_confirmation_response("Retry")
+    result = agent.resume_permission_request(PermissionChoice.REJECT)
 
     assert result == "continued"
     transcript = agent._session_manager.store.load_transcript("test", agent.session.session_id)
     assert len(transcript) == 1
-    assert "User decision: Retry" in transcript[0].content[0].text
+    assert transcript[0].content[0].is_error is True
+    assert "Rejected by user" in transcript[0].content[0].content
 
     metadata = agent._session_manager.store.load_metadata("test", agent.session.session_id)
     assert metadata is not None

@@ -3,7 +3,6 @@
 import time
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
@@ -15,6 +14,15 @@ from bourbon.config import Config
 from bourbon.debug import debug_log
 from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
+from bourbon.permissions import (
+    PermissionAction,
+    PermissionChoice,
+    PermissionDecision,
+    PermissionRequest,
+    SessionPermissionStore,
+    SuspendedToolRound,
+)
+from bourbon.permissions.presentation import build_permission_request
 from bourbon.prompt import ALL_SECTIONS, ContextInjector, PromptBuilder, PromptContext
 from bourbon.sandbox import SandboxManager
 from bourbon.session.manager import SessionManager
@@ -43,17 +51,6 @@ class AgentError(Exception):
     """Agent execution error."""
 
     pass
-
-
-@dataclass
-class PendingConfirmation:
-    """Represents a pending user confirmation for high-risk operation failure."""
-
-    tool_name: str
-    tool_input: dict
-    error_output: str
-    options: list[str]
-    confirmation_type: str = "high_risk_failure"
 
 
 class Agent:
@@ -165,8 +162,10 @@ class Agent:
         sandbox_config = config.sandbox if hasattr(config, "sandbox") else {}
         self.sandbox = SandboxManager(config=sandbox_config, workdir=self.workdir, audit=self.audit)
 
-        # Pending confirmation for high-risk operation failures
-        self.pending_confirmation: PendingConfirmation | None = None
+        # Permission runtime state
+        self.session_permissions = SessionPermissionStore()
+        self.suspended_tool_round: SuspendedToolRound | None = None
+        self.active_permission_request: PermissionRequest | None = None
 
         # Track consecutive failures per tool to limit retries
         self._tool_consecutive_failures: dict[str, int] = {}
@@ -238,8 +237,8 @@ class Agent:
         """Process one user input and return assistant response."""
         self.system_prompt = _get_async_runtime().run(self._prompt_builder.build(self._prompt_ctx))
 
-        if self.pending_confirmation:
-            return self._handle_confirmation_response(user_input)
+        if self.active_permission_request:
+            return "Error: Permission request pending. Resolve it before sending new input."
 
         enriched_input = _get_async_runtime().run(
             self._context_injector.inject(user_input, self._prompt_ctx)
@@ -281,20 +280,13 @@ class Agent:
             "agent.step_stream.start",
             user_input_len=len(user_input),
             message_count=self.session.chain.message_count,
-            has_pending_confirmation=bool(self.pending_confirmation),
+            has_active_permission_request=bool(self.active_permission_request),
         )
 
         self.system_prompt = _get_async_runtime().run(self._prompt_builder.build(self._prompt_ctx))
 
-        if self.pending_confirmation:
-            response = self._handle_confirmation_response(user_input)
-            debug_log(
-                "agent.step_stream.complete",
-                response_len=len(response),
-                elapsed_ms=int((time.monotonic() - started_at) * 1000),
-                resumed_confirmation=True,
-            )
-            return response
+        if self.active_permission_request:
+            return "Error: Permission request pending. Resolve it before sending new input."
 
         enriched_input = _get_async_runtime().run(
             self._context_injector.inject(user_input, self._prompt_ctx)
@@ -319,7 +311,7 @@ class Agent:
             "agent.step_stream.complete",
             response_len=len(response),
             elapsed_ms=int((time.monotonic() - started_at) * 1000),
-            has_pending_confirmation=bool(self.pending_confirmation),
+            has_active_permission_request=bool(self.active_permission_request),
         )
         return response
 
@@ -460,16 +452,18 @@ class Agent:
                     tool_round=tool_round,
                     tool_use_count=len(tool_use_blocks),
                 )
-                tool_results = self._execute_tools(tool_use_blocks)
+                tool_results = self._execute_tools(
+                    tool_use_blocks,
+                    source_assistant_uuid=assistant_msg.uuid,
+                )
 
-                # Check if we have a pending confirmation
-                if self.pending_confirmation:
+                if self.active_permission_request:
                     debug_log(
-                        "agent.stream.pending_confirmation",
+                        "agent.stream.permission_request_pending",
                         tool_round=tool_round,
                         response_len=len(accumulated_text),
                     )
-                    return accumulated_text + "\n" + self._format_confirmation_prompt()
+                    return accumulated_text
 
                 # Add all tool results as single user message (Anthropic protocol requirement)
                 tool_turn_msg = self._build_tool_results_transcript_message(
@@ -518,42 +512,6 @@ class Agent:
             accumulated_text + "\n[Reached maximum tool execution rounds. "
             "Providing final response based on what was learned.]"
         )
-
-    def _handle_confirmation_response(self, user_input: str) -> str:
-        """Handle user response to a pending confirmation."""
-        confirmation = self.pending_confirmation
-        self.pending_confirmation = None
-
-        if confirmation and confirmation.confirmation_type == "policy_approval":
-            normalized = user_input.strip().lower()
-            if self._is_approval_response(normalized):
-                output = self._execute_regular_tool(
-                    confirmation.tool_name,
-                    confirmation.tool_input,
-                    skip_policy_check=True,
-                )
-                if self.pending_confirmation:
-                    return self._format_confirmation_prompt()
-                return output
-            return f"Skipped {confirmation.tool_name}: approval not granted."
-
-        # Add the user's choice to the conversation via Session
-        context = (
-            f"[Previous high-risk operation failed: {confirmation.tool_name}]\n"
-            f"[Error: {confirmation.error_output}]\n"
-            f"[User decision: {user_input}]\n"
-            f"Please proceed based on the user's decision above."
-        )
-        self.session.add_message(
-            TranscriptMessage(
-                role=MessageRole.USER,
-                content=[TextBlock(text=context)],
-            )
-        )
-        self.session.save()
-
-        # Continue the conversation
-        return self._run_conversation_loop()
 
     def _run_conversation_loop(self) -> str:
         """Run conversation loop until we get a final response."""
@@ -627,12 +585,13 @@ class Agent:
 
             # Execute tools
             if tool_use_blocks:
-                tool_results = self._execute_tools(tool_use_blocks)
+                tool_results = self._execute_tools(
+                    tool_use_blocks,
+                    source_assistant_uuid=assistant_msg.uuid,
+                )
 
-                # Check if we have a pending confirmation (high-risk error)
-                if self.pending_confirmation:
-                    # Return confirmation prompt to user
-                    return self._format_confirmation_prompt()
+                if self.active_permission_request:
+                    return ""
 
                 # Add all tool results as single user message
                 tool_turn_msg = self._build_tool_results_transcript_message(
@@ -654,42 +613,6 @@ class Agent:
             "[Reached maximum tool execution rounds. "
             "Providing final response based on what was learned.]"
         )
-
-    def _format_confirmation_prompt(self) -> str:
-        """Format pending confirmation for display to user."""
-        if not self.pending_confirmation:
-            return ""
-
-        conf = self.pending_confirmation
-        if conf.confirmation_type == "policy_approval":
-            title = "APPROVAL REQUIRED"
-            description = "This operation requires approval before execution."
-        else:
-            title = "HIGH-RISK OPERATION FAILED"
-            description = "This is a high-risk operation. Please choose how to proceed:"
-        lines = [
-            "",
-            f"⚠️  {title}",
-            "━" * 50,
-            f"Operation: {conf.tool_name}",
-            f"Input: {conf.tool_input}",
-            f"Error: {conf.error_output}",
-            "",
-            description,
-            "",
-        ]
-        for i, option in enumerate(conf.options, 1):
-            lines.append(f"  [{i}] {option}")
-        lines.append("  [c] Cancel this operation")
-        lines.append("")
-        lines.append("Enter your choice: ")
-
-        return "\n".join(lines)
-
-    @staticmethod
-    def _is_approval_response(user_input: str) -> bool:
-        """Return True when the user approved the pending operation."""
-        return user_input in {"1", "y", "yes"} or "approve" in user_input
 
     def _record_policy_decision(
         self,
@@ -732,6 +655,114 @@ class Agent:
             on_tools_discovered=self._get_discovered_tools().update,
         )
 
+    def _permission_decision_for_tool(
+        self,
+        tool_name: str,
+        tool_input: dict,
+    ) -> PermissionDecision:
+        """Evaluate one tool call against policy and session approvals."""
+        decision = self.access_controller.evaluate(tool_name, tool_input)
+        self._record_policy_decision(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            decision=decision,
+        )
+
+        if decision.action == PolicyAction.DENY:
+            return PermissionDecision(
+                action=PermissionAction.DENY,
+                reason=decision.reason,
+            )
+
+        if decision.action == PolicyAction.NEED_APPROVAL:
+            if self.session_permissions.has_match(tool_name, tool_input, self.workdir):
+                return PermissionDecision(
+                    action=PermissionAction.ALLOW,
+                    reason="session rule matched",
+                )
+            return PermissionDecision(
+                action=PermissionAction.ASK,
+                reason=decision.reason,
+            )
+
+        return PermissionDecision(
+            action=PermissionAction.ALLOW,
+            reason=decision.reason,
+        )
+
+    def _suspend_tool_round(
+        self,
+        *,
+        source_assistant_uuid: UUID,
+        tool_use_blocks: list[dict],
+        completed_results: list[dict],
+        next_tool_index: int,
+        request: PermissionRequest,
+    ) -> None:
+        """Persist the current tool round until the permission request is resolved."""
+        self.active_permission_request = request
+        self.suspended_tool_round = SuspendedToolRound(
+            source_assistant_uuid=source_assistant_uuid,
+            tool_use_blocks=tool_use_blocks,
+            completed_results=completed_results,
+            next_tool_index=next_tool_index,
+            active_request=request,
+        )
+
+    def resume_permission_request(self, choice: PermissionChoice) -> str:
+        """Resume a suspended tool round after the user resolves a permission request."""
+        suspended = self.suspended_tool_round
+        if suspended is None:
+            return "Error: No suspended permission request."
+
+        request = suspended.active_request
+        source_assistant_uuid = suspended.source_assistant_uuid
+        results = list(suspended.completed_results)
+
+        self.active_permission_request = None
+        self.suspended_tool_round = None
+
+        if choice == PermissionChoice.ALLOW_SESSION and request.match_candidate:
+            self.session_permissions.add(request.match_candidate)
+
+        if choice == PermissionChoice.REJECT:
+            results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": request.tool_use_id,
+                    "content": f"Rejected by user: {request.reason}",
+                    "is_error": True,
+                }
+            )
+        else:
+            results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": request.tool_use_id,
+                    "content": self._execute_regular_tool(
+                        request.tool_name,
+                        request.tool_input,
+                        skip_policy_check=True,
+                    ),
+                }
+            )
+
+        remaining_blocks = suspended.tool_use_blocks[suspended.next_tool_index + 1 :]
+        if remaining_blocks:
+            results.extend(
+                self._execute_tools(
+                    remaining_blocks,
+                    source_assistant_uuid=source_assistant_uuid,
+                )
+            )
+            if self.active_permission_request:
+                return ""
+
+        tool_turn_msg = self._build_tool_results_transcript_message(results, source_assistant_uuid)
+        self.session.add_message(tool_turn_msg)
+        self.session.save()
+        return self._run_conversation_loop()
+
     def _execute_regular_tool(
         self,
         tool_name: str,
@@ -754,13 +785,6 @@ class Agent:
                 return f"Denied: {decision.reason}"
 
             if decision.action == PolicyAction.NEED_APPROVAL:
-                self.pending_confirmation = PendingConfirmation(
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    error_output=f"Requires approval: {decision.reason}",
-                    options=["Approve and execute", "Skip this operation"],
-                    confirmation_type="policy_approval",
-                )
                 return f"Requires approval: {decision.reason}"
 
         if (
@@ -811,22 +835,14 @@ class Agent:
         # Do not inspect output text — tool output may legitimately start with "Error".
         _failures_map.pop(tool_name, None)
 
-        if (
-            tool_metadata
-            and output.startswith("Error")
-            and tool_metadata.is_high_risk_operation(tool_input)
-        ):
-            self.pending_confirmation = PendingConfirmation(
-                tool_name=tool_name,
-                tool_input=tool_input,
-                error_output=output,
-                options=self._generate_options(tool_name, tool_input, output),
-                confirmation_type="high_risk_failure",
-            )
-
         return output
 
-    def _execute_tools(self, tool_use_blocks: list[dict]) -> list[dict]:
+    def _execute_tools(
+        self,
+        tool_use_blocks: list[dict],
+        *,
+        source_assistant_uuid: UUID,
+    ) -> list[dict]:
         """Execute tool calls.
 
         Args:
@@ -839,7 +855,7 @@ class Agent:
         used_todo = False
         manual_compact = False
 
-        for block in tool_use_blocks:
+        for index, block in enumerate(tool_use_blocks):
             tool_name = block.get("name", "")
             tool_input = block.get("input", {})
             tool_id = block.get("id", "")
@@ -862,19 +878,33 @@ class Agent:
                 except ValueError as e:
                     output = f"Error: {e}"
             else:
-                output = self._execute_regular_tool(tool_name, tool_input)
-                if self.pending_confirmation:
-                    if self.on_tool_end:
-                        self.on_tool_end(tool_name, output)
-
-                    results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": str(output)[:50000],
-                        }
+                permission = self._permission_decision_for_tool(tool_name, tool_input)
+                if permission.action == PermissionAction.DENY:
+                    output = f"Denied: {permission.reason}"
+                elif permission.action == PermissionAction.ASK:
+                    request = build_permission_request(
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        tool_use_id=tool_id,
+                        decision=permission,
+                        workdir=self.workdir,
                     )
+                    self._suspend_tool_round(
+                        source_assistant_uuid=source_assistant_uuid,
+                        tool_use_blocks=tool_use_blocks,
+                        completed_results=results,
+                        next_tool_index=index,
+                        request=request,
+                    )
+                    if self.on_tool_end:
+                        self.on_tool_end(tool_name, "Requires permission")
                     return results
+                else:
+                    output = self._execute_regular_tool(
+                        tool_name,
+                        tool_input,
+                        skip_policy_check=True,
+                    )
 
             # Notify end of tool execution
             if self.on_tool_end:
@@ -903,43 +933,6 @@ class Agent:
             self._manual_compact()
 
         return results
-
-    def _generate_options(self, tool_name: str, tool_input: dict, error_output: str) -> list[str]:
-        """Generate options for user based on the failed operation."""
-        options = []
-        tool_metadata = get_tool_with_metadata(tool_name)
-
-        if tool_metadata and tool_metadata.is_destructive:
-            command = tool_input.get("command", "")
-
-            # Package installation errors
-            if "pip install" in command or "pip3 install" in command:
-                options.append("Try installing the latest version")
-                options.append("Show available versions and let me choose")
-
-            # apt/yum errors
-            elif "apt " in command or "apt-get " in command or "yum " in command:
-                options.append("Try with sudo")
-                options.append("Search for alternative package names")
-
-            # rm errors
-            elif command.strip().startswith("rm "):
-                options.append("Force remove with -f")
-                options.append("Remove recursively with -r")
-
-            else:
-                options.append("Retry the same command")
-                options.append("Try a modified version")
-
-        elif tool_metadata and not tool_metadata.is_read_only and not tool_metadata.is_destructive:
-            options.append("Retry with different permissions")
-            options.append("Try writing to a different location")
-
-        if not options:
-            options.append("Retry")
-            options.append("Skip this operation")
-
-        return options
 
     def _build_assistant_transcript_message(self, content: list[dict]) -> TranscriptMessage:
         """Convert LLM response content blocks to TranscriptMessage."""

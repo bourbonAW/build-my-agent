@@ -20,6 +20,7 @@ from bourbon.agent import Agent, AgentError
 from bourbon.config import Config
 from bourbon.debug import debug_log
 from bourbon.mcp_client import MCPServerNotInstalledError
+from bourbon.permissions import PermissionChoice
 
 
 class StreamingDisplay:
@@ -279,7 +280,12 @@ class REPL:
             return
         self.console.print(Markdown(text))
 
-    def _flush_stream_output(self, *, force_pending_tail: bool = False) -> None:
+    def _flush_stream_output(
+        self,
+        *,
+        force_pending_tail: bool = False,
+        render_pending_tail_as_markdown: bool = False,
+    ) -> None:
         """Flush stable streamed output into the append-only terminal timeline."""
         state = self._active_stream
         if state is None:
@@ -295,7 +301,10 @@ class REPL:
 
         if force_pending_tail and len(state.full_text) > len(state.flushed_text):
             forced_tail = state.full_text[len(state.flushed_text) :]
-            self.console.print(Text(forced_tail))
+            if render_pending_tail_as_markdown:
+                self.console.print(Markdown(forced_tail))
+            else:
+                self.console.print(Text(forced_tail))
             state.flushed_text = state.full_text
             next_pending_tail = ""
 
@@ -389,7 +398,10 @@ class REPL:
                 response = self.agent.step_stream(user_input, on_chunk)
                 if self._active_stream.full_text != response:
                     self._active_stream.full_text = response
-                self._flush_stream_output(force_pending_tail=True)
+                self._flush_stream_output(
+                    force_pending_tail=True,
+                    render_pending_tail_as_markdown=True,
+                )
 
             self._active_stream = None
 
@@ -403,7 +415,7 @@ class REPL:
                 "repl.stream.complete",
                 turn_id=turn_id,
                 elapsed_ms=int((time.monotonic() - started_at) * 1000),
-                has_pending_confirmation=bool(self.agent.pending_confirmation),
+                has_active_permission_request=bool(self.agent.active_permission_request),
             )
 
         except Exception as e:
@@ -417,63 +429,47 @@ class REPL:
             self.console.print(f"[red]Error: {e}[/red]")
             return
 
-        # Handle pending confirmation if needed
-        if self.agent.pending_confirmation:
-            self._handle_pending_confirmation()
+        # Handle pending permission request if needed
+        if self.agent.active_permission_request:
+            self._handle_permission_request()
 
-    def _handle_pending_confirmation(self) -> None:
-        """Handle pending user confirmation for high-risk operation failure."""
-        conf = self.agent.pending_confirmation
-        if not conf:
+    def _handle_permission_request(self) -> None:
+        """Handle a pending permission request through the dedicated resume API."""
+        request = self.agent.active_permission_request
+        if not request:
             return
 
-        # Print confirmation prompt with styling
         self.console.print()
-        self.console.print("[bold red]⚠️  HIGH-RISK OPERATION FAILED[/bold red]")
+        self.console.print(f"[bold yellow]{request.title}[/bold yellow]")
         self.console.print("[dim]" + "━" * 50 + "[/dim]")
-        self.console.print(f"[bold]Operation:[/bold] {conf.tool_name}")
-        self.console.print(f"[bold]Input:[/bold] {conf.tool_input}")
-        self.console.print(f"[bold red]Error:[/bold red] {conf.error_output}")
+        self.console.print(f"[bold]Tool:[/bold] {request.tool_name}")
+        self.console.print(f"[bold]Reason:[/bold] {request.reason}")
+        self.console.print(f"[bold]Summary:[/bold] {request.description}")
         self.console.print()
-        self.console.print(
-            "[yellow]This is a high-risk operation. Please choose how to proceed:[/yellow]"
-        )
-        self.console.print()
-
-        for i, option in enumerate(conf.options, 1):
-            self.console.print(f"  [bold][{i}][/bold] {option}")
-        self.console.print("  [bold][c][/bold] Cancel this operation")
+        self.console.print("  [bold][1][/bold] Allow once")
+        self.console.print("  [bold][2][/bold] Allow for session")
+        self.console.print("  [bold][3][/bold] Reject")
         self.console.print()
 
-        # Get user choice
         while True:
             try:
-                choice = (
-                    self.session.prompt(
-                        "Enter your choice: ",
-                        style=self.style,
-                    )
-                    .strip()
-                    .lower()
-                )
-
-                if choice == "c":
-                    user_decision = "Cancel this operation"
+                choice = self.session.prompt("Enter your choice: ", style=self.style).strip()
+                if choice == "1":
+                    response = self.agent.resume_permission_request(PermissionChoice.ALLOW_ONCE)
                     break
-                elif choice.isdigit():
-                    idx = int(choice) - 1
-                    if 0 <= idx < len(conf.options):
-                        user_decision = conf.options[idx]
-                        break
-
+                if choice == "2":
+                    response = self.agent.resume_permission_request(PermissionChoice.ALLOW_SESSION)
+                    break
+                if choice == "3":
+                    response = self.agent.resume_permission_request(PermissionChoice.REJECT)
+                    break
                 self.console.print("[red]Invalid choice. Please try again.[/red]")
             except (KeyboardInterrupt, EOFError):
-                user_decision = "Cancel this operation"
+                response = self.agent.resume_permission_request(PermissionChoice.REJECT)
                 break
 
-        # Continue with user decision
-        self.console.print(f"[dim]Proceeding with: {user_decision}[/dim]")
-        self._process_input(user_decision)
+        if response:
+            self._print_response(response)
 
     def _print_response(self, response: str) -> None:
         """Print agent response with formatting.

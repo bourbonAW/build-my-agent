@@ -255,7 +255,9 @@ class MCPManager:
 
         def handler(**kwargs) -> str:
             """Execute the MCP tool."""
-            call = session.call_tool(tool_name, arguments=kwargs)
+            # Strip internal context parameter - not meant for MCP servers
+            mcp_args = {k: v for k, v in kwargs.items() if k != "ctx"}
+            call = session.call_tool(tool_name, arguments=mcp_args)
             try:
                 runtime = self._ensure_runtime()
                 result: CallToolResult = runtime.run(

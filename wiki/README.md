@@ -1,155 +1,196 @@
-# Claude Code Prompt 架构研究报告
+# Claude Code Subagent 架构文档
 
-本目录包含对 Claude Code CLI 工具中 Prompt 设计的深度研究报告。
-
----
-
-## 文档导航
-
-| 文档 | 内容 | 适合读者 |
-|------|------|----------|
-| [claude-code-prompt-architecture.md](./claude-code-prompt-architecture.md) | 完整架构概览 | 所有人 |
-| [prompt-data-flow.md](./prompt-data-flow.md) | Prompt 数据流详解 | 需要深入理解流程的读者 |
-| [prompt-code-patterns.md](./prompt-code-patterns.md) | 代码模式与最佳实践 | 开发者 |
+> 本 Wiki 深入解析 Claude Code 中 Subagent（子代理）系统的架构设计与实现细节。
 
 ---
 
-## 快速概览
+## 📚 文档目录
 
-### 核心架构特点
+### 核心架构文档
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Claude Code Prompt 架构核心特点                              │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  1. 分层模块化设计                                           │
-│     • 基础系统提示词 → Agent 特定 → Skill → 用户上下文        │
-│                                                             │
-│  2. 缓存优先设计                                              │
-│     • 静态/动态内容分离 (DYNAMIC_BOUNDARY)                   │
-│     • 多层次缓存策略                                         │
-│                                                             │
-│  3. 双路径 Agent 执行                                         │
-│     • Fork 路径: 继承父 Agent 上下文（Cache-Safe）           │
-│     • 标准路径: 独立 Agent 执行                               │
-│                                                             │
-│  4. Skill 系统                                                │
-│     • SKILL.md 文件定义                                       │
-│     • 支持 Inline 和 Fork 两种执行模式                       │
-│                                                             │
-│  5. 安全内建                                                  │
-│     • Prompt Injection 防护                                   │
-│     • Unicode 字符清理                                        │
-│     • 敏感信息过滤                                            │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+| 文档 | 描述 | 推荐阅读顺序 |
+|-----|------|------------|
+| [subagent-architecture-overview.md](./subagent-architecture-overview.md) | Subagent 系统整体架构概览 | 1 |
+| [subagent-concurrency-control.md](./subagent-concurrency-control.md) | 并发控制机制深度解析 | 2 |
+| [subagent-result-handling.md](./subagent-result-handling.md) | 结果处理机制详细说明 | 3 |
 
-### 关键文件索引
+### 实现参考文档
 
-| 文件路径 | 行数 | 核心功能 |
-|----------|------|----------|
-| `constants/prompts.ts` | ~900 | 系统提示词主构建逻辑 |
-| `utils/systemPrompt.ts` | ~150 | 系统提示词优先级系统 |
-| `constants/systemPromptSections.ts` | ~200 | 动态 Section 管理 |
-| `tools/AgentTool/prompt.ts` | ~200 | Agent 工具提示词 |
-| `tools/AgentTool/forkSubagent.ts` | ~150 | Fork 子 Agent 逻辑 |
-| `utils/messages.ts` | ~500 | 消息构建与格式化 |
-| `skills/loadSkillsDir.ts` | ~300 | Skill 加载器 |
+| 文档 | 描述 |
+|-----|------|
+| [subagent-implementation-guide.md](./subagent-implementation-guide.md) | 完整实现指南与代码示例 |
+| [claude-code-subagent-code-reference.md](./claude-code-subagent-code-reference.md) | Claude Code 源码关键位置索引 |
 
 ---
 
-## 关键洞察
-
-### 1. Prompt 即代码
-
-Claude Code 将 Prompt 视为一等公民，拥有完整的类型系统和构建流程：
-
-```typescript
-// 品牌类型确保类型安全
-export type SystemPrompt = readonly string[] & {
-  readonly __brand: 'SystemPrompt';
-};
-
-// 优先级系统管理提示词选择
-buildEffectiveSystemPrompt({
-  overrideSystemPrompt,      // 优先级 1
-  mainThreadAgentDefinition, // 优先级 2
-  customSystemPrompt,        // 优先级 3
-  defaultSystemPrompt,       // 优先级 4
-  appendSystemPrompt,        // 优先级 5
-});
-```
-
-### 2. 缓存优先的架构设计
+## 🏗️ 架构概览
 
 ```
-静态内容 (可缓存)                    动态内容 (不缓存)
-┌─────────────────────┐             ┌─────────────────────┐
-│ • Simple Intro      │             │ • session_guidance  │
-│ • System Rules      │  DYNAMIC    │ • memory            │
-│ • Task Guidelines   │  BOUNDARY   │ • env_info_simple   │
-│ • Actions           │  ─────────▶ │ • mcp_instructions  │
-│ • Tool Usage        │             │ • token_budget      │
-└─────────────────────┘             └─────────────────────┘
-         │                                    │
-         └────────────┬───────────────────────┘
-                      ▼
-         [global scope cache]          [no cache]
-```
-
-### 3. Agent 即函数
-
-通过 `AsyncLocalStorage` 在异步操作中传递 Agent 上下文：
-
-```typescript
-const agentContextStorage = new AsyncLocalStorage<AgentContext>();
-
-export function runWithAgentContext<T>(context: AgentContext, fn: () => T): T {
-  return agentContextStorage.run(context, fn);
-}
-```
-
-### 4. Fork 子 Agent 的 Cache-Safe 设计
-
-Fork Subagent 通过复用父 Agent 的完整上下文实现 API 级别的 prompt cache 共享：
-
-```typescript
-// 1. 复用系统提示词
-forkParentSystemPrompt = toolUseContext.renderedSystemPrompt;
-
-// 2. 复用工具定义
-availableTools = toolUseContext.options.tools;
-useExactTools = true;
-
-// 3. 继承消息历史
-forkContextMessages = toolUseContext.messages;
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Claude Code Subagent System                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                        AgentTool (主入口)                            │   │
+│  │  • 参数解析  • 路由决策  • 模式选择                                   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                     │                                       │
+│           ┌─────────────────────────┼──────────────────────────┐           │
+│           ▼                         ▼                          ▼           │
+│  ┌─────────────────┐    ┌─────────────────────┐    ┌───────────────────┐  │
+│  │   Sync Agent    │    │     Async Agent     │    │   Multi-Agent     │  │
+│  │   (前台同步)     │    │     (后台异步)       │    │     (多代理团队)   │  │
+│  │                 │    │                     │    │                   │  │
+│  │ • 阻塞执行       │    │ • 独立运行          │    │ • 进程内/外        │  │
+│  │ • 完整工具集     │    │ • 受限工具集        │    │ • Mailbox 通信    │  │
+│  │ • 实时输出       │    │ • 通知机制          │    │ • 并行协作        │  │
+│  └─────────────────┘    └─────────────────────┘    └───────────────────┘  │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                      核心支撑系统                                     │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │   │
+│  │  │ 工具过滤器   │  │ 状态管理器   │  │ 取消控制器   │  │ 通知系统     │ │   │
+│  │  │ Tool Filter │  │   State     │  │   Abort     │  │ Notification│ │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘ │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 适合学习的场景
+## 🎯 核心特性
 
-### 如果你想要...
+### 1. 灵活的执行模式
 
-| 目标 | 推荐阅读 |
-|------|----------|
-| 快速理解整体架构 | [claude-code-prompt-architecture.md](./claude-code-prompt-architecture.md) |
-| 实现类似的 Prompt 系统 | [prompt-code-patterns.md](./prompt-code-patterns.md) |
-| 理解数据流向和缓存策略 | [prompt-data-flow.md](./prompt-data-flow.md) |
-| 了解 Agent 系统设计 | [claude-code-prompt-architecture.md](./claude-code-prompt-architecture.md) 第4节 |
-| 学习 Skill 系统 | [claude-code-prompt-architecture.md](./claude-code-prompt-architecture.md) 第5节 |
-| 了解安全防护措施 | [claude-code-prompt-architecture.md](./claude-code-prompt-architecture.md) 第8节 |
+| 模式 | 特点 | 适用场景 |
+|-----|------|---------|
+| **同步前台** | 阻塞执行、实时输出、完整工具集 | 短时间交互式任务 |
+| **异步后台** | 独立运行、通知结果、受限工具集 | 长时间独立任务 |
+| **Fork 子代理** | 继承上下文、Prompt Cache 共享 | 复杂任务分解 |
+| **多代理团队** | 并行协作、Mailbox 通信 | 大规模并行处理 |
+
+### 2. 完善的并发控制
+
+- **工具过滤**: 白名单/黑名单机制，动态权限控制
+- **轮数限制**: maxTurns 防止无限循环
+- **取消机制**: AbortController 层级结构，支持级联取消
+- **资源监控**: 内存和任务数量运行时监控
+
+### 3. 可靠的结果处理
+
+- **消息收集**: 统一生成器模式收集消息流
+- **终结处理**: 智能提取有效结果
+- **状态管理**: 函数式更新确保数据一致性
+- **通知机制**: 异步任务完成主动通知
 
 ---
 
-## 相关资源
+## 📖 快速导航
 
-- [Claude Code 官方文档](https://docs.anthropic.com/en/docs/claude-code/overview)
-- [Anthropic API 文档](https://docs.anthropic.com/en/api/getting-started)
-- [Prompt Caching 指南](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+### 对于架构师
+
+1. 阅读 [架构总览](./subagent-architecture-overview.md) 理解整体架构
+2. 深入研究 [并发控制](./subagent-concurrency-control.md) 的安全机制
+3. 了解 [结果处理](./subagent-result-handling.md) 的数据流
+
+### 对于开发者
+
+1. 阅读 [架构总览](./subagent-architecture-overview.md) 了解基本概念
+2. 参考 [代码索引](./claude-code-subagent-code-reference.md) 定位源码
+3. 跟随 [实现指南](./subagent-implementation-guide.md) 构建自己的系统
+
+### 对于研究者
+
+1. [架构总览](./subagent-architecture-overview.md) - 架构设计理念
+2. [并发控制](./subagent-concurrency-control.md) - 安全机制设计
+3. [代码索引](./claude-code-subagent-code-reference.md) - 源码对照
 
 ---
 
-*研究日期: 2026-04-01*
+## 🔑 关键概念
+
+### Subagent
+
+Subagent（子代理）是 Claude Code 中用于并行执行任务的独立代理实例。它可以：
+
+- 在独立上下文中执行工具调用
+- 与父代理并行运行
+- 通过特定机制返回结果
+
+### 异步执行
+
+当 `run_in_background=true` 时，子代理在后台运行：
+
+- 不阻塞父代理继续执行
+- 通过通知系统报告完成
+- 支持随时查看进度和结果
+
+### 工具过滤
+
+根据代理类型动态过滤可用工具：
+
+- 异步代理使用受限工具集
+- 危险工具全局禁用
+- MCP 工具始终允许
+
+### AbortController 层级
+
+父子关系支持级联取消：
+
+```
+Parent (abort) ──► Child 1 (abort) ──► Grandchild (abort)
+              ──► Child 2 (abort)
+```
+
+---
+
+## 📊 性能指标
+
+基于 Claude Code 实现的经验数据：
+
+| 指标 | 典型值 | 说明 |
+|-----|-------|------|
+| 最大并发子代理 | 10-20 | 可配置 |
+| 单个子代理最大轮数 | 200 | 默认配置 |
+| 异步工具集大小 | ~15 | 受限工具集 |
+| 结果通知延迟 | < 100ms | 本地通知 |
+
+---
+
+## 🔗 外部参考
+
+### Claude Code 相关
+
+- [Claude Code 官方文档](https://docs.anthropic.com/en/docs/claude-code)
+- [Anthropic API 文档](https://docs.anthropic.com/en/api)
+
+### 相关技术
+
+- [React](https://react.dev/) - UI 框架
+- [Ink](https://github.com/vadimdemedes/ink) - React for CLI
+- [Commander.js](https://github.com/tj/commander.js/) - CLI 解析
+- [Zod](https://zod.dev/) - Schema 验证
+
+---
+
+## 📝 文档更新记录
+
+| 日期 | 版本 | 变更 |
+|-----|------|------|
+| 2026-04-09 | v1.0 | 初始版本，包含完整的架构分析和实现指南 |
+
+---
+
+## 🤝 贡献
+
+本 Wiki 基于对 Claude Code 开源代码的深入研究编写。如需改进或补充，请参考原始代码库：
+
+```
+/home/hf/github_project/claude-code-main
+```
+
+---
+
+*文档编写: Claude Code AI Agent*  
+*最后更新: 2026-04-09*

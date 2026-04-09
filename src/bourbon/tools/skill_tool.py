@@ -98,6 +98,10 @@ The skill will provide detailed instructions, examples, and may include scripts 
                 "type": "string",
                 "description": "Name of the skill to activate (as shown in available_skills catalog)",
             },
+            "args": {
+                "type": "string",
+                "description": "Optional arguments passed to the skill ($ARGUMENTS substitution)",
+            },
         },
         "required": ["name"],
     },
@@ -105,14 +109,22 @@ The skill will provide detailed instructions, examples, and may include scripts 
     is_read_only=False,
     required_capabilities=["skill"],
 )
-def skill_handler(name: str, *, ctx: ToolContext) -> str:
+def skill_handler(name: str, args: str = "", *, ctx: ToolContext) -> str:
     """Tool handler for Skill."""
     manager = ctx.skill_manager if ctx.skill_manager is not None else get_skill_manager()
 
     try:
         if manager.is_activated(name):
             return f'<skill_already_loaded name="{name}"/>\n\nSkill \'{name}\' is already active.'
-        return manager.activate(name)
+
+        content = manager.activate(name, args=args)
+
+        # Inject skill's allowed-tools into discovered tools set
+        skill = manager.get_skill(name)
+        if skill and skill.allowed_tools and ctx.on_tools_discovered:
+            ctx.on_tools_discovered(set(skill.allowed_tools))
+
+        return content
     except SkillValidationError as e:
         return f"Error: {e}"
     except Exception as e:

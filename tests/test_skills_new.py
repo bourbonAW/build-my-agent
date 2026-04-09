@@ -245,3 +245,191 @@ class TestSkillResources:
         """Should return None for non-existent resources."""
         path = skill_with_resources.get_resource_path("scripts/nonexistent.py")
         assert path is None
+
+
+class TestVariableSubstitution:
+    """Test $ARGUMENTS and ${CLAUDE_SKILL_DIR} substitution in render_for_activation."""
+
+    def test_arguments_substitution(self, tmp_path):
+        """$ARGUMENTS should be replaced with the args value."""
+        skill = Skill(
+            name="test-skill",
+            description="Test",
+            location=tmp_path / "SKILL.md",
+            body="Run this command: $ARGUMENTS",
+        )
+        content = skill.render_for_activation(args="--verbose --dry-run")
+        assert "--verbose --dry-run" in content
+        assert "$ARGUMENTS" not in content
+
+    def test_arguments_empty_default(self, tmp_path):
+        """$ARGUMENTS with no args should be replaced with empty string."""
+        skill = Skill(
+            name="test-skill",
+            description="Test",
+            location=tmp_path / "SKILL.md",
+            body="Args: [$ARGUMENTS]",
+        )
+        content = skill.render_for_activation()
+        assert "Args: []" in content
+
+    def test_skill_dir_substitution(self, tmp_path):
+        """${CLAUDE_SKILL_DIR} should be replaced with skill base directory."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        skill = Skill(
+            name="test-skill",
+            description="Test",
+            location=skill_dir / "SKILL.md",
+            body="Script at: ${CLAUDE_SKILL_DIR}/scripts/run.sh",
+        )
+        content = skill.render_for_activation()
+        assert f"{skill_dir}/scripts/run.sh" in content
+        assert "${CLAUDE_SKILL_DIR}" not in content
+
+    def test_both_substitutions_together(self, tmp_path):
+        """Both variables should be substituted in the same content."""
+        skill_dir = tmp_path / "combo-skill"
+        skill_dir.mkdir()
+        skill = Skill(
+            name="combo-skill",
+            description="Test",
+            location=skill_dir / "SKILL.md",
+            body="Run ${CLAUDE_SKILL_DIR}/run.sh $ARGUMENTS",
+        )
+        content = skill.render_for_activation(args="--flag")
+        assert f"{skill_dir}/run.sh --flag" in content
+
+    def test_no_variables_passthrough(self, tmp_path):
+        """Content without variables should be unchanged."""
+        skill = Skill(
+            name="test-skill",
+            description="Test",
+            location=tmp_path / "SKILL.md",
+            body="No variables here.",
+        )
+        content = skill.render_for_activation()
+        assert "No variables here." in content
+
+    def test_manager_activate_passes_args(self, tmp_path):
+        """SkillManager.activate() should forward args to render_for_activation()."""
+        manager = SkillManager(workdir=tmp_path)
+        skill = Skill(
+            name="test-skill",
+            description="Test",
+            location=tmp_path / "SKILL.md",
+            body="Input: $ARGUMENTS",
+        )
+        manager._skills = {"test-skill": skill}
+
+        content = manager.activate("test-skill", args="hello world")
+        assert "Input: hello world" in content
+        assert "$ARGUMENTS" not in content
+
+
+class TestAllowedToolsInjection:
+    """Test that allowed-tools from skill frontmatter are injected via on_tools_discovered."""
+
+    def test_allowed_tools_injected_on_activation(self, tmp_path):
+        """Activating a skill with allowed-tools should call on_tools_discovered."""
+        from bourbon.tools import ToolContext
+        from bourbon.tools.skill_tool import skill_handler
+
+        manager = SkillManager(workdir=tmp_path)
+        skill = Skill(
+            name="web-skill",
+            description="Web skill",
+            location=tmp_path / "SKILL.md",
+            body="# Web",
+            allowed_tools=["WebSearch", "WebFetch"],
+        )
+        manager._skills = {"web-skill": skill}
+
+        discovered: set[str] = set()
+        ctx = ToolContext(
+            workdir=tmp_path,
+            skill_manager=manager,
+            on_tools_discovered=discovered.update,
+        )
+
+        skill_handler("web-skill", ctx=ctx)
+
+        assert "WebSearch" in discovered
+        assert "WebFetch" in discovered
+
+    def test_no_allowed_tools_no_callback(self, tmp_path):
+        """Skill without allowed-tools should not call on_tools_discovered."""
+        from bourbon.tools import ToolContext
+        from bourbon.tools.skill_tool import skill_handler
+
+        manager = SkillManager(workdir=tmp_path)
+        skill = Skill(
+            name="plain-skill",
+            description="Plain skill",
+            location=tmp_path / "SKILL.md",
+            body="# Plain",
+        )
+        manager._skills = {"plain-skill": skill}
+
+        call_count = 0
+
+        def tracker(tools: set[str]):
+            nonlocal call_count
+            call_count += 1
+
+        ctx = ToolContext(
+            workdir=tmp_path,
+            skill_manager=manager,
+            on_tools_discovered=tracker,
+        )
+
+        skill_handler("plain-skill", ctx=ctx)
+        assert call_count == 0
+
+    def test_allowed_tools_not_injected_when_callback_is_none(self, tmp_path):
+        """Should not crash when on_tools_discovered is None."""
+        from bourbon.tools import ToolContext
+        from bourbon.tools.skill_tool import skill_handler
+
+        manager = SkillManager(workdir=tmp_path)
+        skill = Skill(
+            name="tools-skill",
+            description="Tools skill",
+            location=tmp_path / "SKILL.md",
+            body="# Tools",
+            allowed_tools=["Bash"],
+        )
+        manager._skills = {"tools-skill": skill}
+
+        ctx = ToolContext(
+            workdir=tmp_path,
+            skill_manager=manager,
+            on_tools_discovered=None,
+        )
+
+        # Should not raise
+        content = skill_handler("tools-skill", ctx=ctx)
+        assert "<skill_content" in content
+
+    def test_args_forwarded_through_handler(self, tmp_path):
+        """skill_handler should forward args to manager.activate()."""
+        from bourbon.tools import ToolContext
+        from bourbon.tools.skill_tool import skill_handler
+
+        manager = SkillManager(workdir=tmp_path)
+        skill = Skill(
+            name="arg-skill",
+            description="Arg skill",
+            location=tmp_path / "SKILL.md",
+            body="Execute: $ARGUMENTS",
+        )
+        manager._skills = {"arg-skill": skill}
+
+        ctx = ToolContext(
+            workdir=tmp_path,
+            skill_manager=manager,
+        )
+
+        content = skill_handler("arg-skill", args="my-arg-value", ctx=ctx)
+        assert "Execute: my-arg-value" in content
+        assert "$ARGUMENTS" not in content

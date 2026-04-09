@@ -9,6 +9,7 @@ def test_bash_session_rule_matches_normalized_command_prefix(tmp_path: Path):
     candidate = build_match_candidate("Bash", {"command": "pip install flask"}, tmp_path)
 
     assert candidate["kind"] == "command_prefix"
+    assert candidate["tool_name"] == "Bash"
     assert session_rule_matches(candidate, "Bash", {"command": "pip install requests"}, tmp_path)
     assert not session_rule_matches(candidate, "Bash", {"command": "uv run pytest"}, tmp_path)
 
@@ -25,6 +26,12 @@ def test_write_new_file_matches_parent_directory(tmp_path: Path):
         candidate,
         "Write",
         {"path": "notes/tomorrow.md", "content": "world"},
+        tmp_path,
+    )
+    assert not session_rule_matches(
+        candidate,
+        "Write",
+        {"path": "other/tomorrow.md", "content": "world"},
         tmp_path,
     )
 

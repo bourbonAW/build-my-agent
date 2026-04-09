@@ -125,8 +125,11 @@ class Skill:
         lines.append("  </skill>")
         return "\n".join(lines)
 
-    def render_for_activation(self) -> str:
+    def render_for_activation(self, args: str = "") -> str:
         """Render skill content for model activation (Tier 2 disclosure).
+
+        Args:
+            args: Optional arguments string for $ARGUMENTS substitution.
 
         Returns body with structured wrapping and resource listing.
         """
@@ -149,7 +152,13 @@ class Skill:
             lines.append("</skill_resources>")
 
         lines.append("</skill_content>")
-        return "\n".join(lines)
+        content = "\n".join(lines)
+
+        # Variable substitution
+        content = content.replace("$ARGUMENTS", args)
+        content = content.replace("${CLAUDE_SKILL_DIR}", str(self.base_dir))
+
+        return content
 
 
 class SkillScanner:
@@ -423,11 +432,12 @@ class SkillManager:
         lines.append("</available_skills>")
         return "\n".join(lines)
 
-    def activate(self, name: str) -> str:
+    def activate(self, name: str, args: str = "") -> str:
         """Activate a skill and return its content (Tier 2 disclosure).
 
         Args:
             name: Skill name
+            args: Optional arguments string for $ARGUMENTS substitution.
 
         Returns:
             Skill content with structured wrapping
@@ -445,7 +455,7 @@ class SkillManager:
         # Track activation for deduplication
         self._activated.add(name)
 
-        return skill.render_for_activation()
+        return skill.render_for_activation(args=args)
 
     def is_activated(self, name: str) -> bool:
         """Check if a skill has been activated."""

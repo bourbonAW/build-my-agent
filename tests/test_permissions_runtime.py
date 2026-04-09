@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from bourbon.permissions.matching import build_match_candidate
 from bourbon.permissions.runtime import (
     PermissionChoice,
     PermissionRequest,
@@ -52,3 +55,13 @@ def test_suspended_tool_round_tracks_progress_and_active_request():
 
     assert round_state.next_tool_index == 1
     assert round_state.active_request.tool_use_id == "tool-2"
+
+
+def test_session_permission_store_uses_tool_aware_matching(tmp_path: Path):
+    store = SessionPermissionStore()
+    candidate = build_match_candidate("Bash", {"command": "pip install flask"}, tmp_path)
+
+    store.add(candidate)
+
+    assert store.has_match("Bash", {"command": "pip install requests"}, tmp_path) is True
+    assert store.has_match("Bash", {"command": "uv run pytest"}, tmp_path) is False
