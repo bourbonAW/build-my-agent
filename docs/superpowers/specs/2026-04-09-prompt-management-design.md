@@ -472,39 +472,54 @@ Each component is independently testable:
    These tests call removed methods AND construct partial Agent objects, so both fixes apply.
 
    - **`tests/test_agent_error_policy.py`** (line ~32 fixture, ~52 call):
-     1. Add the three new prompt attributes to the `__new__` fixture (see pattern below)
-     2. Replace `agent._build_system_prompt()` call with `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))` and assert the result string
+     1. In the `__new__` fixture, add prompt attributes with real sections so `build()` produces assertable output:
+        ```python
+        from bourbon.prompt import ALL_SECTIONS, PromptBuilder, PromptContext, ContextInjector
+        agent._prompt_ctx = PromptContext(workdir=agent.workdir, skill_manager=None, mcp_manager=None)
+        agent._prompt_builder = PromptBuilder(sections=ALL_SECTIONS)
+        agent._context_injector = ContextInjector()
+        ```
+     2. Replace `agent._build_system_prompt()` call with:
+        ```python
+        result = _get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))
+        assert "error handling" in result.lower()  # or whatever the test currently asserts
+        ```
 
    - **`tests/test_mcp_sync_runtime.py`** (line ~40 fixture, ~49 assertion):
-     1. Add the three new prompt attributes to the `__new__` fixture (see pattern below)
-     2. Replace the `initialize_mcp_sync()` → `agent.system_prompt` assertion chain with: call `initialize_mcp_sync()`, then call `_get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))` and assert the result contains the MCP tool name
-     3. The mock `MCPManager` must expose all fields that `mcp_tools_section()` reads:
+     1. In the `__new__` fixture, add prompt attributes with `mcp_manager` pointing at the existing mock so `mcp_tools_section()` can read it:
         ```python
-        mock_mcp.get_connection_summary.return_value = {
-            "enabled": True,
-            "total_tools": 1,
-        }
+        from bourbon.prompt import ALL_SECTIONS, PromptBuilder, PromptContext, ContextInjector
+        agent._prompt_ctx = PromptContext(workdir=agent.workdir, skill_manager=None, mcp_manager=agent.mcp)
+        agent._prompt_builder = PromptBuilder(sections=ALL_SECTIONS)
+        agent._context_injector = ContextInjector()
+        ```
+     2. Expand the mock to expose all fields `mcp_tools_section()` reads (the current test only sets `connect_all_sync()` and `get_connection_summary()["total_tools"]`):
+        ```python
+        mock_mcp.get_connection_summary.return_value = {"enabled": True, "total_tools": 1}
         mock_mcp.list_mcp_tools.return_value = ["myserver-mytool"]
         mock_mcp.config.servers = [SimpleNamespace(name="myserver")]
         ```
-        The current test mocks only `connect_all_sync()` and `get_connection_summary()["total_tools"]`; without `enabled`, `list_mcp_tools()`, and `config.servers`, `mcp_tools_section()` returns empty string and the assertion will never pass.
+     3. Replace the `initialize_mcp_sync()` → `agent.system_prompt` assertion with:
+        ```python
+        agent.initialize_mcp_sync()
+        result = _get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))
+        assert "myserver-mytool" in result
+        ```
 
-   **Tests that bypass `__init__` via `Agent.__new__` and call `step()` / `step_stream()` directly:**
-   These construct a partial Agent object and will fail with `AttributeError` on the new attributes.
-   - **`tests/test_agent_streaming.py`** (line ~45): `object.__new__(Agent)` fixture → add three new attributes
-   - **`tests/test_debug_logging.py`** (line ~38): same pattern → same fix
+   **Tests that bypass `__init__` via `Agent.__new__` and only call `step()` / `step_stream()` (do not assert prompt content):**
+   These need the three attributes to avoid `AttributeError`, but do not need real sections — a stub builder is fine.
+   - **`tests/test_agent_streaming.py`** (line ~45)
+   - **`tests/test_debug_logging.py`** (line ~38)
 
-   **Pattern for all `__new__`-based fixtures** (applies to all four tests above):
+   **Pattern for prompt-agnostic `__new__` fixtures** (streaming / debug tests only):
    ```python
    agent = object.__new__(Agent)
    # ... existing fixture setup ...
-   # Add new prompt attributes:
    from bourbon.prompt import PromptBuilder, PromptContext, ContextInjector
    agent._prompt_ctx = PromptContext(workdir=agent.workdir, skill_manager=None, mcp_manager=None)
    agent._prompt_builder = PromptBuilder(sections=[], custom_prompt="test prompt")
    agent._context_injector = ContextInjector()
    ```
-   Any test fixture that calls `step()`, `step_stream()`, or `_prompt_builder.build()` must include these three attributes.
 4. Behavior differences to document in test deltas:
    - When no skills are available, system prompt no longer contains `"(No skills available)"` (now omitted entirely)
    - System prompt rebuilt every `step()` call, not just at init/MCP connect
