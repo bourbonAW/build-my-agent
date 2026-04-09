@@ -1,6 +1,7 @@
 """Tests for synchronous MCP integration points."""
 
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -35,22 +36,38 @@ class TestMCPManagerSync(unittest.TestCase):
 class TestAgentSyncMCPInitialization(unittest.TestCase):
     """Tests for synchronous MCP initialization entry points."""
 
-    def test_initialize_mcp_sync_updates_system_prompt_when_tools_are_available(self):
+    def test_initialize_mcp_sync_completes_and_prompt_reflects_mcp_tools(self):
         """Agent should expose a sync MCP init path for the sync REPL."""
+        from bourbon.prompt import ALL_SECTIONS, ContextInjector, PromptBuilder, PromptContext
+        from bourbon.tools import _get_async_runtime
+
         agent = Agent.__new__(Agent)
-        agent.mcp = MagicMock()
-        results = {"context7": object()}
-        agent.mcp.connect_all_sync.return_value = results
-        agent.mcp.get_connection_summary.return_value = {"total_tools": 2}
-        agent._build_system_prompt = MagicMock(return_value="updated prompt")
-        agent._custom_system_prompt = None
+        agent.workdir = Path("/tmp")
+
+        mock_mcp = MagicMock()
+        results = {"myserver": object()}
+        mock_mcp.connect_all_sync.return_value = results
+        mock_mcp.get_connection_summary.return_value = {"enabled": True, "total_tools": 1}
+        mock_mcp.list_mcp_tools.return_value = ["myserver-mytool"]
+        mock_mcp.config.servers = [SimpleNamespace(name="myserver")]
+        agent.mcp = mock_mcp
+
+        agent._prompt_ctx = PromptContext(
+            workdir=agent.workdir,
+            skill_manager=None,
+            mcp_manager=agent.mcp,
+        )
+        agent._prompt_builder = PromptBuilder(sections=ALL_SECTIONS)
+        agent._context_injector = ContextInjector()
         agent.system_prompt = "old prompt"
 
         returned = Agent.initialize_mcp_sync(agent, timeout=60.0)
 
         agent.mcp.connect_all_sync.assert_called_once_with(timeout=60.0)
         assert returned is results
-        assert agent.system_prompt == "updated prompt"
+
+        result = _get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))
+        assert "myserver-mytool" in result
 
 
 class TestREPLSyncMCPInitialization(unittest.TestCase):
