@@ -56,7 +56,9 @@ def test_inject_includes_git_status_when_available():
     injector = ContextInjector()
     ctx = PromptContext(workdir=Path("/tmp/repo"))
 
-    with patch.object(injector, "_get_git_status", new=AsyncMock(return_value="## main\n M file.py")):
+    with patch.object(
+        injector, "_get_git_status", new=AsyncMock(return_value="## main\n M file.py")
+    ):
         result = run(injector.inject("msg", ctx))
 
     assert "## main" in result

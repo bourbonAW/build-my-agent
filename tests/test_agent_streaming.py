@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from bourbon.session.manager import Session, SessionManager
+from bourbon.session.manager import SessionManager
 from bourbon.session.storage import TranscriptStore
 
 
@@ -36,10 +36,12 @@ def test_get_session_tokens_returns_estimate():
     agent.workdir = Path.cwd()
     _setup_mock_session(agent)
 
-    agent.session.add_message(TranscriptMessage(
-        role=MessageRole.USER,
-        content=[TextBlock(text="Hello world")],
-    ))
+    agent.session.add_message(
+        TranscriptMessage(
+            role=MessageRole.USER,
+            content=[TextBlock(text="Hello world")],
+        )
+    )
 
     tokens = agent.get_session_tokens()
     assert tokens > 0
@@ -214,7 +216,9 @@ def test_step_stream_persists_usage_to_session_message():
     transcript_msgs = chain.build_active_chain()
     assistant_transcript = [m for m in transcript_msgs if m.role == MessageRole.ASSISTANT]
     assert len(assistant_transcript) == 1
-    assert assistant_transcript[0].usage is not None, "streaming path must persist usage to session message"
+    assert assistant_transcript[0].usage is not None, (
+        "streaming path must persist usage to session message"
+    )
     assert assistant_transcript[0].usage.input_tokens == 11
     assert assistant_transcript[0].usage.output_tokens == 7
     assert assistant_transcript[0].usage.total_tokens == 18

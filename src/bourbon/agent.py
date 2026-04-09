@@ -17,7 +17,7 @@ from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
 from bourbon.prompt import ALL_SECTIONS, ContextInjector, PromptBuilder, PromptContext
 from bourbon.sandbox import SandboxManager
-from bourbon.session.manager import Session, SessionManager
+from bourbon.session.manager import SessionManager
 from bourbon.session.storage import TranscriptStore
 from bourbon.session.types import (
     CompactTrigger,
@@ -118,9 +118,7 @@ class Agent:
             append_prompt=None,
         )
         self._context_injector = ContextInjector()
-        self.system_prompt = _get_async_runtime().run(
-            self._prompt_builder.build(self._prompt_ctx)
-        )
+        self.system_prompt = _get_async_runtime().run(self._prompt_builder.build(self._prompt_ctx))
 
         # Initialize Session system
         session_dir = Path.home() / ".bourbon" / "sessions"
@@ -238,9 +236,7 @@ class Agent:
 
     def step(self, user_input: str) -> str:
         """Process one user input and return assistant response."""
-        self.system_prompt = _get_async_runtime().run(
-            self._prompt_builder.build(self._prompt_ctx)
-        )
+        self.system_prompt = _get_async_runtime().run(self._prompt_builder.build(self._prompt_ctx))
 
         if self.pending_confirmation:
             return self._handle_confirmation_response(user_input)
@@ -288,9 +284,7 @@ class Agent:
             has_pending_confirmation=bool(self.pending_confirmation),
         )
 
-        self.system_prompt = _get_async_runtime().run(
-            self._prompt_builder.build(self._prompt_ctx)
-        )
+        self.system_prompt = _get_async_runtime().run(self._prompt_builder.build(self._prompt_ctx))
 
         if self.pending_confirmation:
             response = self._handle_confirmation_response(user_input)
@@ -348,9 +342,7 @@ class Agent:
                     "agent.stream.llm_call.start",
                     tool_round=tool_round,
                     message_count=len(messages),
-                    tool_definition_count=len(
-                        definitions(discovered=self._get_discovered_tools())
-                    ),
+                    tool_definition_count=len(definitions(discovered=self._get_discovered_tools())),
                 )
                 event_stream = self.llm.chat_stream(
                     messages=messages,
@@ -501,10 +493,12 @@ class Agent:
                     return self._run_conversation_loop()
                 except Exception:
                     error_msg = f"LLM Error: {e}"
-                    self.session.add_message(TranscriptMessage(
-                        role=MessageRole.ASSISTANT,
-                        content=[TextBlock(text=error_msg)],
-                    ))
+                    self.session.add_message(
+                        TranscriptMessage(
+                            role=MessageRole.ASSISTANT,
+                            content=[TextBlock(text=error_msg)],
+                        )
+                    )
                     self.session.save()
                     debug_log(
                         "agent.stream.fallback.error",
@@ -550,10 +544,12 @@ class Agent:
             f"[User decision: {user_input}]\n"
             f"Please proceed based on the user's decision above."
         )
-        self.session.add_message(TranscriptMessage(
-            role=MessageRole.USER,
-            content=[TextBlock(text=context)],
-        ))
+        self.session.add_message(
+            TranscriptMessage(
+                role=MessageRole.USER,
+                content=[TextBlock(text=context)],
+            )
+        )
         self.session.save()
 
         # Continue the conversation
@@ -584,10 +580,12 @@ class Agent:
                     )
             except LLMError as e:
                 error_msg = f"LLM Error: {e}"
-                self.session.add_message(TranscriptMessage(
-                    role=MessageRole.ASSISTANT,
-                    content=[TextBlock(text=error_msg)],
-                ))
+                self.session.add_message(
+                    TranscriptMessage(
+                        role=MessageRole.ASSISTANT,
+                        content=[TextBlock(text=error_msg)],
+                    )
+                )
                 self.session.save()
                 return error_msg
 
@@ -765,7 +763,11 @@ class Agent:
                 )
                 return f"Requires approval: {decision.reason}"
 
-        if tool_metadata and tool_metadata.is_destructive and getattr(self.sandbox, "enabled", False):
+        if (
+            tool_metadata
+            and tool_metadata.is_destructive
+            and getattr(self.sandbox, "enabled", False)
+        ):
             sandbox_result = self.sandbox.execute(
                 tool_input.get("command", ""), tool_name=tool_name
             )
@@ -939,20 +941,20 @@ class Agent:
 
         return options
 
-    def _build_assistant_transcript_message(
-        self, content: list[dict]
-    ) -> TranscriptMessage:
+    def _build_assistant_transcript_message(self, content: list[dict]) -> TranscriptMessage:
         """Convert LLM response content blocks to TranscriptMessage."""
         blocks = []
         for block in content:
             if block.get("type") == "text":
                 blocks.append(TextBlock(text=block.get("text", "")))
             elif block.get("type") == "tool_use":
-                blocks.append(ToolUseBlock(
-                    id=block.get("id", ""),
-                    name=block.get("name", ""),
-                    input=block.get("input", {}),
-                ))
+                blocks.append(
+                    ToolUseBlock(
+                        id=block.get("id", ""),
+                        name=block.get("name", ""),
+                        input=block.get("input", {}),
+                    )
+                )
         return TranscriptMessage(role=MessageRole.ASSISTANT, content=blocks)
 
     def _build_tool_results_transcript_message(

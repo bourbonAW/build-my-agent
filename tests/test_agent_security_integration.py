@@ -50,6 +50,9 @@ def make_agent_stub() -> Agent:
     agent.messages = []
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
+    agent._tool_consecutive_failures = {}
+    agent._max_tool_consecutive_failures = 3
+    agent._discovered_tools = set()
     agent.pending_confirmation = None
     agent.audit = MagicMock()
     agent.access_controller = MagicMock()

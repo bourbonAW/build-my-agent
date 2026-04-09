@@ -27,13 +27,13 @@ def test_debug_log_writes_jsonl_when_enabled(monkeypatch, tmp_path: Path):
 
 def test_agent_step_stream_emits_debug_events():
     """Streaming agent path should emit boundary logs around the LLM stream."""
+    import tempfile
     from pathlib import Path
 
     from bourbon.agent import Agent
     from bourbon.config import Config
     from bourbon.session.manager import SessionManager
     from bourbon.session.storage import TranscriptStore
-    import tempfile
 
     agent = object.__new__(Agent)
     agent.config = Config()

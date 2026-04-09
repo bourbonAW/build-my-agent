@@ -28,10 +28,11 @@ class PromptBuilder:
     async def _assemble_sections(self, ctx: PromptContext) -> str:
         parts: list[str] = []
         for section in self._sections:
-            if section.is_static:
-                text = section.content
+            content = section.content
+            if isinstance(content, str):
+                text = content
             else:
-                text = await section.content(ctx)
+                text = await content(ctx)
             if text:
                 parts.append(text)
         return "\n\n".join(parts)

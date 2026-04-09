@@ -59,9 +59,7 @@ def mock_agent():
     )
     agent._prompt_builder = PromptBuilder(sections=ALL_SECTIONS)
     agent._context_injector = ContextInjector()
-    agent.system_prompt = _get_async_runtime().run(
-        agent._prompt_builder.build(agent._prompt_ctx)
-    )
+    agent.system_prompt = _get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))
     agent.messages = []
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50

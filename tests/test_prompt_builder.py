@@ -3,7 +3,6 @@ from pathlib import Path
 
 from bourbon.prompt.types import PromptContext, PromptSection
 
-
 CTX = PromptContext(workdir=Path("/tmp/test"))
 
 

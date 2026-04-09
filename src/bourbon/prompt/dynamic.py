@@ -49,7 +49,7 @@ async def mcp_tools_section(ctx: PromptContext) -> str:
             None,
         )
         if matched_server:
-            tool = tool_name[len(matched_server) + 1:]
+            tool = tool_name[len(matched_server) + 1 :]
             server_tools.setdefault(matched_server, []).append(tool)
 
     lines = [

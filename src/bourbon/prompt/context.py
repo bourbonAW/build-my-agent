@@ -43,7 +43,7 @@ class ContextInjector:
                     proc.communicate(),
                     timeout=self._GIT_TIMEOUT,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
                 return None

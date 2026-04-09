@@ -34,9 +34,7 @@ def _make_agent() -> Agent:
     agent._prompt_ctx = PromptContext(workdir=agent.workdir, skill_manager=None, mcp_manager=None)
     agent._prompt_builder = PromptBuilder(sections=ALL_SECTIONS)
     agent._context_injector = ContextInjector()
-    agent.system_prompt = _get_async_runtime().run(
-        agent._prompt_builder.build(agent._prompt_ctx)
-    )
+    agent.system_prompt = _get_async_runtime().run(agent._prompt_builder.build(agent._prompt_ctx))
 
     base = Path(tempfile.mkdtemp())
     store = TranscriptStore(base_dir=base)
