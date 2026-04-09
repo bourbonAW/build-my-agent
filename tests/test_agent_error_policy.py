@@ -49,7 +49,19 @@ def mock_agent():
 
     agent.compressor = None
     agent.llm = MockLLM()
-    agent.system_prompt = agent._build_system_prompt()
+    from bourbon.prompt import ALL_SECTIONS, ContextInjector, PromptBuilder, PromptContext
+    from bourbon.tools import _get_async_runtime
+
+    agent._prompt_ctx = PromptContext(
+        workdir=agent.workdir,
+        skill_manager=agent.skills,
+        mcp_manager=None,
+    )
+    agent._prompt_builder = PromptBuilder(sections=ALL_SECTIONS)
+    agent._context_injector = ContextInjector()
+    agent.system_prompt = _get_async_runtime().run(
+        agent._prompt_builder.build(agent._prompt_ctx)
+    )
     agent.messages = []
     agent._rounds_without_todo = 0
     agent._max_tool_rounds = 50
