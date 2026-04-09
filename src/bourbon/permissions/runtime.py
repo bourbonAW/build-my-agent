@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
+
+from bourbon.permissions.matching import session_rule_matches
 
 
 class PermissionAction(StrEnum):
@@ -79,6 +82,14 @@ class SessionPermissionStore:
     def add(self, candidate: dict[str, Any]) -> None:
         self._rules.append(candidate.copy())
 
-    def has_match(self, tool_name: str, tool_input: dict[str, Any]) -> bool:
-        _ = tool_input
-        return any(rule.get("tool_name") == tool_name for rule in self._rules)
+    def has_match(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        workdir: Path | None = None,
+    ) -> bool:
+        resolved_workdir = workdir or Path.cwd()
+        return any(
+            session_rule_matches(rule, tool_name, tool_input, resolved_workdir)
+            for rule in self._rules
+        )
