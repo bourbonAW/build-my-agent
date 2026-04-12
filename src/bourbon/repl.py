@@ -137,6 +137,9 @@ class REPL:
         "/tasks": "Show persistent workflow tasks",
         "/task <id>": "Show one workflow task",
         "/task-show <id>": "Show one workflow task",
+        "/runs": "List subagent runtime jobs",
+        "/run-show <id>": "Show one subagent runtime job output",
+        "/run-stop <id>": "Stop a running subagent runtime job",
         "/skills": "List available skills",
         "/mcp": "Show MCP server status",
         "/clear": "Clear conversation history",
@@ -581,6 +584,32 @@ class REPL:
                     safe_error = self._safe_task_value(e)
                     self.console.print(
                         f"[red]Error reading workflow task {safe_task_id}: {safe_error}[/red]"
+                    )
+
+        elif base_cmd == "/runs":
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
+            try:
+                self.console.print(self.agent.subagent_manager.render_run_list())
+            except Exception as e:
+                safe_error = escape(str(e))
+                self.console.print(f"[red]Error reading runtime jobs: {safe_error}[/red]")
+
+        elif base_cmd in ("/run-show", "/run-stop"):
+            if len(arg_parts) != 1:
+                self.console.print(f"[red]Usage: {base_cmd} <id>[/red]")
+            else:
+                run_id = arg_parts[0]
+                try:
+                    if base_cmd == "/run-show":
+                        self.console.print(self.agent.subagent_manager.get_run_output(run_id))
+                    else:
+                        self.console.print(self.agent.subagent_manager.stop_run(run_id))
+                except Exception as e:
+                    safe_run_id = escape(run_id)
+                    safe_error = escape(str(e))
+                    self.console.print(
+                        f"[red]Error handling runtime job {safe_run_id}: {safe_error}[/red]"
                     )
 
         elif base_cmd == "/skills":

@@ -23,6 +23,11 @@ def _make_repl(tmp_path, *, session_id: str = "session-123", todos_output: str =
         config=config,
         session=SimpleNamespace(session_id=session_id),
         get_todos=MagicMock(return_value=todos_output),
+        subagent_manager=SimpleNamespace(
+            render_run_list=MagicMock(return_value="run-1 [running] Explore code"),
+            get_run_output=MagicMock(return_value="run output"),
+            stop_run=MagicMock(return_value="Stopped run: run-1"),
+        ),
     )
     return repl
 
@@ -38,6 +43,9 @@ def _rendered_console_text(repl: REPL) -> str:
 def test_repl_commands_include_todos_and_tasks():
     assert "/todos" in REPL.COMMANDS
     assert "/tasks" in REPL.COMMANDS
+    assert "/runs" in REPL.COMMANDS
+    assert "/run-show <id>" in REPL.COMMANDS
+    assert "/run-stop <id>" in REPL.COMMANDS
 
 
 def test_todos_command_prints_legacy_todo_output(tmp_path):
@@ -47,6 +55,33 @@ def test_todos_command_prints_legacy_todo_output(tmp_path):
 
     repl.agent.get_todos.assert_called_once_with()
     assert "[>] Keep legacy Todo V1" in _printed_text(repl)
+
+
+def test_runs_command_prints_runtime_jobs(tmp_path):
+    repl = _make_repl(tmp_path)
+
+    repl._handle_command("/runs")
+
+    repl.agent.subagent_manager.render_run_list.assert_called_once_with()
+    assert "run-1 [running] Explore code" in _printed_text(repl)
+
+
+def test_run_show_command_prints_runtime_output(tmp_path):
+    repl = _make_repl(tmp_path)
+
+    repl._handle_command("/run-show run-1")
+
+    repl.agent.subagent_manager.get_run_output.assert_called_once_with("run-1")
+    assert "run output" in _printed_text(repl)
+
+
+def test_run_stop_command_stops_runtime_job(tmp_path):
+    repl = _make_repl(tmp_path)
+
+    repl._handle_command("/run-stop run-1")
+
+    repl.agent.subagent_manager.stop_run.assert_called_once_with("run-1")
+    assert "Stopped run: run-1" in _printed_text(repl)
 
 
 def test_tasks_command_prints_workflow_tasks_from_current_session_list(tmp_path):
@@ -148,6 +183,7 @@ def test_workflow_task_output_escapes_bracketed_user_text(tmp_path):
         ("/compact foo", "Usage: /compact"),
         ("/skills extra", "Usage: /skills"),
         ("/tasks extra", "Usage: /tasks"),
+        ("/runs extra", "Usage: /runs"),
     ],
 )
 def test_commands_without_arguments_reject_trailing_args(tmp_path, command, expected_error):
@@ -246,3 +282,15 @@ def test_task_commands_require_exactly_one_argument(tmp_path, command):
     assert should_exit is False
     assert "Usage:" in _printed_text(repl)
     repl._render_workflow_task.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["/run-show", "/run-show 1 extra", "/run-stop", "/run-stop 1 extra"])
+def test_run_commands_require_exactly_one_argument(tmp_path, command):
+    repl = _make_repl(tmp_path)
+
+    should_exit = repl._handle_command(command)
+
+    assert should_exit is False
+    assert "Usage:" in _printed_text(repl)
+    repl.agent.subagent_manager.get_run_output.assert_not_called()
+    repl.agent.subagent_manager.stop_run.assert_not_called()
