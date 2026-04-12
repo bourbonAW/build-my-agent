@@ -21,6 +21,16 @@ def test_agent_tool_appears_in_definitions():
     assert "Agent" in names
 
 
+def test_agent_tool_schema_warns_explore_cannot_run_bash():
+    agent_def = next(tool for tool in definitions() if tool["name"] == "Agent")
+
+    description = agent_def["input_schema"]["properties"]["subagent_type"]["description"]
+
+    assert "explore" in description
+    assert "cannot run Bash" in description
+    assert "system information" in description
+
+
 def test_agent_tool_sync_returns_formatted_result():
     manager = FakeSubagentManager(
         AgentToolResult(

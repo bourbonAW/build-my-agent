@@ -30,6 +30,11 @@ def get_manager(ctx: ToolContext):
                 "type": "string",
                 "enum": ["default", "coder", "explore", "plan", "quick_task"],
                 "default": "default",
+                "description": (
+                    "Subagent profile. Use explore only for read-only file/search/web "
+                    "inspection; explore cannot run Bash. Use default for system "
+                    "information, shell commands, or mixed tool needs."
+                ),
             },
             "model": {"type": ["string", "null"]},
             "max_turns": {"type": ["integer", "null"]},
