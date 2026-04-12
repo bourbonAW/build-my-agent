@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SUBAGENT_DESIGN = ROOT / "docs" / "superpowers" / "specs" / "2026-04-09-bourbon-subagent-design.md"
 SUBAGENT_PLAN = ROOT / "docs" / "superpowers" / "plans" / "2026-04-09-bourbon-subagent-implementation.md"
 TASK_V2_GUIDE = ROOT / "docs" / "superpowers" / "guides" / "task-v2-usage.md"
+SUBAGENT_GUIDE = ROOT / "docs" / "superpowers" / "guides" / "subagent-usage.md"
 
 
 class RunManagerTripwire:
@@ -162,6 +163,7 @@ def test_task_boundary_docs_use_one_reserved_runtime_command_set():
         "subagent design": SUBAGENT_DESIGN.read_text(encoding="utf-8"),
         "subagent plan": SUBAGENT_PLAN.read_text(encoding="utf-8"),
         "task usage guide": TASK_V2_GUIDE.read_text(encoding="utf-8"),
+        "subagent usage guide": SUBAGENT_GUIDE.read_text(encoding="utf-8"),
     }
 
     for name, text in texts.items():
@@ -177,3 +179,22 @@ def test_task_boundary_docs_use_one_reserved_runtime_command_set():
     assert "TaskCreate" in guide_text
     assert "persistent workflow" in guide_text
     assert "runtime jobs are not workflow tasks" in guide_text
+
+
+def test_subagent_usage_guide_covers_runtime_tool_surface():
+    guide_text = SUBAGENT_GUIDE.read_text(encoding="utf-8")
+
+    assert "# Subagent Usage Guide" in guide_text
+    assert "`Agent`" in guide_text
+    assert "`description`" in guide_text
+    assert "`prompt`" in guide_text
+    assert "`subagent_type`" in guide_text
+    assert "`run_in_background`" in guide_text
+    assert "`/runs`" in guide_text
+    assert "`/run-show <run_id>`" in guide_text
+    assert "`/run-stop <run_id>`" in guide_text
+    assert "runtime jobs are not workflow tasks" in guide_text
+    assert "`/tasks`" in guide_text
+    assert "/task-" not in guide_text
+    assert "TaskStatus" not in guide_text
+    assert "TaskRegistry" not in guide_text

@@ -1613,6 +1613,8 @@ Test end-to-end scenarios:
 
 ### Task 16: Documentation
 
+Status: Completed 2026-04-12.
+
 **Files:**
 - Modify: `docs/superpowers/specs/2026-04-09-bourbon-subagent-design.md` - mark as implemented
 - Create: `docs/superpowers/guides/subagent-usage.md` - user guide

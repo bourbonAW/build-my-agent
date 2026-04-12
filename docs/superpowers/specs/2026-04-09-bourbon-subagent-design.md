@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-09  
 **Author:** AI Agent  
-**Status:** Draft  
+**Status:** Implemented (MVP)  
 **Related:** [Claude Code Subagent Architecture](../../wiki/subagent-architecture-overview.md)
 
 ---
@@ -10,6 +10,26 @@
 ## Executive Summary
 
 This document describes the design of Bourbon's Subagent System, enabling the creation and management of specialized sub-agents for parallel task execution, code exploration, and focused work. The design is heavily inspired by Claude Code's subagent architecture while adapting it to Bourbon's Python-based, CLI-first environment.
+
+### Implementation Status
+
+Implemented as of 2026-04-12:
+
+- `SubagentManager` lifecycle orchestration with sync and background execution.
+- Runtime-job state via `RunRegistry`, `RunStatus`, and `SubagentRun`.
+- Specialized `AgentDefinition` profiles: `default`, `coder`, `explore`, `plan`, and `quick_task`.
+- Runtime tool filtering at both LLM tool-definition generation and tool execution time.
+- Global recursion and checklist protections for `Agent`, `TodoWrite`, and `compress`.
+- Isolated subagent sessions under the parent project session namespace.
+- `Agent` tool registration for foreground and background subagent runs.
+- REPL runtime commands: `/runs`, `/run-show`, and `/run-stop`.
+
+Deferred from this MVP:
+
+- Persistent checkpoint files for runtime jobs.
+- A separate notification service beyond REPL command inspection.
+- Dedicated `[subagent]` config persistence.
+- User-defined agent profiles.
 
 ### Key Design Decisions
 
