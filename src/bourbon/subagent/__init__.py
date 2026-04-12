@@ -6,10 +6,14 @@ from bourbon.subagent.errors import (
     RunError,
     SubagentErrorCode,
 )
+from bourbon.subagent.types import AgentDefinition, RunStatus, SubagentRun
 
 __all__ = [
+    "AgentDefinition",
     "MaxTurnsExceededError",
     "RunCancelledError",
     "RunError",
+    "RunStatus",
+    "SubagentRun",
     "SubagentErrorCode",
 ]
