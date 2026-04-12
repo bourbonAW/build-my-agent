@@ -14,6 +14,7 @@ from prompt_toolkit.styles import Style
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.markup import escape
 from rich.text import Text
 
 from bourbon.agent import Agent, AgentError
@@ -21,6 +22,8 @@ from bourbon.config import Config
 from bourbon.debug import debug_log
 from bourbon.mcp_client import MCPServerNotInstalledError
 from bourbon.permissions import PermissionChoice
+from bourbon.tasks.service import TaskService
+from bourbon.tasks.store import TaskStore
 
 
 class StreamingDisplay:
@@ -130,7 +133,10 @@ class REPL:
         "/exit": "Exit the REPL",
         "/quit": "Exit the REPL",
         "/compact": "Manually compress context",
-        "/tasks": "Show todo list",
+        "/todos": "Show legacy in-memory todo list",
+        "/tasks": "Show persistent workflow tasks",
+        "/task <id>": "Show one workflow task",
+        "/task-show <id>": "Show one workflow task",
         "/skills": "List available skills",
         "/mcp": "Show MCP server status",
         "/clear": "Clear conversation history",
@@ -518,6 +524,10 @@ class REPL:
             True if REPL should exit
         """
         cmd = command.lower()
+        parts = command.split(maxsplit=1)
+        base_cmd = parts[0].lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        arg_parts = arg.split() if arg else []
 
         # Handle skill activation via /skill/skill-name
         if cmd.startswith(self.SKILL_PREFIX):
@@ -528,11 +538,15 @@ class REPL:
                 self.console.print("[red]Usage: /skill/skill-name[/red]")
             return False
 
-        if cmd in ("/exit", "/quit"):
+        if base_cmd in ("/exit", "/quit"):
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
             self.console.print("[dim]Goodbye![/dim]")
             return True
 
-        elif cmd == "/compact":
+        elif base_cmd == "/compact":
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
             from bourbon.session.types import CompactTrigger
             result = self.agent.session.maybe_compact(trigger=CompactTrigger.MANUAL)
             if result and result.success:
@@ -542,11 +556,36 @@ class REPL:
             else:
                 self.console.print("[dim]Context compressed.[/dim]")
 
-        elif cmd == "/tasks":
-            todos = self.agent.get_todos()
-            self.console.print(todos)
+        elif base_cmd == "/todos":
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
+            self.console.print(self.agent.get_todos())
 
-        elif cmd == "/skills":
+        elif base_cmd == "/tasks":
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
+            try:
+                self.console.print(self._render_workflow_tasks())
+            except Exception as e:
+                safe_error = self._safe_task_value(e)
+                self.console.print(f"[red]Error reading workflow tasks: {safe_error}[/red]")
+
+        elif base_cmd in ("/task", "/task-show"):
+            if len(arg_parts) != 1:
+                self.console.print(f"[red]Usage: {base_cmd} <id>[/red]")
+            else:
+                try:
+                    self.console.print(self._render_workflow_task(arg_parts[0]))
+                except Exception as e:
+                    safe_task_id = self._safe_task_value(arg_parts[0])
+                    safe_error = self._safe_task_value(e)
+                    self.console.print(
+                        f"[red]Error reading workflow task {safe_task_id}: {safe_error}[/red]"
+                    )
+
+        elif base_cmd == "/skills":
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
             skills = self.agent.skills.available_skills
             if skills:
                 self.console.print("[bold]Available skills:[/bold]")
@@ -557,14 +596,20 @@ class REPL:
             else:
                 self.console.print("[dim]No skills available.[/dim]")
 
-        elif cmd == "/mcp":
+        elif base_cmd == "/mcp":
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
             self._print_mcp_status()
 
-        elif cmd == "/clear":
+        elif base_cmd == "/clear":
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
             self.agent.clear_history()
             self.console.print("[dim]Conversation history cleared.[/dim]")
 
-        elif cmd == "/help":
+        elif base_cmd == "/help":
+            if self._reject_unexpected_args(base_cmd, arg):
+                return False
             self._print_help()
 
         else:
@@ -572,6 +617,83 @@ class REPL:
             self.console.print("Type /help for available commands.")
 
         return False
+
+    def _reject_unexpected_args(self, command: str, arg: str) -> bool:
+        """Print a usage error when a no-argument command receives trailing input."""
+        if not arg:
+            return False
+        self.console.print(f"[red]Usage: {command}[/red]")
+        return True
+
+    def _task_service(self) -> TaskService:
+        """Return the workflow task service for the current REPL session."""
+        storage_dir = Path(self.agent.config.tasks.storage_dir).expanduser()
+        return TaskService(TaskStore(storage_dir))
+
+    def _task_list_id(self) -> str:
+        """Resolve the current workflow task list id, preferring the session id."""
+        session = getattr(self.agent, "session", None)
+        session_id = getattr(session, "session_id", None)
+        if session_id is not None:
+            return str(session_id)
+        return str(self.agent.config.tasks.default_list_id)
+
+    def _render_workflow_tasks(self) -> str:
+        """Render the current session's workflow tasks."""
+        records = self._task_service().list_tasks(self._task_list_id())
+        if not records:
+            return "No workflow tasks."
+
+        lines = []
+        for record in records:
+            line = (
+                f"{self._safe_task_value(record.id)}. "
+                f"\\[{self._safe_task_value(record.status)}\\] "
+                f"{self._safe_task_value(record.subject)}"
+            )
+            if record.active_form:
+                line += f" <- {self._safe_task_value(record.active_form)}"
+            if record.owner:
+                line += f" (owner: {self._safe_task_value(record.owner)})"
+            if record.blocked_by:
+                line += " blocked_by=" + ",".join(
+                    self._safe_task_value(blocker_id) for blocker_id in record.blocked_by
+                )
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _render_workflow_task(self, task_id: str) -> str:
+        """Render one workflow task from the current session's task list."""
+        record = self._task_service().get_task(self._task_list_id(), task_id)
+        if record is None:
+            return f"Task not found: {self._safe_task_value(task_id)}"
+
+        lines = [
+            f"ID: {self._safe_task_value(record.id)}",
+            f"Subject: {self._safe_task_value(record.subject)}",
+            f"Description: {self._safe_task_value(record.description)}",
+            f"Status: {self._safe_task_value(record.status)}",
+            f"Active: {self._safe_task_value(record.active_form or '-')}",
+            f"Owner: {self._safe_task_value(record.owner or '-')}",
+            "Blocks: "
+            + (
+                ", ".join(self._safe_task_value(block_id) for block_id in record.blocks)
+                if record.blocks
+                else "-"
+            ),
+            "Blocked by: "
+            + (
+                ", ".join(self._safe_task_value(blocker_id) for blocker_id in record.blocked_by)
+                if record.blocked_by
+                else "-"
+            ),
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _safe_task_value(value: object) -> str:
+        """Escape user-controlled task fields before printing through Rich."""
+        return escape(str(value))
 
     def _activate_skill(self, skill_name: str) -> None:
         """Activate a skill and display its content.

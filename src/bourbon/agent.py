@@ -651,6 +651,7 @@ class Agent:
         """Construct the shared tool execution context."""
         return ToolContext(
             workdir=self.workdir,
+            agent=self,
             skill_manager=self.skills,
             on_tools_discovered=self._get_discovered_tools().update,
         )
@@ -817,10 +818,14 @@ class Agent:
                 "Do not retry this tool. Try a different approach or tool."
             )
 
+        self._last_tool_execution_markers = set()
+
         try:
             ctx = self._make_tool_context()
             output = get_registry().call(tool_name, tool_input, ctx)
+            self._last_tool_execution_markers = set(ctx.execution_markers)
         except Exception as e:
+            self._last_tool_execution_markers = set()
             _failures_map[tool_name] = failures + 1
             return f"Error executing {tool_name}: {e}"
 
@@ -871,12 +876,6 @@ class Agent:
             if tool_name == "compress":
                 manual_compact = True
                 output = "Compressing context..."
-            elif tool_name == "TodoWrite":
-                used_todo = True
-                try:
-                    output = self.todos.update(tool_input.get("items", []))
-                except ValueError as e:
-                    output = f"Error: {e}"
             else:
                 permission = self._permission_decision_for_tool(tool_name, tool_input)
                 if permission.action == PermissionAction.DENY:
@@ -904,6 +903,9 @@ class Agent:
                         tool_name,
                         tool_input,
                         skip_policy_check=True,
+                    )
+                    used_todo = used_todo or (
+                        "todo" in getattr(self, "_last_tool_execution_markers", set())
                     )
 
             # Notify end of tool execution

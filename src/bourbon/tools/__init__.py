@@ -41,6 +41,8 @@ class ToolContext:
     """Execution context shared across tool handlers."""
 
     workdir: Path
+    agent: Any | None = None
+    execution_markers: set[str] = field(default_factory=set)
     skill_manager: Any | None = None
     on_tools_discovered: Callable[[set[str]], None] | None = None
 
@@ -283,7 +285,7 @@ def tool(name: str) -> Tool | None:
 
 def _ensure_imports() -> None:
     """Lazily import tool modules to trigger registration."""
-    from bourbon.tools import base, search, skill_tool, tool_search  # noqa: F401
+    from bourbon.tools import base, search, skill_tool, task_tools, todo_tool, tool_search  # noqa: F401
 
     try:
         from bourbon.tools import web  # noqa: F401

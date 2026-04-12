@@ -72,6 +72,7 @@ The name "Bourbon" represents smoothness, depth, and craftsmanship — qualities
 │              ┌─────────────────────────┐                   │
 │              │   Supporting Systems    │                   │
 │              │  • TodoManager          │                   │
+│              │  • TaskStore/Service    │                   │
 │              │  • SkillLoader          │                   │
 │              │  • ContextCompressor    │                   │
 │              │  • ConfigManager        │                   │
@@ -99,9 +100,12 @@ bourbon/
 │       │   ├── __init__.py     # Tool registry
 │       │   ├── base.py         # bash, read, write, edit
 │       │   ├── search.py       # rg, ast-grep integration
+│       │   ├── todo_tool.py    # Legacy TodoWrite checklist tool
+│       │   ├── task_tools.py   # TaskCreate/TaskUpdate/TaskList/TaskGet
 │       │   └── mcp.py          # MCP client wrapper
 │       ├── skills.py           # Skill loading system
-│       ├── todos.py            # Todo management
+│       ├── todos.py            # Legacy in-memory TodoWrite state
+│       ├── tasks/              # Persistent workflow task management
 │       └── compression.py      # Context compression
 └── tests/                      # Test suite
 ```
@@ -214,9 +218,15 @@ class Tool:
 | `edit_file` | Precise text replacement | Find old_text, replace with new_text |
 | `rg_search` | Fast text search | Wrapper around ripgrep |
 | `ast_grep_search` | Structural code search | Pattern-based AST matching |
-| `TodoWrite` | Task list management | content, status, activeForm |
+| `TodoWrite` | Legacy in-memory checklist | Ephemeral `content/status/activeForm` state for the current agent only |
+| `TaskCreate` | Persistent workflow task creation | Creates file-backed workflow tasks |
+| `TaskUpdate` | Persistent workflow task updates | Updates status, owner, dependencies, metadata |
+| `TaskList` | Persistent workflow task listing | Lists tasks for the current task list/session |
+| `TaskGet` | Persistent workflow task lookup | Fetches one workflow task by id |
 | `load_skill` | Load skill knowledge | From ~/.bourbon/skills/ |
 | `compress` | Manual context compression | Trigger auto-compact |
+
+`TodoWrite` and `Task*` serve different layers. `TodoWrite` is the legacy in-memory checklist shown by `/todos`. `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` are the persistent workflow task tools shown by `/tasks` and `/task`. Runtime subagent or background-job state is a separate layer and should not reuse the workflow task surface.
 
 ### 4.3 Search Tools Detail
 
@@ -340,7 +350,9 @@ Token estimation: `len(json.dumps(messages)) // 4`
 |---------|-------------|
 | `<natural language>` | Send message to agent |
 | `/compact` | Manually trigger context compression |
-| `/tasks` | Display todo list |
+| `/todos` | Display the legacy in-memory TodoWrite checklist |
+| `/tasks` | List persistent workflow tasks |
+| `/task <id>` | Show one persistent workflow task |
 | `/skills` | List available skills |
 | `/config` | Show current configuration |
 | `/exit`, `/quit`, `Ctrl+D` | Exit REPL |

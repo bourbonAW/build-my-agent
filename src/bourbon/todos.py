@@ -56,8 +56,8 @@ class TodoManager:
             if status not in self.VALID_STATUSES:
                 raise ValueError(f"Item {i}: invalid status '{status}'")
 
-            if not active_form:
-                raise ValueError(f"Item {i}: activeForm required")
+            if status == "in_progress" and not active_form:
+                raise ValueError(f"Item {i}: activeForm required for in_progress")
 
             if status == "in_progress":
                 in_progress_count += 1
@@ -76,7 +76,10 @@ class TodoManager:
         if in_progress_count > 1:
             raise ValueError("Only one in_progress allowed")
 
-        self.items = validated
+        if validated and all(item.status == "completed" for item in validated):
+            self.items = []
+        else:
+            self.items = validated
         return self.render()
 
     def render(self) -> str:

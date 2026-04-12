@@ -89,11 +89,32 @@ class TestTodoManager:
         with pytest.raises(ValueError, match="content required"):
             manager.update([{"content": "", "status": "pending", "activeForm": "cli"}])
 
-    def test_active_form_required(self):
-        """Test that activeForm is required."""
+    def test_active_form_only_required_for_in_progress(self):
+        """Test that activeForm is only required for in_progress todos."""
         manager = TodoManager()
-        with pytest.raises(ValueError, match="activeForm required"):
-            manager.update([{"content": "Task", "status": "pending", "activeForm": ""}])
+        manager.update(
+            [
+                {"content": "Task 1", "status": "pending"},
+                {"content": "Task 2", "status": "completed"},
+            ]
+        )
+
+        assert [item.content for item in manager.items] == ["Task 1", "Task 2"]
+        assert [item.status for item in manager.items] == ["pending", "completed"]
+
+    def test_in_progress_item_still_requires_active_form(self):
+        """Test that in_progress todos still require activeForm."""
+        manager = TodoManager()
+        with pytest.raises(ValueError, match="activeForm required for in_progress"):
+            manager.update([{"content": "Task", "status": "in_progress"}])
+
+    def test_all_completed_items_clear_the_list(self):
+        """Test that a completed-only update clears the list."""
+        manager = TodoManager()
+        result = manager.update([{"content": "Task", "status": "completed"}])
+
+        assert manager.items == []
+        assert result == "No todos."
 
     def test_invalid_status(self):
         """Test invalid status validation."""

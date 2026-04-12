@@ -48,10 +48,14 @@ def test_identity_contains_workdir():
     assert "Bourbon" in result
 
 
-def test_task_guidelines_contains_todo():
+def test_task_guidelines_mentions_todo_and_workflow_tasks():
     from bourbon.prompt.sections import TASK_GUIDELINES
 
     assert "TodoWrite" in TASK_GUIDELINES.content
+    assert "TaskCreate" in TASK_GUIDELINES.content
+    assert "TaskUpdate" in TASK_GUIDELINES.content
+    assert "TaskList" in TASK_GUIDELINES.content
+    assert "TaskGet" in TASK_GUIDELINES.content
 
 
 def test_error_handling_contains_risk_levels():

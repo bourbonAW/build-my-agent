@@ -19,7 +19,9 @@ TASK_GUIDELINES = PromptSection(
     name="task_guidelines",
     order=20,
     content=(
-        "When working on multi-step tasks, use TodoWrite to track progress.\n\n"
+        "Use TodoWrite for short single-agent in-memory checklists.\n"
+        "Use TaskCreate, TaskUpdate, TaskList, and TaskGet for persistent work with "
+        "ownership or dependencies.\n\n"
         "IMPORTANT: Do not repeat the same actions. If you've already explored or analyzed,\n"
         "provide a summary and move forward. Avoid getting stuck in loops.\n\n"
         "CRITICAL: When you want to use a tool, you MUST use the tool_calls format.\n"

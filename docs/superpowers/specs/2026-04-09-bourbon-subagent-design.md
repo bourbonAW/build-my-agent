@@ -1,6 +1,6 @@
 # Bourbon Subagent System Design
 
-**Date:** 2025-04-09  
+**Date:** 2026-04-09  
 **Author:** AI Agent  
 **Status:** Draft  
 **Related:** [Claude Code Subagent Architecture](../../wiki/subagent-architecture-overview.md)
@@ -18,7 +18,7 @@ This document describes the design of Bourbon's Subagent System, enabling the cr
 | Execution Model | Thread-based async | Python GIL makes true parallelism difficult; threads provide sufficient concurrency for I/O-bound subagents |
 | Context Strategy | Independent sessions | Subagents receive only the provided prompt, not parent session history |
 | Tool Permissions | Agent-type based filtering | Different agent types (coder/explore/plan) have different tool access |
-| Notification | CLI command-based | `/task list`, `/task output <id>` commands for background task management |
+| Notification | REPL command-based | Extend the existing REPL command handler instead of introducing a second command subsystem |
 | Recursion | Disabled | Subagents cannot create subagents to prevent infinite nesting |
 
 ---
@@ -35,9 +35,9 @@ This document describes the design of Bourbon's Subagent System, enabling the cr
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────┐  │   │
 │  │  │   Session   │  │    LLM      │  │      SubagentManager        │  │   │
 │  │  │   Manager   │◄─┤   Client    │◄─┤  ┌─────────────────────┐    │  │   │
-│  │  └─────────────┘  └─────────────┘  │  │   TaskRegistry      │    │  │   │
+│  │  └─────────────┘  └─────────────┘  │  │ SubagentRegistry    │    │  │   │
 │  │                                    │  │  ┌─────┐┌─────┐     │    │  │   │
-│  │  ┌─────────────┐  ┌─────────────┐  │  │  │Task1││Task2│ ... │    │  │   │
+│  │  ┌─────────────┐  ┌─────────────┐  │  │  │Run1 ││Run2 │ ... │    │  │   │
 │  │  │  Tool Reg   │  │   Skills    │  │  │  └─────┘└─────┘     │    │  │   │
 │  │  └─────────────┘  └─────────────┘  │  └─────────────────────┘    │  │   │
 │  │                                    │  ┌─────────────────────┐    │  │   │
@@ -65,18 +65,26 @@ This document describes the design of Bourbon's Subagent System, enabling the cr
 
 | Component | File Location | Responsibility |
 |-----------|---------------|----------------|
-| `SubagentManager` | `src/bourbon/subagent/manager.py` | Lifecycle management, spawn/kill/query tasks |
-| `TaskRegistry` | `src/bourbon/subagent/registry.py` | In-memory task state storage |
+| `SubagentManager` | `src/bourbon/subagent/manager.py` | Lifecycle management for runtime jobs |
+| `SubagentRegistry` | `src/bourbon/subagent/registry.py` | In-memory runtime job state storage |
 | `AgentTypeRegistry` | `src/bourbon/subagent/types.py` | Agent definition configs (coder/explore/plan) |
 | `ToolFilterEngine` | `src/bourbon/subagent/tools.py` | Dynamic tool filtering per agent type |
 | `AbortController` | `src/bourbon/subagent/cancel.py` | Hierarchical cancellation signaling |
 | `AgentTool` | `src/bourbon/tools/agent_tool.py` | Tool registration and handler |
+| `REPL` integration | `src/bourbon/repl.py` | Runtime-job commands such as `/runs`, `/run-show`, and `/run-stop` |
+
+### Terminology Boundary
+
+- `TodoWrite` is the legacy in-memory checklist for one agent.
+- `TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet` are reserved for persistent workflow task management.
+- The subagent registry tracks runtime jobs only. It is execution state, not workflow task state.
+- `/tasks` remains reserved for workflow tasks, so runtime-job UX should use `/runs`, `/run-show`, and `/run-stop`.
 
 ---
 
 ## Data Models
 
-### Task State Machine
+### Runtime Job State Machine
 
 ```
                     ┌─────────────┐
@@ -112,7 +120,7 @@ This document describes the design of Bourbon's Subagent System, enabling the cr
 ```python
 # src/bourbon/subagent/types.py
 
-class TaskStatus(Enum):
+class RunStatus(Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -130,17 +138,16 @@ class AgentDefinition:
     max_turns: int = 50
     model: str | None = None
     system_prompt_suffix: str | None = None
-    permission_mode: str = "default"
 
 
 @dataclass
-class SubagentTask:
-    """Runtime task instance."""
-    task_id: str
+class SubagentRun:
+    """Runtime job instance."""
+    run_id: str
     description: str
     prompt: str
     agent_type: str
-    status: TaskStatus
+    status: RunStatus
     is_async: bool
     
     # Execution
@@ -158,6 +165,8 @@ class SubagentTask:
     def to_dict(self) -> dict: ...
 ```
 
+Subagents should not introduce a second permission mode abstraction unless the parent `Agent` permission runtime is first generalized to support it.
+
 ---
 
 ## Tool Permission Matrix
@@ -168,7 +177,6 @@ class SubagentTask:
 ALL_AGENT_DISALLOWED_TOOLS = {
     "Agent",           # No recursion - subagents cannot spawn subagents
     "TodoWrite",       # Prevent polluting parent agent's todo list
-    "TaskStop",        # Cannot control other tasks
     "compress",        # Manual compression disabled
 }
 ```
@@ -206,7 +214,7 @@ AGENT_TYPE_CONFIGS = {
     "explore": AgentDefinition(
         agent_type="explore",
         description="Read-only codebase exploration",
-        allowed_tools=["Read", "Glob", "Grep", "WebSearch", "WebFetch"],
+        allowed_tools=["Read", "Glob", "Grep", "AstGrep", "WebFetch"],
         max_turns=30,
         system_prompt_suffix="You are in READ-ONLY mode. Do not modify files.",
     ),
@@ -214,9 +222,9 @@ AGENT_TYPE_CONFIGS = {
     "plan": AgentDefinition(
         agent_type="plan",
         description="Architecture and design planning",
-        allowed_tools=["Read", "Glob", "Grep", "WebSearch"],
+        allowed_tools=["Read", "Glob", "Grep", "AstGrep", "WebFetch"],
         max_turns=30,
-        permission_mode="plan",
+        system_prompt_suffix="Focus on architecture, tradeoffs, and implementation planning.",
     ),
     
     "quick_task": AgentDefinition(
@@ -285,11 +293,11 @@ AGENT_TYPE_CONFIGS = {
 │          run_in_background=True)                                │
 │                          │                                      │
 │                          ▼                                      │
-│  2. Register Task                                               │
-│     • Generate task_id                                          │
-│     • Create TaskState (PENDING)                                │
+│  2. Register Runtime Job                                        │
+│     • Generate run_id                                           │
+│     • Create RunState (PENDING)                                 │
 │     • Setup AbortController                                     │
-│     • Return task_id immediately                                │
+│     • Return run_id immediately                                 │
 │                          │                                      │
 │                          ▼                                      │
 │  3. Execute in Thread Pool                                      │
@@ -305,43 +313,42 @@ AGENT_TYPE_CONFIGS = {
 │                          ▼                                      │
 │  4. Finalize & Notify                                           │
 │     • Save result to disk                                       │
-│     • Update TaskState status                                   │
+│     • Update RunState status                                    │
 │     • Insert notification into parent session                   │
 │                          │                                      │
 │                          ▼                                      │
 │  5. User Notification                                           │
-│     "[Task a7f3b2] Completed. Use `/task output a7f3b2`"        │
+│     "[Run a7f3b2] Completed. Use `/run-show a7f3b2`"            │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## CLI Interface
+## REPL Interface
 
-### Task Commands
+### REPL Commands
 
 ```bash
-/task list                      # List all tasks
-/task output <task_id>          # Get full task output
-/task stop <task_id>            # Kill a running task
-/task status <task_id>          # Get detailed status
+/runs                           # List runtime jobs
+/run-show <run_id>             # Get full runtime job output
+/run-stop <run_id>             # Stop a running runtime job
 ```
 
 ### Output Format
 
 ```
-$ /task list
+$ /runs
 
 ┌────────┬──────────┬────────────────────────────────┬───────────┐
-│ Task   │ Type     │ Description                    │ Status    │
+│ Run    │ Type     │ Description                    │ Status    │
 ├────────┼──────────┼────────────────────────────────┼───────────┤
 │ a7f3b2 │ coder    │ Refactor auth module           │ running   │
 │ c9e1d4 │ explore  │ Analyze codebase structure     │ completed │
 │ b2a8f9 │ default  │ Fix bug in parser              │ failed    │
 └────────┴──────────┴────────────────────────────────┴───────────┘
 
-$ /task output a7f3b2
+$ /run-show a7f3b2
 Subagent completed in 12.5s
 Tokens: 2450, Tool calls: 8
 
@@ -360,11 +367,11 @@ Successfully refactored auth module:
 
 | Error Type | Detection | Handling | User Impact |
 |------------|-----------|----------|-------------|
-| `USER_ABORT` | `AbortController.is_aborted()` | Stop immediately, save partial result | Task status: KILLED |
-| `MAX_TURNS_EXCEEDED` | `turn >= max_turns` | Stop loop, return collected results | Task status: COMPLETED with warning |
-| `LLM_ERROR` | Exception from LLM.chat() | Retry 3x with backoff, then fail | Task status: FAILED |
+| `USER_ABORT` | `AbortController.is_aborted()` | Stop immediately, save partial result | Run status: KILLED |
+| `MAX_TURNS_EXCEEDED` | `turn >= max_turns` | Stop loop, return collected results | Run status: COMPLETED with warning |
+| `LLM_ERROR` | Exception from LLM.chat() | Retry 3x with backoff, then fail | Run status: FAILED |
 | `TOOL_ERROR` | Tool returns "Error:" prefix | Return error to LLM for handling | Continue execution |
-| `PERMISSION_DENIED` | AccessController denies | Return denial message | Task status: FAILED |
+| `PERMISSION_DENIED` | AccessController denies | Reuse the parent agent's existing permission flow | Run status: FAILED or suspended for approval |
 
 ### Partial Result Extraction
 
@@ -417,7 +424,7 @@ class AbortController:
 for turn in range(max_turns):
     # Check cancellation at start of each turn
     if abort_controller.is_aborted():
-        raise TaskCancellationError("Task was cancelled")
+        raise RunCancellationError("Task was cancelled")
     
     response = llm.chat(...)
     # ... process response
@@ -431,8 +438,8 @@ for turn in range(max_turns):
 src/bourbon/subagent/
 ├── __init__.py           # Public API exports
 ├── manager.py            # SubagentManager
-├── registry.py           # TaskRegistry
-├── types.py              # Data models (AgentDefinition, SubagentTask)
+├── registry.py           # SubagentRegistry (runtime jobs)
+├── types.py              # Data models (AgentDefinition, SubagentRun)
 ├── tools.py              # Tool filtering logic
 ├── cancel.py             # AbortController
 ├── executor.py           # Async execution utilities
@@ -444,9 +451,6 @@ src/bourbon/subagent/
 
 src/bourbon/tools/
 └── agent_tool.py         # Agent tool registration
-
-src/bourbon/commands/
-└── task_commands.py      # /task CLI commands
 
 tests/test_subagent/
 ├── test_manager.py
@@ -461,7 +465,7 @@ tests/test_subagent/
 ## Implementation Phases
 
 ### Phase 1: Core Infrastructure
-- [ ] Create `SubagentManager` and `TaskRegistry`
+- [ ] Create `SubagentManager` and `SubagentRegistry`
 - [ ] Implement `AgentDefinition` configs
 - [ ] Add tool filtering logic
 - [ ] Create `AbortController`
@@ -478,9 +482,9 @@ tests/test_subagent/
 - [ ] Implement notification service
 - [ ] Add checkpoint saving
 
-### Phase 4: CLI Integration
-- [ ] Implement `/task` commands
-- [ ] Add task list display
+### Phase 4: REPL Integration
+- [ ] Implement `/runs` / `/run-show` / `/run-stop` commands in `src/bourbon/repl.py`
+- [ ] Add runtime-job list display
 - [ ] Implement output retrieval
 - [ ] Add stop functionality
 
@@ -494,34 +498,23 @@ tests/test_subagent/
 
 ## Configuration
 
-```python
-# ~/.bourbon/config.toml
+Subagent settings must be added to `Config` before use. The first implementation should introduce a dedicated `SubagentConfig` dataclass in `src/bourbon/config.py` and persist only fields that are actually consumed by code, for example:
 
+```toml
 [subagent]
-# Storage settings
-result_storage_dir = "~/.bourbon/subagent_results/"  # Task output persistence
-max_result_size_mb = 10                              # Max stored result size
-
-# Concurrency limits
-max_concurrent_tasks = 10          # Maximum parallel async tasks
-thread_pool_timeout = 300          # Seconds before thread pool shutdown
-
-# Default behaviors
+max_concurrent_tasks = 10
 default_max_turns = 50
-default_timeout_seconds = 600      # 10 minutes default timeout
-enable_checkpointing = true        # Save progress during long tasks
-
-# Agent-specific overrides
-[subagent.agent_overrides]
-coder.max_turns = 100
-explore.timeout_seconds = 300
+default_timeout_seconds = 600
+enable_checkpointing = true
 ```
+
+Avoid documenting storage or timeout knobs that are not yet wired through `Config.from_dict()` and `Config.to_dict()`.
 
 ## Integration with Existing Systems
 
 ### Access Control Integration
 
-Subagents inherit the parent's `AccessController` for permission evaluation:
+Subagents reuse the parent's `AccessController` for permission evaluation and follow the same permission-request behavior already implemented in `Agent`:
 
 ```python
 class SubagentContext:
@@ -536,14 +529,14 @@ class SubagentContext:
 
 Tool calls within subagents are logged through the parent's audit system:
 - Tool name and input summary
-- Subagent task_id (for traceability)
+- Subagent run_id (for traceability)
 - Policy decision (allow/deny/need_approval)
 
 ### Audit Logging Integration
 
 ```python
 def log_subagent_tool_call(
-    task_id: str,
+    run_id: str,
     tool_name: str,
     tool_input: dict,
     decision: PolicyDecision,
@@ -551,14 +544,12 @@ def log_subagent_tool_call(
 ):
     """Log subagent tool calls with parent audit logger."""
     parent_audit.record(
-        AuditEvent.subagent_tool_call(
-            task_id=task_id,
+        AuditEvent.tool_call(
+            run_id=run_id,
             tool_name=tool_name,
             tool_input_summary=str(tool_input)[:200],
             decision=decision.action.value,
-            capabilities_required=[
-                cap.value for cap in decision.decisions
-            ],
+            reason=decision.reason,
         )
     )
 ```
@@ -573,7 +564,7 @@ class SubagentManager:
         self,
         tool_name: str,
         tool_input: dict,
-        task: SubagentTask,
+        task: SubagentRun,
     ) -> str:
         if self.parent_agent.sandbox.enabled:
             return self.parent_agent.sandbox.execute(
@@ -586,19 +577,9 @@ class SubagentManager:
 
 ### Session Storage Integration
 
-Subagent results are stored in a dedicated subdirectory:
+Subagent transcripts should be stored through the existing `SessionManager.create_session()` flow with a dedicated project-name suffix such as `<project>/subagents`. This keeps metadata persistence and transcript rebuild behavior aligned with the current session system.
 
-```
-~/.bourbon/sessions/
-└── <project_name>/
-    ├── <session_id>.json           # Main session metadata
-    ├── transcripts/
-    │   └── <session_id>.jsonl      # Main session transcript
-    └── subagents/                   # Subagent results
-        ├── <task_id>.json           # Task metadata
-        ├── <task_id>.jsonl          # Subagent transcript
-        └── <task_id>.result.txt     # Final result output
-```
+If a dedicated task-output file is later needed, add it after the session-backed version is working.
 
 ## Security Considerations
 
@@ -606,9 +587,9 @@ Subagent results are stored in a dedicated subdirectory:
 2. **Tool Filtering**: Each agent type has strictly controlled tool access
 3. **Path Safety**: Subagents inherit parent's workdir sandboxing
 4. **Resource Limits**: max_turns prevents infinite execution
-5. **Cancellation**: Users can kill runaway tasks via `/task stop`
+5. **Cancellation**: Users can kill runaway runtime jobs via `/run-stop`
 6. **Audit Trail**: All subagent tool calls logged through parent's audit system
-7. **Result Isolation**: Subagent results stored separately from main session
+7. **Result Isolation**: Subagent transcripts use a dedicated session namespace separate from the parent session
 
 ---
 

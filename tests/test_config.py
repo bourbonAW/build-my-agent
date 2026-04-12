@@ -28,11 +28,32 @@ class TestConfig:
                 "openai": {"api_key": "test-key", "model": "gpt-4o"},
             },
             "ui": {"theme": "monokai"},
+            "tasks": {
+                "enabled": False,
+                "storage_dir": "/tmp/bourbon-tasks",
+                "default_list_id": "inbox",
+            },
         }
         config = Config.from_dict(data)
         assert config.llm.default_provider == "openai"
         assert config.llm.openai.api_key == "test-key"
         assert config.ui.theme == "monokai"
+        assert config.tasks.enabled is False
+        assert config.tasks.storage_dir == "/tmp/bourbon-tasks"
+        assert config.tasks.default_list_id == "inbox"
+
+    def test_config_to_dict_round_trips_task_config(self):
+        """Test task config serialization and deserialization."""
+        data = {
+            "tasks": {
+                "enabled": False,
+                "storage_dir": "~/.bourbon/custom-tasks",
+                "default_list_id": "project-alpha",
+            }
+        }
+        config = Config.from_dict(data)
+
+        assert config.to_dict()["tasks"] == data["tasks"]
 
 
 class TestSandboxConfig:
@@ -68,6 +89,9 @@ class TestSandboxConfig:
         assert config.access_control["default_action"] == "allow"
         assert config.sandbox["enabled"] is True
         assert config.audit["enabled"] is True
+        assert config.tasks.enabled is True
+        assert config.tasks.storage_dir == "~/.bourbon/tasks"
+        assert config.tasks.default_list_id == "default"
 
     def test_from_dict_deep_merges_nested_keys(self):
         data = {

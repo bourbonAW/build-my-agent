@@ -102,12 +102,22 @@ class UIConfig:
 
 
 @dataclass
+class TasksConfig:
+    """Task persistence configuration."""
+
+    enabled: bool = True
+    storage_dir: str = "~/.bourbon/tasks"
+    default_list_id: str = "default"
+
+
+@dataclass
 class Config:
     """Root configuration."""
 
     llm: LLMConfig = field(default_factory=LLMConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     ui: UIConfig = field(default_factory=UIConfig)
+    tasks: TasksConfig = field(default_factory=TasksConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     access_control: dict = field(
         default_factory=lambda: {
@@ -179,6 +189,7 @@ class Config:
         ast_grep_data = tools_data.get("ast_grep", {})
 
         ui_data = data.get("ui", {})
+        tasks_data = data.get("tasks", {})
         mcp_data = data.get("mcp", {})
         access_control_data = data.get("access_control", {})
         sandbox_data = data.get("sandbox", {})
@@ -196,6 +207,7 @@ class Config:
                 ast_grep=AstGrepConfig(**ast_grep_data),
             ),
             ui=UIConfig(**ui_data),
+            tasks=TasksConfig(**tasks_data),
             mcp=MCPConfig.from_dict(mcp_data),
             access_control=_deep_merge(Config().access_control, access_control_data),
             sandbox=_deep_merge(Config().sandbox, sandbox_data),
@@ -245,6 +257,11 @@ class Config:
                 "show_token_count": self.ui.show_token_count,
                 "syntax_highlighting": self.ui.syntax_highlighting,
                 "max_tool_rounds": self.ui.max_tool_rounds,
+            },
+            "tasks": {
+                "enabled": self.tasks.enabled,
+                "storage_dir": self.tasks.storage_dir,
+                "default_list_id": self.tasks.default_list_id,
             },
             "mcp": self.mcp.to_dict(),
             "access_control": self.access_control,

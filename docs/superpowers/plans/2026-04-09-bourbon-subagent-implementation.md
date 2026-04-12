@@ -4,11 +4,11 @@
 
 **Goal:** Implement the Bourbon Subagent System enabling parallel task execution, code exploration, and focused work through specialized sub-agents.
 
-**Architecture:** A `SubagentManager` orchestrates task lifecycle, with `TaskRegistry` for state management, `AgentTypeRegistry` for tool filtering, and `AbortController` for cancellation. Supports both synchronous (blocking) and asynchronous (background) execution modes.
+**Architecture:** A `SubagentManager` orchestrates runtime-job lifecycle, with a subagent registry for runtime state management, `AgentTypeRegistry` for tool filtering, and `AbortController` for cancellation. Supports both synchronous (blocking) and asynchronous (background) execution modes. This plan treats workflow tasks as the separate persistent `Task*` surface and keeps subagent state under runtime-job naming.
 
 **Tech Stack:** Python 3.11+, ThreadPoolExecutor for async, existing Bourbon Agent/Session/Tools infrastructure.
 
-**Reference:** [Design Spec](../specs/2025-04-09-bourbon-subagent-design.md)
+**Reference:** [Design Spec](../specs/2026-04-09-bourbon-subagent-design.md)
 
 ---
 
@@ -17,9 +17,9 @@
 ```
 src/bourbon/subagent/
 ├── __init__.py              # Public API exports
-├── types.py                 # AgentDefinition, SubagentTask, ErrorCode enums
+├── types.py                 # AgentDefinition, SubagentRun, ErrorCode enums
 ├── cancel.py                # AbortController hierarchy
-├── registry.py              # TaskRegistry in-memory storage
+├── registry.py              # SubagentRegistry in-memory runtime-job storage
 ├── tools.py                 # Tool filtering logic
 ├── errors.py                # Exception classes
 ├── result.py                # Result finalization
@@ -32,9 +32,6 @@ src/bourbon/subagent/
 
 src/bourbon/tools/
 └── agent_tool.py            # Agent tool registration
-
-src/bourbon/commands/
-└── task_commands.py         # /task CLI commands
 
 tests/test_subagent/
 ├── test_types.py
@@ -62,7 +59,7 @@ tests/test_subagent/
 ```python
 # tests/test_subagent/test_errors.py
 import pytest
-from bourbon.subagent.errors import SubagentErrorCode, TaskError, TaskCancelledError
+from bourbon.subagent.errors import SubagentErrorCode, RunError, RunCancelledError
 
 
 def test_error_code_values():
@@ -71,21 +68,20 @@ def test_error_code_values():
     assert SubagentErrorCode.LLM_ERROR.value == "llm_error"
 
 
-def test_task_error_has_code():
-    error = TaskError(SubagentErrorCode.LLM_ERROR, "API failed")
+def test_run_error_has_code():
+    error = RunError(SubagentErrorCode.LLM_ERROR, "API failed")
     assert error.code == SubagentErrorCode.LLM_ERROR
     assert str(error) == "API failed"
 
 
-def test_task_cancelled_error():
-    error = TaskCancelledError("User stopped task")
+def test_run_cancelled_error():
+    error = RunCancelledError("User stopped run")
     assert error.code == SubagentErrorCode.USER_ABORT
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-cd /home/hf/github_project/build-my-agent
 python -m pytest tests/test_subagent/test_errors.py -v
 ```
 
@@ -110,8 +106,8 @@ class SubagentErrorCode(Enum):
     UNKNOWN_ERROR = "unknown_error"
 
 
-class TaskError(Exception):
-    """Base exception for subagent task failures."""
+class RunError(Exception):
+    """Base exception for subagent runtime-job failures."""
     
     def __init__(self, code: SubagentErrorCode, message: str):
         super().__init__(message)
@@ -119,20 +115,20 @@ class TaskError(Exception):
         self.message = message
 
 
-class TaskCancelledError(TaskError):
-    """Task was cancelled by user or parent."""
+class RunCancelledError(RunError):
+    """Run was cancelled by user or parent."""
     
-    def __init__(self, message: str = "Task was cancelled"):
+    def __init__(self, message: str = "Run was cancelled"):
         super().__init__(SubagentErrorCode.USER_ABORT, message)
 
 
-class MaxTurnsExceededError(TaskError):
-    """Task exceeded maximum number of turns."""
+class MaxTurnsExceededError(RunError):
+    """Run exceeded maximum number of turns."""
     
     def __init__(self, max_turns: int):
         super().__init__(
             SubagentErrorCode.MAX_TURNS_EXCEEDED,
-            f"Task exceeded maximum turns ({max_turns})"
+            f"Run exceeded maximum turns ({max_turns})"
         )
         self.max_turns = max_turns
 ```
@@ -141,19 +137,19 @@ class MaxTurnsExceededError(TaskError):
 
 ```python
 # src/bourbon/subagent/__init__.py
-"""Bourbon Subagent System - Parallel task execution and specialized agents."""
+"""Bourbon Subagent System - Parallel runtime-job execution and specialized agents."""
 
 from .errors import (
     SubagentErrorCode,
-    TaskError,
-    TaskCancelledError,
+    RunError,
+    RunCancelledError,
     MaxTurnsExceededError,
 )
 
 __all__ = [
     "SubagentErrorCode",
-    "TaskError",
-    "TaskCancelledError",
+    "RunError",
+    "RunCancelledError",
     "MaxTurnsExceededError",
 ]
 ```
@@ -173,13 +169,13 @@ git add src/bourbon/subagent/__init__.py src/bourbon/subagent/errors.py tests/te
 git commit -m "feat(subagent): add error codes and exception classes
 
 - Add SubagentErrorCode enum for standardized error handling
-- Add TaskError, TaskCancelledError, MaxTurnsExceededError exceptions
+- Add RunError, RunCancelledError, MaxTurnsExceededError exceptions
 - Create subagent package structure"
 ```
 
 ---
 
-### Task 2: Create Core Types (AgentDefinition, SubagentTask)
+### Task 2: Create Core Types (AgentDefinition, SubagentRun)
 
 **Files:**
 - Create: `src/bourbon/subagent/types.py`
@@ -191,15 +187,15 @@ git commit -m "feat(subagent): add error codes and exception classes
 # tests/test_subagent/test_types.py
 import pytest
 from datetime import datetime
-from bourbon.subagent.types import TaskStatus, AgentDefinition, SubagentTask
+from bourbon.subagent.types import RunStatus, AgentDefinition, SubagentRun
 
 
 def test_task_status_enum():
-    assert TaskStatus.PENDING.value == "pending"
-    assert TaskStatus.RUNNING.value == "running"
-    assert TaskStatus.COMPLETED.value == "completed"
-    assert TaskStatus.FAILED.value == "failed"
-    assert TaskStatus.KILLED.value == "killed"
+    assert RunStatus.PENDING.value == "pending"
+    assert RunStatus.RUNNING.value == "running"
+    assert RunStatus.COMPLETED.value == "completed"
+    assert RunStatus.FAILED.value == "failed"
+    assert RunStatus.KILLED.value == "killed"
 
 
 def test_agent_definition_creation():
@@ -223,26 +219,26 @@ def test_agent_definition_with_allowed_tools():
 
 
 def test_subagent_task_creation():
-    task = SubagentTask(
+    task = SubagentRun(
         description="Test task",
         prompt="Do something",
         agent_type="default",
     )
     assert task.description == "Test task"
-    assert task.status == TaskStatus.PENDING
+    assert task.status == RunStatus.PENDING
     assert task.is_async is False
     assert task.tool_call_count == 0
 
 
 def test_subagent_task_to_dict():
-    task = SubagentTask(
+    task = SubagentRun(
         description="A very long description that should be truncated",
         prompt="Do something",
         agent_type="coder",
-        status=TaskStatus.RUNNING,
+        status=RunStatus.RUNNING,
     )
     d = task.to_dict()
-    assert d["task_id"] == task.task_id
+    assert d["run_id"] == task.run_id
     assert d["agent_type"] == "coder"
     assert d["status"] == "running"
     assert "..." in d["description"]  # Should be truncated
@@ -266,7 +262,7 @@ from enum import Enum
 from uuid import uuid4
 
 
-class TaskStatus(Enum):
+class RunStatus(Enum):
     """Task lifecycle states."""
     PENDING = "pending"
     RUNNING = "running"
@@ -289,10 +285,10 @@ class AgentDefinition:
 
 
 @dataclass
-class SubagentTask:
+class SubagentRun:
     """Runtime task instance."""
     # Identity
-    task_id: str = field(default_factory=lambda: str(uuid4())[:8])
+    run_id: str = field(default_factory=lambda: str(uuid4())[:8])
     
     # Configuration
     description: str = ""
@@ -302,7 +298,7 @@ class SubagentTask:
     max_turns: int = 50
     
     # State
-    status: TaskStatus = field(default=TaskStatus.PENDING)
+    status: RunStatus = field(default=RunStatus.PENDING)
     created_at: datetime = field(default_factory=datetime.now)
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -327,7 +323,7 @@ class SubagentTask:
             desc = desc[:50] + "..."
         
         return {
-            "task_id": self.task_id,
+            "run_id": self.run_id,
             "description": desc,
             "agent_type": self.agent_type,
             "status": self.status.value,
@@ -344,21 +340,21 @@ Add to `src/bourbon/subagent/__init__.py`:
 
 ```python
 from .types import (
-    TaskStatus,
+    RunStatus,
     AgentDefinition,
-    SubagentTask,
+    SubagentRun,
 )
 
 __all__ = [
     # errors
     "SubagentErrorCode",
-    "TaskError",
-    "TaskCancelledError",
+    "RunError",
+    "RunCancelledError",
     "MaxTurnsExceededError",
     # types
-    "TaskStatus",
+    "RunStatus",
     "AgentDefinition",
-    "SubagentTask",
+    "SubagentRun",
 ]
 ```
 
@@ -374,11 +370,11 @@ Expected: 6 tests PASS
 
 ```bash
 git add src/bourbon/subagent/types.py tests/test_subagent/test_types.py src/bourbon/subagent/__init__.py
-git commit -m "feat(subagent): add core types (AgentDefinition, SubagentTask)
+git commit -m "feat(subagent): add core types (AgentDefinition, SubagentRun)
 
-- Add TaskStatus enum for task lifecycle states
+- Add RunStatus enum for runtime-job lifecycle states
 - Add AgentDefinition for agent type configuration
-- Add SubagentTask runtime task instance
+- Add SubagentRun runtime job instance
 - Include to_dict() for CLI display"
 ```
 
@@ -591,7 +587,7 @@ def test_agent_type_configs_exist():
 
 def test_explore_agent_restricted_tools():
     explore_def = AGENT_TYPE_CONFIGS["explore"]
-    assert explore_def.allowed_tools == ["Read", "Glob", "Grep", "WebSearch", "WebFetch"]
+    assert explore_def.allowed_tools == ["Read", "Glob", "Grep", "AstGrep", "WebFetch"]
 
 
 def test_tool_filter_init():
@@ -636,13 +632,13 @@ def test_tool_filter_custom_disallowed():
     custom_def = AgentDefinition(
         agent_type="custom",
         description="Test",
-        disallowed_tools=["Bash", "WebSearch"],
+        disallowed_tools=["Bash", "WebFetch"],
     )
     filter_engine = ToolFilter()
     
     assert filter_engine.is_allowed("Read", custom_def) is True
     assert filter_engine.is_allowed("Bash", custom_def) is False
-    assert filter_engine.is_allowed("WebSearch", custom_def) is False
+    assert filter_engine.is_allowed("WebFetch", custom_def) is False
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -664,7 +660,6 @@ from .types import AgentDefinition
 ALL_AGENT_DISALLOWED_TOOLS = {
     "Agent",           # No recursion
     "TodoWrite",       # Don't pollute parent todo list
-    "TaskStop",        # Can't control other tasks
     "compress",        # Manual compression disabled
 }
 
@@ -688,7 +683,7 @@ AGENT_TYPE_CONFIGS: dict[str, AgentDefinition] = {
     "explore": AgentDefinition(
         agent_type="explore",
         description="Read-only codebase exploration",
-        allowed_tools=["Read", "Glob", "Grep", "WebSearch", "WebFetch"],
+        allowed_tools=["Read", "Glob", "Grep", "AstGrep", "WebFetch"],
         max_turns=30,
         system_prompt_suffix="You are in READ-ONLY mode. Do not modify files.",
     ),
@@ -696,9 +691,9 @@ AGENT_TYPE_CONFIGS: dict[str, AgentDefinition] = {
     "plan": AgentDefinition(
         agent_type="plan",
         description="Architecture and design planning",
-        allowed_tools=["Read", "Glob", "Grep", "WebSearch"],
+        allowed_tools=["Read", "Glob", "Grep", "AstGrep", "WebFetch"],
         max_turns=30,
-        permission_mode="plan",
+        system_prompt_suffix="Focus on architecture, tradeoffs, and implementation planning.",
     ),
     
     "quick_task": AgentDefinition(
@@ -790,7 +785,7 @@ git commit -m "feat(subagent): add tool filtering system
 
 ## Chunk 4: Task Registry
 
-### Task 5: Implement TaskRegistry
+### Task 5: Implement RunRegistry (Runtime Registry)
 
 **Files:**
 - Create: `src/bourbon/subagent/registry.py`
@@ -802,87 +797,87 @@ git commit -m "feat(subagent): add tool filtering system
 # tests/test_subagent/test_registry.py
 import pytest
 from datetime import datetime
-from bourbon.subagent.registry import TaskRegistry
-from bourbon.subagent.types import SubagentTask, TaskStatus
+from bourbon.subagent.registry import RunRegistry
+from bourbon.subagent.types import SubagentRun, RunStatus
 
 
 def test_registry_empty():
-    registry = TaskRegistry()
+    registry = RunRegistry()
     assert registry.list_all() == []
     assert registry.get("nonexistent") is None
 
 
 def test_registry_register_task():
-    registry = TaskRegistry()
-    task = SubagentTask(description="Test", prompt="Do it")
+    registry = RunRegistry()
+    run = SubagentRun(description="Test", prompt="Do it")
     
-    registry.register(task)
+    registry.register(run)
     
-    assert registry.get(task.task_id) == task
+    assert registry.get(run.run_id) == run
 
 
 def test_registry_list_all():
-    registry = TaskRegistry()
-    task1 = SubagentTask(description="Task 1", prompt="Do 1")
-    task2 = SubagentTask(description="Task 2", prompt="Do 2")
+    registry = RunRegistry()
+    run1 = SubagentRun(description="Run 1", prompt="Do 1")
+    run2 = SubagentRun(description="Run 2", prompt="Do 2")
     
-    registry.register(task1)
-    registry.register(task2)
+    registry.register(run1)
+    registry.register(run2)
     
-    tasks = registry.list_all()
-    assert len(tasks) == 2
-    assert task1 in tasks
-    assert task2 in tasks
+    runs = registry.list_all()
+    assert len(runs) == 2
+    assert run1 in runs
+    assert run2 in runs
 
 
 def test_registry_list_by_status():
-    registry = TaskRegistry()
-    task1 = SubagentTask(description="Running", prompt="Run")
-    task1.status = TaskStatus.RUNNING
-    task2 = SubagentTask(description="Pending", prompt="Wait")
-    task2.status = TaskStatus.PENDING
+    registry = RunRegistry()
+    run1 = SubagentRun(description="Running", prompt="Run")
+    run1.status = RunStatus.RUNNING
+    run2 = SubagentRun(description="Pending", prompt="Wait")
+    run2.status = RunStatus.PENDING
     
-    registry.register(task1)
-    registry.register(task2)
+    registry.register(run1)
+    registry.register(run2)
     
-    running = registry.list_all(status=TaskStatus.RUNNING)
+    running = registry.list_all(status=RunStatus.RUNNING)
     assert len(running) == 1
     assert running[0].description == "Running"
 
 
 def test_registry_update_status():
-    registry = TaskRegistry()
-    task = SubagentTask(description="Test", prompt="Do it")
-    registry.register(task)
+    registry = RunRegistry()
+    run = SubagentRun(description="Test", prompt="Do it")
+    registry.register(run)
     
-    registry.update_status(task.task_id, TaskStatus.RUNNING)
+    registry.update_status(run.run_id, RunStatus.RUNNING)
     
-    updated = registry.get(task.task_id)
-    assert updated.status == TaskStatus.RUNNING
+    updated = registry.get(run.run_id)
+    assert updated.status == RunStatus.RUNNING
 
 
 def test_registry_complete():
-    registry = TaskRegistry()
-    task = SubagentTask(description="Test", prompt="Do it")
-    registry.register(task)
+    registry = RunRegistry()
+    run = SubagentRun(description="Test", prompt="Do it")
+    registry.register(run)
     
-    registry.complete(task.task_id, "Result content")
+    registry.complete(run.run_id, "Result content")
     
-    updated = registry.get(task.task_id)
-    assert updated.status == TaskStatus.COMPLETED
+    updated = registry.get(run.run_id)
+    assert updated.status == RunStatus.COMPLETED
     assert updated.result == "Result content"
     assert updated.completed_at is not None
 
 
 def test_registry_fail():
-    registry = TaskRegistry()
-    task = SubagentTask(description="Test", prompt="Do it")
-    registry.register(task)
+    registry = RunRegistry()
+    run = SubagentRun(description="Test", prompt="Do it")
+    registry.register(run)
     
-    registry.fail(task.task_id, "Something went wrong")
+    registry.fail(run.run_id, "Something went wrong")
     
-    updated = registry.get(task.task_id)
-    assert updated.status == TaskStatus.FAILED
+    updated = registry.get(run.run_id)
+    assert updated.status == RunStatus.FAILED
     assert updated.error == "Something went wrong"
 ```
 
@@ -894,83 +889,83 @@ python -m pytest tests/test_subagent/test_registry.py -v
 
 Expected: FAIL - ImportError
 
-- [ ] **Step 3: Implement TaskRegistry**
+- [ ] **Step 3: Implement RunRegistry**
 
 ```python
 # src/bourbon/subagent/registry.py
 from typing import Optional
-from .types import SubagentTask, TaskStatus
+from .types import SubagentRun, RunStatus
 
 
-class TaskRegistry:
-    """In-memory registry of subagent tasks.
+class RunRegistry:
+    """In-memory registry of subagent runtime jobs.
     
-    Stores task state and provides query/filter capabilities.
+    Stores runtime job state and provides query/filter capabilities.
     """
     
     def __init__(self):
-        self._tasks: dict[str, SubagentTask] = {}
+        self._runs: dict[str, SubagentRun] = {}
     
-    def register(self, task: SubagentTask) -> None:
-        """Register a new task."""
-        self._tasks[task.task_id] = task
+    def register(self, run: SubagentRun) -> None:
+        """Register a new runtime job."""
+        self._runs[run.run_id] = run
     
-    def get(self, task_id: str) -> Optional[SubagentTask]:
-        """Get task by ID."""
-        return self._tasks.get(task_id)
+    def get(self, run_id: str) -> Optional[SubagentRun]:
+        """Get runtime job by ID."""
+        return self._runs.get(run_id)
     
     def list_all(
         self,
-        status: Optional[TaskStatus] = None,
+        status: Optional[RunStatus] = None,
         agent_type: Optional[str] = None,
-    ) -> list[SubagentTask]:
-        """List tasks with optional filtering."""
-        tasks = list(self._tasks.values())
+    ) -> list[SubagentRun]:
+        """List runtime jobs with optional filtering."""
+        runs = list(self._runs.values())
         
         if status:
-            tasks = [t for t in tasks if t.status == status]
+            runs = [run for run in runs if run.status == status]
         
         if agent_type:
-            tasks = [t for t in tasks if t.agent_type == agent_type]
+            runs = [run for run in runs if run.agent_type == agent_type]
         
-        return tasks
+        return runs
     
-    def update_status(self, task_id: str, status: TaskStatus) -> bool:
-        """Update task status."""
-        task = self._tasks.get(task_id)
-        if not task:
+    def update_status(self, run_id: str, status: RunStatus) -> bool:
+        """Update runtime-job status."""
+        run = self._runs.get(run_id)
+        if not run:
             return False
         
-        task.status = status
-        if status == TaskStatus.RUNNING and not task.started_at:
+        run.status = status
+        if status == RunStatus.RUNNING and not run.started_at:
             from datetime import datetime
-            task.started_at = datetime.now()
+            run.started_at = datetime.now()
         
         return True
     
-    def complete(self, task_id: str, result: str) -> bool:
-        """Mark task as completed with result."""
-        task = self._tasks.get(task_id)
-        if not task:
+    def complete(self, run_id: str, result: str) -> bool:
+        """Mark runtime job as completed with result."""
+        run = self._runs.get(run_id)
+        if not run:
             return False
         
-        task.status = TaskStatus.COMPLETED
-        task.result = result
+        run.status = RunStatus.COMPLETED
+        run.result = result
         from datetime import datetime
-        task.completed_at = datetime.now()
+        run.completed_at = datetime.now()
         
         return True
     
-    def fail(self, task_id: str, error: str) -> bool:
-        """Mark task as failed with error."""
-        task = self._tasks.get(task_id)
-        if not task:
+    def fail(self, run_id: str, error: str) -> bool:
+        """Mark runtime job as failed with error."""
+        run = self._runs.get(run_id)
+        if not run:
             return False
         
-        task.status = TaskStatus.FAILED
-        task.error = error
+        run.status = RunStatus.FAILED
+        run.error = error
         from datetime import datetime
-        task.completed_at = datetime.now()
+        run.completed_at = datetime.now()
         
         return True
 ```
@@ -980,11 +975,11 @@ class TaskRegistry:
 Add to `src/bourbon/subagent/__init__.py`:
 
 ```python
-from .registry import TaskRegistry
+from .registry import RunRegistry
 
 __all__ = [
     # ... existing exports ...
-    "TaskRegistry",
+    "RunRegistry",
 ]
 ```
 
@@ -1000,9 +995,9 @@ Expected: 8 tests PASS
 
 ```bash
 git add src/bourbon/subagent/registry.py tests/test_subagent/test_registry.py src/bourbon/subagent/__init__.py
-git commit -m "feat(subagent): add TaskRegistry for task state management
+git commit -m "feat(subagent): add RunRegistry for runtime-job state management
 
-- In-memory task storage with dict-based lookup
+- In-memory runtime-job storage with dict-based lookup
 - Support filtering by status and agent_type
 - Methods: register, get, list_all, update_status, complete, fail
 - Auto-set started_at and completed_at timestamps"
@@ -1016,10 +1011,10 @@ git commit -m "feat(subagent): add TaskRegistry for task state management
 **Chunk 6:** Session adapter, executor, cleanup
 **Chunk 7:** SubagentManager (core orchestration)
 **Chunk 8:** Agent tool registration
-**Chunk 9:** CLI commands (/task list, output, stop)
+**Chunk 9:** REPL commands (`/runs`, `/run-show`, `/run-stop`)
 **Chunk 10:** Integration tests and documentation
 
-Plan saved to `docs/superpowers/plans/2025-04-09-bourbon-subagent-implementation.md`
+Plan saved to `docs/superpowers/plans/2026-04-09-bourbon-subagent-implementation.md`
 
 Ready to execute or continue with remaining chunks?
 
@@ -1041,26 +1036,26 @@ Ready to execute or continue with remaining chunks?
 from datetime import datetime
 import pytest
 from bourbon.subagent.result import AgentToolResult, finalize_agent_tool
-from bourbon.subagent.types import SubagentTask, TaskStatus
+from bourbon.subagent.types import SubagentRun, RunStatus
 
 
 def test_agent_tool_result_creation():
     result = AgentToolResult(
-        task_id="abc123",
+        run_id="abc123",
         agent_type="coder",
         content="Task completed successfully",
         total_duration_ms=5000,
         total_tokens=1000,
         total_tool_calls=5,
     )
-    assert result.task_id == "abc123"
+    assert result.run_id == "abc123"
     assert result.agent_type == "coder"
     assert result.total_tool_calls == 5
 
 
 def test_agent_tool_result_to_notification():
     result = AgentToolResult(
-        task_id="abc123",
+        run_id="abc123",
         agent_type="coder",
         content="Refactoring complete.\n\nUpdated 3 files.",
         total_duration_ms=12500,
@@ -1073,12 +1068,12 @@ def test_agent_tool_result_to_notification():
     assert "abc123" in notification
     assert "12.5s" in notification
     assert "2450" in notification
-    assert "/task output abc123" in notification
+    assert "/run-show abc123" in notification
 
 
 def test_finalize_agent_tool_basic():
-    task = SubagentTask(
-        task_id="test123",
+    task = SubagentRun(
+        run_id="test123",
         description="Test task",
         prompt="Do something",
         agent_type="default",
@@ -1096,7 +1091,7 @@ def test_finalize_agent_tool_basic():
         start_time_ms=start_time,
     )
     
-    assert result.task_id == "test123"
+    assert result.run_id == "test123"
     assert result.content == "Task done"
     assert result.total_duration_ms >= 5000
     assert result.total_tool_calls == 5
@@ -1114,7 +1109,7 @@ from typing import Any
 @dataclass
 class AgentToolResult:
     """Final result of a subagent task."""
-    task_id: str
+    run_id: str
     agent_type: str
     content: str
     total_duration_ms: int
@@ -1124,9 +1119,9 @@ class AgentToolResult:
     
     def to_notification(self) -> str:
         """Convert to user notification message."""
-        return f"""[Task {self.task_id}] Completed
+        return f"""[Run {self.run_id}] Completed
 
-Description: {self.description if hasattr(self, 'description') else self.task_id}
+Description: {self.description if hasattr(self, 'description') else self.run_id}
 Status: ✅ Completed
 Duration: {self.total_duration_ms / 1000:.1f}s
 Tokens: {self.total_tokens}
@@ -1135,12 +1130,12 @@ Tool Calls: {self.total_tool_calls}
 Result:
 {self.content[:500]}{'...' if len(self.content) > 500 else ''}
 
-Use `/task output {self.task_id}` for full details.
+Use `/run-show {self.run_id}` for full details.
 """
 
 
 def finalize_agent_tool(
-    task: Any,  # SubagentTask
+    task: Any,  # SubagentRun
     messages: list[dict],
     final_content: str,
     start_time_ms: float,
@@ -1151,7 +1146,7 @@ def finalize_agent_tool(
     duration_ms = int(datetime.now().timestamp() * 1000 - start_time_ms)
     
     return AgentToolResult(
-        task_id=task.task_id,
+        run_id=task.run_id,
         agent_type=task.agent_type,
         content=final_content,
         total_duration_ms=duration_ms,
@@ -1178,7 +1173,7 @@ def finalize_agent_tool(
 # tests/test_subagent/test_partial_result.py
 import pytest
 from bourbon.subagent.partial_result import extract_partial_result
-from bourbon.subagent.types import TextBlock, ToolUseBlock, TranscriptMessage, MessageRole
+from bourbon.session.types import TextBlock, ToolUseBlock, TranscriptMessage, MessageRole
 
 
 def test_extract_partial_from_assistant_message():
@@ -1243,7 +1238,7 @@ def test_extract_partial_no_content():
 
 ```python
 # src/bourbon/subagent/partial_result.py
-from .types import TranscriptMessage, MessageRole, TextBlock
+from bourbon.session.types import TranscriptMessage, MessageRole, TextBlock
 
 
 def extract_partial_result(messages: list[TranscriptMessage]) -> str:
@@ -1308,33 +1303,22 @@ class SubagentSessionAdapter:
         parent_store: TranscriptStore,
         project_name: str,
         project_dir: str,
-        task_id: str,
+        run_id: str,
     ):
         self.parent_store = parent_store
         self.project_name = f"{project_name}/subagents"
         self.project_dir = project_dir
-        self.task_id = task_id
+        self.run_id = run_id
     
     def create_session(self):
-        """Create isolated subagent session."""
-        from bourbon.session.manager import Session
-        from bourbon.session.types import SessionMetadata
-        from datetime import datetime
-        from uuid import uuid4
-        
-        metadata = SessionMetadata(
-            uuid=uuid4(),
-            parent_uuid=None,
-            project_dir=self.project_dir,
-            created_at=datetime.now(),
-            last_activity=datetime.now(),
-            description=f"Subagent task {self.task_id}",
-        )
-        
-        return Session(
-            metadata=metadata,
+        """Create isolated subagent session through SessionManager."""
+        manager = SessionManager(
             store=self.parent_store,
             project_name=self.project_name,
+            project_dir=self.project_dir,
+        )
+        return manager.create_session(
+            description=f"Subagent run {self.run_id}",
         )
 ```
 
@@ -1353,7 +1337,7 @@ from typing import Callable, Any
 
 
 class AsyncExecutor:
-    """Manages thread pool for background task execution."""
+    """Manages thread pool for background run execution."""
     
     def __init__(self, max_workers: int = 10):
         self._executor = ThreadPoolExecutor(
@@ -1364,25 +1348,25 @@ class AsyncExecutor:
     
     def submit(
         self,
-        task_id: str,
+        run_id: str,
         fn: Callable,
         *args,
         **kwargs,
     ) -> Future:
-        """Submit task to thread pool."""
+        """Submit runtime job to thread pool."""
         future = self._executor.submit(fn, *args, **kwargs)
-        self._futures[task_id] = future
+        self._futures[run_id] = future
         
         # Clean up when done
         future.add_done_callback(
-            lambda f: self._futures.pop(task_id, None)
+            lambda f: self._futures.pop(run_id, None)
         )
         
         return future
     
-    def get_future(self, task_id: str) -> Future | None:
-        """Get future for running task."""
-        return self._futures.get(task_id)
+    def get_future(self, run_id: str) -> Future | None:
+        """Get future for running runtime job."""
+        return self._futures.get(run_id)
     
     def shutdown(self, wait: bool = True):
         """Shutdown thread pool."""
@@ -1402,41 +1386,41 @@ import atexit
 import weakref
 from typing import Set
 
-from .types import SubagentTask, TaskStatus
+from .types import SubagentRun, RunStatus
 
 
 class ResourceManager:
     """Ensures proper cleanup of subagent resources."""
     
     def __init__(self):
-        self._tasks: weakref.WeakSet[SubagentTask] = weakref.WeakSet()
+        self._runs: weakref.WeakSet[SubagentRun] = weakref.WeakSet()
         atexit.register(self._cleanup_all)
     
-    def register(self, task: SubagentTask):
-        """Register task for cleanup tracking."""
-        self._tasks.add(task)
+    def register(self, run: SubagentRun):
+        """Register runtime job for cleanup tracking."""
+        self._runs.add(run)
     
     def _cleanup_all(self):
-        """Cleanup all running tasks on exit."""
-        for task in list(self._tasks):
-            if task.status == TaskStatus.RUNNING:
-                self._cleanup_task(task)
+        """Cleanup all running runtime jobs on exit."""
+        for run in list(self._runs):
+            if run.status == RunStatus.RUNNING:
+                self._cleanup_run(run)
     
-    def _cleanup_task(self, task: SubagentTask):
-        """Cleanup single task resources."""
+    def _cleanup_run(self, run: SubagentRun):
+        """Cleanup single runtime-job resources."""
         # Signal abort
-        if task.abort_controller:
-            task.abort_controller.abort()
+        if run.abort_controller:
+            run.abort_controller.abort()
         
         # Shutdown MCP if needed
-        if hasattr(task, '_subagent'):
+        if hasattr(run, '_subagent'):
             try:
-                task._subagent.shutdown_mcp_sync()
+                run._subagent.shutdown_mcp_sync()
             except Exception:
                 pass
         
         # Mark as killed
-        task.status = TaskStatus.KILLED
+        run.status = RunStatus.KILLED
 ```
 
 ---
@@ -1458,7 +1442,7 @@ Key methods to implement:
 - `_create_subagent()` - Agent instance creation
 - `_run_subagent()` - execution loop
 - `_finalize()` - result extraction
-- `get_task()`, `list_tasks()`, `kill_task()`, `get_output()`
+- `get_run()`, `list_runs()`, `kill_run()`, `get_run_output()`
 
 See design spec for full implementation details.
 
@@ -1470,6 +1454,7 @@ See design spec for full implementation details.
 
 **Files:**
 - Create: `src/bourbon/tools/agent_tool.py`
+- Modify: `src/bourbon/tools/__init__.py` - extend `ToolContext` or provide manager injection
 - Test: `tests/test_subagent/test_agent_tool.py`
 
 ```python
@@ -1478,7 +1463,11 @@ from bourbon.tools import RiskLevel, ToolContext, register_tool
 
 
 def get_manager(ctx: ToolContext):
-    """Get SubagentManager from context."""
+    """Get SubagentManager from tool context.
+
+    Implementation note: extend ToolContext to carry an `agent` reference
+    before adding this helper, or inject the manager via a closure/factory.
+    """
     return ctx.agent.subagent_manager
 
 
@@ -1502,7 +1491,6 @@ def get_manager(ctx: ToolContext):
         "required": ["description", "prompt"],
     },
     risk_level=RiskLevel.MEDIUM,
-    required_capabilities=["subagent"],
 )
 def agent_tool(
     description: str,
@@ -1527,8 +1515,8 @@ def agent_tool(
     )
     
     if run_in_background:
-        task_id = result
-        return f"Started background task: {task_id}\nUse `/task output {task_id}` to check status."
+        run_id = result
+        return f"Started background run: {run_id}\nUse `/run-show {run_id}` to check status."
     else:
         agent_result = result
         return (
@@ -1540,58 +1528,31 @@ def agent_tool(
 
 ---
 
-## Chunk 9: CLI Commands
+## Chunk 9: REPL Commands
 
-### Task 13: Implement Task Commands
+### Task 13: Implement REPL Runtime-Job Commands
 
 **Files:**
-- Create: `src/bourbon/commands/task_commands.py`
-- Modify: `src/bourbon/agent.py` - add command handling
+- Modify: `src/bourbon/repl.py`
 
 ```python
-# src/bourbon/commands/task_commands.py
-from bourbon.tools.base import run_bash
+# src/bourbon/repl.py
+COMMANDS = {
+    "/runs": "List subagent runtime jobs",
+    "/run-show": "Show subagent runtime job output",
+    "/run-stop": "Stop a running subagent runtime job",
+}
 
-
-def task_list(*, ctx) -> str:
-    """List all tasks."""
-    manager = ctx.agent.subagent_manager
-    tasks = manager.list_tasks()
-    
-    if not tasks:
-        return "No tasks found."
-    
-    lines = ["┌────────┬──────────┬──────────────────────────────┬───────────┐"]
-    lines.append("│ Task   │ Type     │ Description                  │ Status    │")
-    lines.append("├────────┼──────────┼──────────────────────────────┼───────────┤")
-    
-    for t in tasks:
-        desc = t.description[:28] + ".." if len(t.description) > 30 else t.description
-        lines.append(
-            f"│ {t.task_id:6} │ {t.agent_type:8} │ {desc:28} │ {t.status.value:9} │"
-        )
-    
-    lines.append("└────────┴──────────┴──────────────────────────────┴───────────┘")
-    return "\n".join(lines)
-
-
-def task_output(task_id: str, *, ctx) -> str:
-    """Get task output."""
-    manager = ctx.agent.subagent_manager
-    output = manager.get_output(task_id)
-    
-    if output is None:
-        return f"Task {task_id} not found."
-    
-    return output
-
-
-def task_stop(task_id: str, *, ctx) -> str:
-    """Stop a running task."""
-    manager = ctx.agent.subagent_manager
-    success = manager.kill_task(task_id)
-    
-    return f"Task {task_id} stopped." if success else f"Could not stop task {task_id}."
+def _handle_command(self, command: str) -> bool:
+    ...
+    elif cmd == "/runs":
+        self.console.print(self.agent.subagent_manager.render_run_list())
+    elif cmd.startswith("/run-show "):
+        run_id = command.split(maxsplit=1)[1]
+        self.console.print(self.agent.subagent_manager.get_run_output(run_id))
+    elif cmd.startswith("/run-stop "):
+        run_id = command.split(maxsplit=1)[1]
+        self.console.print(self.agent.subagent_manager.stop_run(run_id))
 ```
 
 ---
@@ -1602,6 +1563,7 @@ def task_stop(task_id: str, *, ctx) -> str:
 
 **Files:**
 - Modify: `src/bourbon/agent.py`
+- Modify: `src/bourbon/tools/__init__.py`
 
 Add to Agent.__init__:
 ```python
@@ -1615,13 +1577,22 @@ self.subagent_manager = SubagentManager(
 )
 ```
 
-Add command handling to step():
+Update tool context construction so the Agent tool can access the manager:
 ```python
-def step(self, user_input: str) -> str:
-    # Handle task commands
-    if user_input.startswith("/task "):
-        return self._handle_task_command(user_input[6:])
-    # ... rest of method
+@dataclass
+class ToolContext:
+    workdir: Path
+    skill_manager: Any | None = None
+    on_tools_discovered: Callable[[set[str]], None] | None = None
+    agent: Any | None = None
+
+def _make_tool_context(self) -> ToolContext:
+    return ToolContext(
+        workdir=self.workdir,
+        skill_manager=self.skills,
+        on_tools_discovered=self._get_discovered_tools().update,
+        agent=self,
+    )
 ```
 
 ---
@@ -1643,7 +1614,7 @@ Test end-to-end scenarios:
 ### Task 16: Documentation
 
 **Files:**
-- Modify: `docs/superpowers/specs/2025-04-09-bourbon-subagent-design.md` - mark as implemented
+- Modify: `docs/superpowers/specs/2026-04-09-bourbon-subagent-design.md` - mark as implemented
 - Create: `docs/superpowers/guides/subagent-usage.md` - user guide
 
 ---

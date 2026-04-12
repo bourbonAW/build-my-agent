@@ -32,6 +32,11 @@ class TestAgentDiscoveredTools:
         ctx = agent._make_tool_context()
         assert ctx.skill_manager is agent.skills
 
+    def test_make_tool_context_passes_agent(self, tmp_path):
+        agent = self._make_agent(tmp_path)
+        ctx = agent._make_tool_context()
+        assert ctx.agent is agent
+
     def test_make_tool_context_on_tools_discovered_updates_set(self, tmp_path):
         agent = self._make_agent(tmp_path)
         ctx = agent._make_tool_context()

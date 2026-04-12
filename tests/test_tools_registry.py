@@ -133,6 +133,7 @@ class TestToolContext:
     def test_tool_context_fields(self):
         ctx = ToolContext(workdir=Path("/tmp"))
         assert ctx.workdir == Path("/tmp")
+        assert ctx.agent is None
         assert ctx.skill_manager is None
         assert ctx.on_tools_discovered is None
 
@@ -348,6 +349,7 @@ class TestBaseToolsRenamed:
         assert "Read" in names
         assert "Write" in names
         assert "Edit" in names
+        assert "TodoWrite" in names
 
     def test_read_handler_uses_ctx_workdir(self, tmp_path):
         ctx = ToolContext(workdir=tmp_path)
