@@ -135,6 +135,61 @@ def test_failed_run_records_error(tmp_path):
     assert manager.get_run_output(run.run_id) == "Error: boom"
 
 
+def test_interrupted_sync_run_marks_run_killed_and_aborts_controller(tmp_path):
+    def agent_factory(run, agent_def):
+        class InterruptingSubagent:
+            def step(self, prompt: str) -> str:
+                raise KeyboardInterrupt
+
+        return InterruptingSubagent()
+
+    manager = SubagentManager(
+        config=Config(),
+        workdir=tmp_path,
+        agent_factory=agent_factory,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        manager.spawn(description="Interrupt", prompt="Stop")
+
+    run = manager.list_runs()[0]
+    assert run.status == RunStatus.KILLED
+    assert run.abort_controller.is_aborted() is True
+    assert manager.get_run_output(run.run_id) == f"Run {run.run_id} is killed."
+
+
+def test_spawn_emits_debug_events(tmp_path, monkeypatch):
+    events = []
+
+    def fake_debug_log(event, **fields):
+        events.append((event, fields))
+
+    monkeypatch.setattr("bourbon.subagent.manager.debug_log", fake_debug_log)
+    manager = SubagentManager(
+        config=Config(),
+        workdir=tmp_path,
+        agent_factory=lambda run, agent_def: FakeSubagent(),
+    )
+
+    result = manager.spawn(
+        description="Debug lifecycle",
+        prompt="Do it",
+        agent_type="explore",
+    )
+
+    event_names = [event for event, _fields in events]
+    assert event_names == [
+        "subagent.spawn.registered",
+        "subagent.lifecycle.start",
+        "subagent.lifecycle.agent_created",
+        "subagent.lifecycle.step.complete",
+        "subagent.lifecycle.complete",
+    ]
+    assert events[0][1]["run_id"] == result.run_id
+    assert events[0][1]["agent_type"] == "explore"
+    assert events[0][1]["max_turns"] == 30
+
+
 def test_kill_run_marks_run_killed_and_aborts_controller(tmp_path):
     manager = SubagentManager(config=Config(), workdir=tmp_path)
     run_id = manager.spawn(

@@ -533,11 +533,33 @@ class Agent:
             # Call LLM
             try:
                 messages = self.session.get_messages_for_llm()
+                tool_defs = self._tool_definitions()
+                llm_call_started_at = time.monotonic()
+                debug_log(
+                    "agent.loop.llm_call.start",
+                    tool_round=tool_round,
+                    message_count=len(messages),
+                    tool_definition_count=len(tool_defs),
+                    **self._subagent_debug_fields(),
+                )
                 response = self.llm.chat(
                     messages=messages,
-                    tools=self._tool_definitions(),
+                    tools=tool_defs,
                     system=self.system_prompt,
                     max_tokens=64000,
+                )
+                response_content = response.get("content", [])
+                response_tool_uses = [
+                    block for block in response_content if block.get("type") == "tool_use"
+                ]
+                debug_log(
+                    "agent.loop.llm_call.end",
+                    tool_round=tool_round,
+                    stop_reason=response.get("stop_reason"),
+                    content_block_count=len(response_content),
+                    tool_use_count=len(response_tool_uses),
+                    elapsed_ms=int((time.monotonic() - llm_call_started_at) * 1000),
+                    **self._subagent_debug_fields(),
                 )
 
                 # Track token usage
@@ -593,16 +615,35 @@ class Agent:
                 text_parts = [
                     block["text"] for block in response["content"] if block.get("type") == "text"
                 ]
-                return "".join(text_parts)
+                result = "".join(text_parts)
+                debug_log(
+                    "agent.loop.final_response",
+                    tool_round=tool_round,
+                    response_len=len(result),
+                    **self._subagent_debug_fields(),
+                )
+                return result
 
             # Execute tools
             if tool_use_blocks:
+                debug_log(
+                    "agent.loop.tools.execute",
+                    tool_round=tool_round,
+                    tool_use_count=len(tool_use_blocks),
+                    tool_names=[block.get("name", "") for block in tool_use_blocks],
+                    **self._subagent_debug_fields(),
+                )
                 tool_results = self._execute_tools(
                     tool_use_blocks,
                     source_assistant_uuid=assistant_msg.uuid,
                 )
 
                 if self.active_permission_request:
+                    debug_log(
+                        "agent.loop.permission_request_pending",
+                        tool_round=tool_round,
+                        **self._subagent_debug_fields(),
+                    )
                     return ""
 
                 # Add all tool results as single user message
@@ -621,6 +662,12 @@ class Agent:
 
             tool_round += 1
 
+        debug_log(
+            "agent.loop.max_rounds",
+            tool_round=tool_round,
+            max_tool_rounds=self._max_tool_rounds,
+            **self._subagent_debug_fields(),
+        )
         return (
             "[Reached maximum tool execution rounds. "
             "Providing final response based on what was learned.]"
@@ -659,6 +706,14 @@ class Agent:
         """Return the discovered-tool set (initialized in __init__)."""
         return self._discovered_tools
 
+    def _subagent_debug_fields(self) -> dict[str, object]:
+        """Return common debug fields for top-level or subagent execution."""
+        agent_def = getattr(self, "_subagent_agent_def", None)
+        return {
+            "is_subagent": agent_def is not None,
+            "subagent_type": getattr(agent_def, "agent_type", None),
+        }
+
     def _tool_definitions(self) -> list[dict]:
         """Return tool definitions visible to this agent."""
         tool_defs = definitions(discovered=self._get_discovered_tools())
@@ -666,7 +721,22 @@ class Agent:
         agent_def = getattr(self, "_subagent_agent_def", None)
         if filter_engine is None or agent_def is None:
             return tool_defs
-        return filter_engine.filter_tools(tool_defs, agent_def)
+        filtered_tools = filter_engine.filter_tools(tool_defs, agent_def)
+        if len(filtered_tools) != len(tool_defs):
+            visible_names = {tool.get("name") for tool in filtered_tools}
+            hidden_names = [
+                str(tool.get("name", ""))
+                for tool in tool_defs
+                if tool.get("name") not in visible_names
+            ]
+            debug_log(
+                "subagent.tools.filtered",
+                agent_type=agent_def.agent_type,
+                total_tools=len(tool_defs),
+                visible_tools=len(filtered_tools),
+                hidden_tools=hidden_names,
+            )
+        return filtered_tools
 
     def _subagent_tool_denial(self, tool_name: str) -> str | None:
         """Return a denial message when a hidden subagent tool is invoked."""
@@ -676,6 +746,11 @@ class Agent:
             return None
         if filter_engine.is_allowed(tool_name, agent_def):
             return None
+        debug_log(
+            "subagent.tool.denied",
+            tool_name=tool_name,
+            agent_type=agent_def.agent_type,
+        )
         return f"Denied: Tool '{tool_name}' is not available to {agent_def.agent_type} subagents."
 
     def _make_tool_context(self) -> ToolContext:

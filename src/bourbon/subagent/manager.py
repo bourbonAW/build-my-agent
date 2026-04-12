@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from bourbon.config import Config
+from bourbon.debug import debug_log
 from bourbon.subagent.cancel import AbortController
 from bourbon.subagent.cleanup import ResourceManager
 from bourbon.subagent.executor import AsyncExecutor
@@ -66,6 +67,17 @@ class SubagentManager:
         )
         self.registry.register(run)
         self.resource_manager.register(run)
+        debug_log(
+            "subagent.spawn.registered",
+            run_id=run.run_id,
+            description=description,
+            prompt_len=len(prompt),
+            agent_type=agent_type,
+            model=run.model,
+            max_turns=run.max_turns,
+            is_async=run.is_async,
+            explicit_max_turns=max_turns is not None,
+        )
 
         run_agent_factory = agent_factory or self.agent_factory
         if run_in_background:
@@ -151,13 +163,34 @@ class SubagentManager:
     ) -> AgentToolResult:
         start_time_ms = time.time() * 1000
         self.registry.update_status(run.run_id, RunStatus.RUNNING)
+        debug_log(
+            "subagent.lifecycle.start",
+            run_id=run.run_id,
+            agent_type=run.agent_type,
+            max_turns=run.max_turns,
+            is_async=run.is_async,
+        )
 
         try:
             agent_def = self._agent_definition(run.agent_type)
             subagent = self._create_subagent(run, agent_def, agent_factory)
             run._subagent = subagent
+            debug_log(
+                "subagent.lifecycle.agent_created",
+                run_id=run.run_id,
+                agent_type=run.agent_type,
+                agent_class=type(subagent).__name__,
+            )
 
+            step_started_at = time.monotonic()
             final_content = subagent.step(run.prompt)
+            debug_log(
+                "subagent.lifecycle.step.complete",
+                run_id=run.run_id,
+                agent_type=run.agent_type,
+                result_len=len(final_content or ""),
+                elapsed_ms=int((time.monotonic() - step_started_at) * 1000),
+            )
             self._copy_agent_usage(subagent, run)
 
             result = finalize_agent_tool(
@@ -172,9 +205,34 @@ class SubagentManager:
                 run.status = RunStatus.KILLED
             else:
                 self.registry.complete(run.run_id, result.content)
+            debug_log(
+                "subagent.lifecycle.complete",
+                run_id=run.run_id,
+                agent_type=run.agent_type,
+                status=run.status.value,
+                total_tokens=run.total_tokens,
+                total_duration_ms=result.total_duration_ms,
+            )
             return result
+        except KeyboardInterrupt:
+            if run.abort_controller is not None:
+                run.abort_controller.abort()
+            run.status = RunStatus.KILLED
+            debug_log(
+                "subagent.lifecycle.interrupted",
+                run_id=run.run_id,
+                agent_type=run.agent_type,
+                status=run.status.value,
+            )
+            raise
         except Exception as exc:
             self.registry.fail(run.run_id, str(exc))
+            debug_log(
+                "subagent.lifecycle.failed",
+                run_id=run.run_id,
+                agent_type=run.agent_type,
+                error=str(exc),
+            )
             raise
 
     def _create_subagent(

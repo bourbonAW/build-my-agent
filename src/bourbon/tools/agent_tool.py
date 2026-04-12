@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+
+from bourbon.debug import debug_log
 from bourbon.subagent.result import AgentToolResult
 from bourbon.tools import RiskLevel, ToolContext, register_tool
 
@@ -29,7 +32,7 @@ def get_manager(ctx: ToolContext):
                 "default": "default",
             },
             "model": {"type": ["string", "null"]},
-            "max_turns": {"type": "integer", "default": 50},
+            "max_turns": {"type": ["integer", "null"]},
             "run_in_background": {"type": "boolean", "default": False},
         },
         "required": ["description", "prompt"],
@@ -43,10 +46,20 @@ def agent_tool_handler(
     ctx: ToolContext,
     subagent_type: str = "default",
     model: str | None = None,
-    max_turns: int = 50,
+    max_turns: int | None = None,
     run_in_background: bool = False,
 ) -> str:
     """Spawn a subagent and format the result for the parent conversation."""
+    started_at = time.monotonic()
+    debug_log(
+        "agent_tool.spawn.start",
+        description=description,
+        prompt_len=len(prompt),
+        subagent_type=subagent_type,
+        model=model,
+        max_turns=max_turns,
+        run_in_background=run_in_background,
+    )
     try:
         manager = get_manager(ctx)
         result = manager.spawn(
@@ -58,16 +71,40 @@ def agent_tool_handler(
             run_in_background=run_in_background,
         )
     except Exception as exc:
+        debug_log(
+            "agent_tool.spawn.error",
+            description=description,
+            subagent_type=subagent_type,
+            error=str(exc),
+            elapsed_ms=int((time.monotonic() - started_at) * 1000),
+        )
         return f"Error: {exc}"
 
     if run_in_background:
         run_id = str(result)
+        debug_log(
+            "agent_tool.spawn.complete",
+            run_id=run_id,
+            subagent_type=subagent_type,
+            run_in_background=True,
+            elapsed_ms=int((time.monotonic() - started_at) * 1000),
+        )
         return f"Started background run: {run_id}\nUse `/run-show {run_id}` to check status."
 
     if not isinstance(result, AgentToolResult):
         return f"Error: Expected AgentToolResult, got {type(result).__name__}"
 
     duration_seconds = result.total_duration_ms / 1000
+    debug_log(
+        "agent_tool.spawn.complete",
+        run_id=result.run_id,
+        subagent_type=result.agent_type,
+        run_in_background=False,
+        elapsed_ms=int((time.monotonic() - started_at) * 1000),
+        subagent_duration_ms=result.total_duration_ms,
+        total_tokens=result.total_tokens,
+        total_tool_calls=result.total_tool_calls,
+    )
     return (
         f"Subagent completed in {duration_seconds:.1f}s\n"
         f"Tokens: {result.total_tokens}, Tool calls: {result.total_tool_calls}\n\n"
