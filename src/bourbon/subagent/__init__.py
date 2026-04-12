@@ -7,9 +7,16 @@ from bourbon.subagent.errors import (
     RunError,
     SubagentErrorCode,
 )
+from bourbon.subagent.tools import (
+    AGENT_TYPE_CONFIGS,
+    ALL_AGENT_DISALLOWED_TOOLS,
+    ToolFilter,
+)
 from bourbon.subagent.types import AgentDefinition, RunStatus, SubagentRun
 
 __all__ = [
+    "AGENT_TYPE_CONFIGS",
+    "ALL_AGENT_DISALLOWED_TOOLS",
     "AbortController",
     "AgentDefinition",
     "MaxTurnsExceededError",
@@ -18,4 +25,5 @@ __all__ = [
     "RunStatus",
     "SubagentRun",
     "SubagentErrorCode",
+    "ToolFilter",
 ]
