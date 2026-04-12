@@ -10,6 +10,7 @@ from bourbon.subagent.errors import (
 from bourbon.subagent.partial_result import extract_partial_result
 from bourbon.subagent.registry import RunRegistry
 from bourbon.subagent.result import AgentToolResult, finalize_agent_tool
+from bourbon.subagent.session_adapter import SubagentSessionAdapter
 from bourbon.subagent.tools import (
     AGENT_TYPE_CONFIGS,
     ALL_AGENT_DISALLOWED_TOOLS,
@@ -30,6 +31,7 @@ __all__ = [
     "RunStatus",
     "SubagentRun",
     "SubagentErrorCode",
+    "SubagentSessionAdapter",
     "ToolFilter",
     "extract_partial_result",
     "finalize_agent_tool",
