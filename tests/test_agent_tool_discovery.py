@@ -1,5 +1,6 @@
 """Tests for agent deferred tool discovery."""
 
+import contextlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -60,10 +61,8 @@ class TestAgentDiscoveredTools:
 
         with patch("bourbon.agent.definitions") as mock_definitions:
             mock_definitions.return_value = []
-            try:
+            with contextlib.suppress(Exception):
                 agent._run_conversation_loop()
-            except Exception:
-                pass
 
             found = False
             for call in mock_definitions.call_args_list:

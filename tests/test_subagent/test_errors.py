@@ -1,5 +1,3 @@
-import pytest
-
 from bourbon.subagent.errors import (
     MaxTurnsExceededError,
     RunCancelledError,

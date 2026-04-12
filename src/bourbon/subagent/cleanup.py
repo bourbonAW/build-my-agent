@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import weakref
 
 from bourbon.subagent.types import RunStatus, SubagentRun
@@ -35,9 +36,7 @@ class ResourceManager:
 
         subagent = getattr(run, "_subagent", None)
         if subagent is not None:
-            try:
+            with contextlib.suppress(Exception):
                 subagent.shutdown_mcp_sync()
-            except Exception:
-                pass
 
         run.status = RunStatus.KILLED

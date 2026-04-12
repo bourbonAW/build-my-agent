@@ -8,10 +8,17 @@ from bourbon.config import Config
 from bourbon.todos import TodoManager
 from bourbon.tools import ToolContext, definitions, get_registry
 
-
 ROOT = Path(__file__).resolve().parents[1]
-SUBAGENT_DESIGN = ROOT / "docs" / "superpowers" / "specs" / "2026-04-09-bourbon-subagent-design.md"
-SUBAGENT_PLAN = ROOT / "docs" / "superpowers" / "plans" / "2026-04-09-bourbon-subagent-implementation.md"
+SUBAGENT_DESIGN = (
+    ROOT / "docs" / "superpowers" / "specs" / "2026-04-09-bourbon-subagent-design.md"
+)
+SUBAGENT_PLAN = (
+    ROOT
+    / "docs"
+    / "superpowers"
+    / "plans"
+    / "2026-04-09-bourbon-subagent-implementation.md"
+)
 TASK_V2_GUIDE = ROOT / "docs" / "superpowers" / "guides" / "task-v2-usage.md"
 SUBAGENT_GUIDE = ROOT / "docs" / "superpowers" / "guides" / "subagent-usage.md"
 
