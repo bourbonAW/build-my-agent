@@ -1,6 +1,7 @@
 """Bourbon subagent runtime-job execution and specialized agents."""
 
 from bourbon.subagent.cancel import AbortController
+from bourbon.subagent.cleanup import ResourceManager
 from bourbon.subagent.errors import (
     MaxTurnsExceededError,
     RunCancelledError,
@@ -27,6 +28,7 @@ __all__ = [
     "AgentToolResult",
     "AsyncExecutor",
     "MaxTurnsExceededError",
+    "ResourceManager",
     "RunCancelledError",
     "RunError",
     "RunRegistry",
