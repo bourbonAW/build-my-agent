@@ -90,6 +90,10 @@ class Agent:
         # Legacy placeholder kept for compatibility with older tests/callers.
         # Active sessions now use Session.context_manager for all compression logic.
         self.compressor = None
+        # Set by SubagentManager for child agents. Normal top-level agents leave
+        # these unset and receive the full tool surface.
+        self._subagent_agent_def = None
+        self._subagent_tool_filter = None
 
         # Initialize LLM client
         try:
@@ -342,11 +346,11 @@ class Agent:
                     "agent.stream.llm_call.start",
                     tool_round=tool_round,
                     message_count=len(messages),
-                    tool_definition_count=len(definitions(discovered=self._get_discovered_tools())),
+                    tool_definition_count=len(self._tool_definitions()),
                 )
                 event_stream = self.llm.chat_stream(
                     messages=messages,
-                    tools=definitions(discovered=self._get_discovered_tools()),
+                    tools=self._tool_definitions(),
                     system=self.system_prompt,
                     max_tokens=64000,
                 )
@@ -531,7 +535,7 @@ class Agent:
                 messages = self.session.get_messages_for_llm()
                 response = self.llm.chat(
                     messages=messages,
-                    tools=definitions(discovered=self._get_discovered_tools()),
+                    tools=self._tool_definitions(),
                     system=self.system_prompt,
                     max_tokens=64000,
                 )
@@ -654,6 +658,25 @@ class Agent:
     def _get_discovered_tools(self) -> set[str]:
         """Return the discovered-tool set (initialized in __init__)."""
         return self._discovered_tools
+
+    def _tool_definitions(self) -> list[dict]:
+        """Return tool definitions visible to this agent."""
+        tool_defs = definitions(discovered=self._get_discovered_tools())
+        filter_engine = getattr(self, "_subagent_tool_filter", None)
+        agent_def = getattr(self, "_subagent_agent_def", None)
+        if filter_engine is None or agent_def is None:
+            return tool_defs
+        return filter_engine.filter_tools(tool_defs, agent_def)
+
+    def _subagent_tool_denial(self, tool_name: str) -> str | None:
+        """Return a denial message when a hidden subagent tool is invoked."""
+        filter_engine = getattr(self, "_subagent_tool_filter", None)
+        agent_def = getattr(self, "_subagent_agent_def", None)
+        if filter_engine is None or agent_def is None:
+            return None
+        if filter_engine.is_allowed(tool_name, agent_def):
+            return None
+        return f"Denied: Tool '{tool_name}' is not available to {agent_def.agent_type} subagents."
 
     def _make_tool_context(self) -> ToolContext:
         """Construct the shared tool execution context."""
@@ -780,6 +803,10 @@ class Agent:
         skip_policy_check: bool = False,
     ) -> str:
         """Execute one tool call with policy, audit, and sandbox integration."""
+        denial = self._subagent_tool_denial(tool_name)
+        if denial is not None:
+            return denial
+
         tool_metadata = get_tool_with_metadata(tool_name)
 
         if not skip_policy_check:
@@ -880,8 +907,13 @@ class Agent:
             if self.on_tool_start:
                 self.on_tool_start(tool_name, tool_input)
 
+            is_error = False
+            denial = self._subagent_tool_denial(tool_name)
+            if denial is not None:
+                output = denial
+                is_error = True
             # Handle special tools
-            if tool_name == "compress":
+            elif tool_name == "compress":
                 manual_compact = True
                 output = "Compressing context..."
             else:
@@ -920,13 +952,14 @@ class Agent:
             if self.on_tool_end:
                 self.on_tool_end(tool_name, output)
 
-            results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tool_id,
-                    "content": str(output)[:50000],
-                }
-            )
+            result = {
+                "type": "tool_result",
+                "tool_use_id": tool_id,
+                "content": str(output)[:50000],
+            }
+            if is_error:
+                result["is_error"] = True
+            results.append(result)
 
         # Todo nag
         self._rounds_without_todo = 0 if used_todo else self._rounds_without_todo + 1

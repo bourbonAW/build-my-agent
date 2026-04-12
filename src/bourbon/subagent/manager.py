@@ -14,7 +14,7 @@ from bourbon.subagent.executor import AsyncExecutor
 from bourbon.subagent.registry import RunRegistry
 from bourbon.subagent.result import AgentToolResult, finalize_agent_tool
 from bourbon.subagent.session_adapter import SubagentSessionAdapter
-from bourbon.subagent.tools import AGENT_TYPE_CONFIGS
+from bourbon.subagent.tools import AGENT_TYPE_CONFIGS, ToolFilter
 from bourbon.subagent.types import AgentDefinition, RunStatus, SubagentRun
 
 AgentFactory = Callable[[SubagentRun, AgentDefinition], Any]
@@ -202,6 +202,8 @@ class SubagentManager:
             system_prompt=system_prompt,
         )
         subagent._max_tool_rounds = run.max_turns
+        subagent._subagent_agent_def = agent_def
+        subagent._subagent_tool_filter = ToolFilter()
 
         parent_session_manager = getattr(self.parent_agent, "_session_manager", None)
         if parent_session_manager is not None:
