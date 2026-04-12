@@ -22,6 +22,15 @@ class TestAgentDiscoveredTools:
         assert isinstance(agent._discovered_tools, set)
         assert len(agent._discovered_tools) == 0
 
+    def test_agent_initializes_subagent_manager(self, tmp_path):
+        from bourbon.subagent.manager import SubagentManager
+
+        agent = self._make_agent(tmp_path)
+
+        assert isinstance(agent.subagent_manager, SubagentManager)
+        assert agent.subagent_manager.parent_agent is agent
+        assert agent.subagent_manager.workdir == tmp_path
+
     def test_make_tool_context_passes_workdir(self, tmp_path):
         agent = self._make_agent(tmp_path)
         ctx = agent._make_tool_context()

@@ -37,6 +37,7 @@ from bourbon.session.types import (
     TranscriptMessage,
 )
 from bourbon.skills import SkillManager
+from bourbon.subagent.manager import SubagentManager
 from bourbon.todos import TodoManager
 from bourbon.tools import (
     ToolContext,
@@ -140,6 +141,13 @@ class Agent:
                 self.session = self._session_manager.create_session()
         else:
             self.session = self._session_manager.create_session()
+
+        # Runtime job manager for Agent tool subagents.
+        self.subagent_manager = SubagentManager(
+            config=config,
+            workdir=self.workdir,
+            parent_agent=self,
+        )
 
         # Track rounds without todo update for nagging
         self._rounds_without_todo = 0
