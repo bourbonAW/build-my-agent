@@ -7,6 +7,7 @@ from bourbon.subagent.errors import (
     RunError,
     SubagentErrorCode,
 )
+from bourbon.subagent.registry import RunRegistry
 from bourbon.subagent.tools import (
     AGENT_TYPE_CONFIGS,
     ALL_AGENT_DISALLOWED_TOOLS,
@@ -22,6 +23,7 @@ __all__ = [
     "MaxTurnsExceededError",
     "RunCancelledError",
     "RunError",
+    "RunRegistry",
     "RunStatus",
     "SubagentRun",
     "SubagentErrorCode",
