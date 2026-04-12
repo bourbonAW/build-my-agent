@@ -285,7 +285,15 @@ def tool(name: str) -> Tool | None:
 
 def _ensure_imports() -> None:
     """Lazily import tool modules to trigger registration."""
-    from bourbon.tools import base, search, skill_tool, task_tools, todo_tool, tool_search  # noqa: F401
+    from bourbon.tools import (  # noqa: F401
+        agent_tool,
+        base,
+        search,
+        skill_tool,
+        task_tools,
+        todo_tool,
+        tool_search,
+    )
 
     try:
         from bourbon.tools import web  # noqa: F401
