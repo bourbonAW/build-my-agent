@@ -52,7 +52,10 @@ class SubagentRun:
     error: str | None = None
     tool_call_count: int = 0
     total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     current_activity: str | None = None
+    _subagent: Any | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to a compact dictionary for REPL rendering."""

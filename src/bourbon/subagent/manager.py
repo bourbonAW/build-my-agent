@@ -287,3 +287,5 @@ class SubagentManager:
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         total_tokens = int(usage.get("total_tokens", input_tokens + output_tokens) or 0)
         run.total_tokens = total_tokens
+        run.input_tokens = input_tokens
+        run.output_tokens = output_tokens

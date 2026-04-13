@@ -27,7 +27,7 @@ def test_agent_tool_schema_warns_explore_cannot_run_bash():
     description = agent_def["input_schema"]["properties"]["subagent_type"]["description"]
 
     assert "explore" in description
-    assert "cannot run Bash" in description
+    assert "read-only tools" in description
     assert "system information" in description
 
 

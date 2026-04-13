@@ -64,6 +64,8 @@ def test_finalize_agent_tool_basic():
     )
     run.tool_call_count = 5
     run.total_tokens = 1000
+    run.input_tokens = 700
+    run.output_tokens = 300
     start_time = datetime.now().timestamp() * 1000 - 5000
 
     result = finalize_agent_tool(
@@ -79,4 +81,4 @@ def test_finalize_agent_tool_basic():
     assert result.total_duration_ms >= 5000
     assert result.total_tool_calls == 5
     assert result.total_tokens == 1000
-    assert result.usage == {"input_tokens": 500, "output_tokens": 500}
+    assert result.usage == {"input_tokens": 700, "output_tokens": 300}

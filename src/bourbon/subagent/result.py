@@ -64,7 +64,7 @@ def finalize_agent_tool(
         total_tokens=run.total_tokens,
         total_tool_calls=run.tool_call_count,
         usage={
-            "input_tokens": run.total_tokens // 2,
-            "output_tokens": run.total_tokens - (run.total_tokens // 2),
+            "input_tokens": run.input_tokens,
+            "output_tokens": run.output_tokens,
         },
     )

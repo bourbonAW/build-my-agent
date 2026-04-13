@@ -349,7 +349,7 @@ class TestBaseToolsRenamed:
         assert "Read" in names
         assert "Write" in names
         assert "Edit" in names
-        assert "TodoWrite" in names
+        assert "TodoWrite" not in names  # V1 disabled; Task V2 is the active system
 
     def test_read_handler_uses_ctx_workdir(self, tmp_path):
         ctx = ToolContext(workdir=tmp_path)

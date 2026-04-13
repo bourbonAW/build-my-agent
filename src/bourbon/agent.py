@@ -153,9 +153,6 @@ class Agent:
             parent_agent=self,
         )
 
-        # Track rounds without todo update for nagging
-        self._rounds_without_todo = 0
-
         # Maximum tool execution rounds to prevent infinite loops
         # Can be configured via config.ui.max_tool_rounds (default: 50)
         self._max_tool_rounds = getattr(config.ui, "max_tool_rounds", 50)
@@ -842,17 +839,28 @@ class Agent:
                 }
             )
         else:
-            results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": request.tool_use_id,
-                    "content": self._execute_regular_tool(
-                        request.tool_name,
-                        request.tool_input,
-                        skip_policy_check=True,
-                    ),
-                }
-            )
+            denial = self._subagent_tool_denial(request.tool_name)
+            if denial is not None:
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": request.tool_use_id,
+                        "content": denial,
+                        "is_error": True,
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": request.tool_use_id,
+                        "content": self._execute_regular_tool(
+                            request.tool_name,
+                            request.tool_input,
+                            skip_policy_check=True,
+                        ),
+                    }
+                )
 
         remaining_blocks = suspended.tool_use_blocks[suspended.next_tool_index + 1 :]
         if remaining_blocks:
@@ -878,10 +886,6 @@ class Agent:
         skip_policy_check: bool = False,
     ) -> str:
         """Execute one tool call with policy, audit, and sandbox integration."""
-        denial = self._subagent_tool_denial(tool_name)
-        if denial is not None:
-            return denial
-
         tool_metadata = get_tool_with_metadata(tool_name)
 
         if not skip_policy_check:
@@ -967,7 +971,6 @@ class Agent:
             List of tool results
         """
         results = []
-        used_todo = False
         manual_compact = False
 
         for index, block in enumerate(tool_use_blocks):
@@ -1019,10 +1022,6 @@ class Agent:
                         tool_input,
                         skip_policy_check=True,
                     )
-                    used_todo = used_todo or (
-                        "todo" in getattr(self, "_last_tool_execution_markers", set())
-                    )
-
             # Notify end of tool execution
             if self.on_tool_end:
                 self.on_tool_end(tool_name, output)
@@ -1035,17 +1034,6 @@ class Agent:
             if is_error:
                 result["is_error"] = True
             results.append(result)
-
-        # Todo nag
-        self._rounds_without_todo = 0 if used_todo else self._rounds_without_todo + 1
-        if self.todos.has_open_items() and self._rounds_without_todo >= 3:
-            results.insert(
-                0,
-                {
-                    "type": "text",
-                    "text": "<reminder>You have open todos. Consider updating them.</reminder>",
-                },
-            )
 
         if manual_compact:
             self._manual_compact()

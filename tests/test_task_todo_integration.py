@@ -77,15 +77,7 @@ def test_todo_write_is_ephemeral_while_task_create_persists_across_agents(tmp_pa
     agent_a = _make_agent(tmp_path, session_id="session-a")
     ctx_a = ToolContext(workdir=tmp_path, agent=agent_a)
 
-    registry.call(
-        "TodoWrite",
-        {
-            "items": [
-                {"content": "Ephemeral checklist", "status": "pending"},
-            ]
-        },
-        ctx_a,
-    )
+    agent_a.todos.update([{"content": "Ephemeral checklist", "status": "pending"}])
     created = json.loads(
         registry.call(
             "TaskCreate",
@@ -121,19 +113,13 @@ def test_completed_workflow_tasks_do_not_clear_open_todos_or_runtime_jobs(tmp_pa
     agent = _make_agent(tmp_path, session_id="session-separation")
     ctx = ToolContext(workdir=tmp_path, agent=agent)
 
-    registry.call(
-        "TodoWrite",
+    agent.todos.update([
         {
-            "items": [
-                {
-                    "content": "Keep runtime checklist state",
-                    "status": "in_progress",
-                    "activeForm": "Keeping runtime checklist state",
-                }
-            ]
-        },
-        ctx,
-    )
+            "content": "Keep runtime checklist state",
+            "status": "in_progress",
+            "activeForm": "Keeping runtime checklist state",
+        }
+    ])
     before = agent.todos.to_list()
     before_runtime_runs = agent.subagent_manager.snapshot()
     created = json.loads(

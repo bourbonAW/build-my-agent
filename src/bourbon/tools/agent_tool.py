@@ -31,8 +31,9 @@ def get_manager(ctx: ToolContext):
                 "enum": ["default", "coder", "explore", "plan", "quick_task"],
                 "default": "default",
                 "description": (
-                    "Subagent profile. Use explore only for read-only file/search/web "
-                    "inspection; explore cannot run Bash. Use default for system "
+                    "Subagent profile. explore is restricted to read-only tools "
+                    "(Read, Glob, Grep, AstGrep, WebFetch) and cannot write files, "
+                    "execute code, or call MCP tools. Use default for system "
                     "information, shell commands, or mixed tool needs."
                 ),
             },
