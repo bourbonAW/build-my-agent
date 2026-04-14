@@ -1,5 +1,7 @@
 """Base tools: bash, read, write, edit."""
 
+import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -206,6 +208,73 @@ def edit_file(
         return f"Error editing {path}: {e}"
 
 
+# ---------------------------------------------------------------------------
+# Bash concurrency helper
+# ---------------------------------------------------------------------------
+
+READONLY_BASH_COMMANDS = {
+    "ls", "cat", "grep", "find", "echo", "pwd", "wc",
+    "head", "tail", "stat", "diff", "sort", "uniq",
+}
+
+READONLY_BASH_FORBIDDEN_ARGS = {
+    "find": {
+        "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls",
+    },
+    "sort": {"-o", "--output"},
+    "tail": {"-f", "--follow"},
+}
+
+
+def _contains_shell_control_operator(command: str) -> bool:
+    """Return True if command contains any shell control operator."""
+    if any(token in command for token in ("&&", "||", ">>", "$(", "`", "\n")):
+        return True
+    if any(token in command for token in (";", "|", ">", "<")):
+        return True
+    return bool(re.search(r"(?<!&)&(?!&)", command))
+
+
+def _has_forbidden_readonly_arg(argv: list[str]) -> bool:
+    """Return True if a whitelisted command is using a write/blocking argument."""
+    command = argv[0]
+    forbidden = READONLY_BASH_FORBIDDEN_ARGS.get(command, set())
+    for arg in argv[1:]:
+        if arg in forbidden:
+            return True
+        if any(arg.startswith(f"{flag}=") for flag in forbidden if flag.startswith("--")):
+            return True
+
+    # uniq accepts OUTPUT as a second file operand, so two non-option operands can write.
+    if command == "uniq":
+        operands = [arg for arg in argv[1:] if not arg.startswith("-")]
+        return len(operands) >= 2
+
+    return False
+
+
+def _is_readonly_bash(input: dict) -> bool:  # noqa: A002
+    """Return True only if the bash command is a safe read-only operation.
+
+    Two-stage check:
+    1. Reject if any shell control operator is present.
+    2. Accept only if argv[0] is in the exact read-only command whitelist and
+       no known write/blocking argument is present.
+    """
+    command = str(input.get("command", ""))
+    if _contains_shell_control_operator(command):
+        return False
+    try:
+        argv = shlex.split(command, posix=True)
+    except ValueError:
+        return False
+    if not argv or "/" in argv[0] or argv[0] not in READONLY_BASH_COMMANDS:
+        return False
+    if _has_forbidden_readonly_arg(argv):
+        return False
+    return True
+
+
 # Register tools with schemas
 @register_tool(
     name="Bash",
@@ -224,6 +293,7 @@ def edit_file(
     risk_level=RiskLevel.HIGH,
     is_destructive=True,
     required_capabilities=["exec"],
+    concurrency_fn=_is_readonly_bash,
 )
 def bash_handler(command: str, *, ctx: ToolContext) -> str:
     """Tool handler for Bash."""

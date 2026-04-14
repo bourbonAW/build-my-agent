@@ -92,6 +92,7 @@ async def fetch_url(
     should_defer=True,
     search_hint="web fetch url http download browser",
     required_capabilities=["net"],
+    is_concurrency_safe=True,
 )
 async def web_fetch_handler(url: str, *, ctx: ToolContext) -> str:
     """Tool handler for WebFetch."""

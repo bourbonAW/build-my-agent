@@ -28,13 +28,14 @@ def get_manager(ctx: ToolContext):
             "prompt": {"type": "string", "description": "Complete instructions"},
             "subagent_type": {
                 "type": "string",
-                "enum": ["default", "coder", "explore", "plan", "quick_task"],
+                "enum": ["default", "coder", "explore", "plan", "quick_task", "teammate"],
                 "default": "default",
                 "description": (
                     "Subagent profile. explore is restricted to read-only tools "
                     "(Read, Glob, Grep, AstGrep, WebFetch) and cannot write files, "
                     "execute code, or call MCP tools. Use default for system "
-                    "information, shell commands, or mixed tool needs."
+                    "information, shell commands, or mixed tool needs. "
+                    "teammate runs as a peer agent that can coordinate on shared tasks."
                 ),
             },
             "model": {"type": ["string", "null"]},
@@ -44,6 +45,7 @@ def get_manager(ctx: ToolContext):
         "required": ["description", "prompt"],
     },
     risk_level=RiskLevel.MEDIUM,
+    is_concurrency_safe=True,
 )
 def agent_tool_handler(
     description: str,
