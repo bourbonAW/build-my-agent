@@ -70,3 +70,24 @@ def test_subagent_run_exported_from_package():
     from bourbon.subagent import SubagentRun as ExportedSubagentRun
 
     assert ExportedSubagentRun is SubagentRun
+
+
+from bourbon.subagent.types import SubagentMode
+
+
+def test_subagent_mode_values():
+    assert SubagentMode.NORMAL.value == "normal"
+    assert SubagentMode.TEAMMATE.value == "teammate"
+    assert SubagentMode.ASYNC.value == "async"
+
+
+def test_subagent_run_has_subagent_mode_field():
+    from bourbon.subagent.types import SubagentRun
+    run = SubagentRun()
+    assert run.subagent_mode == SubagentMode.NORMAL
+
+
+def test_subagent_run_has_parent_task_list_id_field():
+    from bourbon.subagent.types import SubagentRun
+    run = SubagentRun()
+    assert run.parent_task_list_id is None

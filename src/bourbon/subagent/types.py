@@ -9,6 +9,14 @@ from typing import Any
 from uuid import uuid4
 
 
+class SubagentMode(Enum):
+    """Mode for subagent tool visibility control."""
+
+    NORMAL = "normal"
+    TEAMMATE = "teammate"
+    ASYNC = "async"
+
+
 class RunStatus(Enum):
     """Runtime-job lifecycle states."""
 
@@ -55,6 +63,8 @@ class SubagentRun:
     input_tokens: int = 0
     output_tokens: int = 0
     current_activity: str | None = None
+    subagent_mode: SubagentMode = SubagentMode.NORMAL
+    parent_task_list_id: str | None = None
     _subagent: Any | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
