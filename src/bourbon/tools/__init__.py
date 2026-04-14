@@ -62,6 +62,7 @@ class Tool:
     always_load: bool = True
     should_defer: bool = False
     is_concurrency_safe: bool = False
+    _concurrency_fn: Callable[[dict], bool] | None = field(default=None, repr=False)
     is_read_only: bool = False
     is_destructive: bool = False
     search_hint: str | None = None
@@ -124,6 +125,19 @@ class Tool:
                 ]
             else:
                 self.risk_patterns = []
+
+    def concurrent_safe_for(self, tool_input: dict) -> bool:
+        """Return whether this tool can run concurrently for the given input.
+
+        _concurrency_fn takes priority over is_concurrency_safe bool.
+        Returns False if the function raises.
+        """
+        if self._concurrency_fn is not None:
+            try:
+                return bool(self._concurrency_fn(tool_input))
+            except Exception:
+                return False
+        return self.is_concurrency_safe
 
     def is_high_risk_operation(self, tool_input: dict) -> bool:
         """Check if this specific tool invocation is high-risk.
@@ -223,6 +237,7 @@ def register_tool(
     always_load: bool = True,
     should_defer: bool = False,
     is_concurrency_safe: bool = False,
+    concurrency_fn: "Callable[[dict], bool] | None" = None,
     is_read_only: bool = False,
     is_destructive: bool = False,
     search_hint: str | None = None,
@@ -268,6 +283,7 @@ def register_tool(
             always_load=always_load,
             should_defer=should_defer,
             is_concurrency_safe=is_concurrency_safe,
+            _concurrency_fn=concurrency_fn,
             is_read_only=is_read_only,
             is_destructive=is_destructive,
             search_hint=search_hint,
