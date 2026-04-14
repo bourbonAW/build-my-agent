@@ -176,3 +176,13 @@ def test_result_content_is_string():
     results = q.execute_all()
 
     assert isinstance(results[0]["content"], str)
+
+
+def test_tool_without_concurrent_safe_for_defaults_to_serial():
+    class MetadataOnlyTool:
+        pass
+
+    q = ToolExecutionQueue(execute_fn=simple_execute)
+    q.add(make_block("legacy"), MetadataOnlyTool(), 0)
+
+    assert q._tools[0].concurrent is False

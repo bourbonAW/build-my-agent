@@ -56,7 +56,12 @@ class ToolExecutionQueue:
 
     def add(self, block: dict, tool: Any, index: int) -> None:
         """Enqueue one tool call. Call before execute_all()."""
-        concurrent = tool.concurrent_safe_for(block.get("input", {}))
+        concurrent_safe_for = getattr(tool, "concurrent_safe_for", None)
+        concurrent = (
+            bool(concurrent_safe_for(block.get("input", {})))
+            if callable(concurrent_safe_for)
+            else False
+        )
         with self._lock:
             self._tools.append(
                 TrackedTool(

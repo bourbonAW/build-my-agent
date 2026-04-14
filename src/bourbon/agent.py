@@ -3,6 +3,7 @@
 import time
 import warnings
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from uuid import UUID
 
@@ -38,6 +39,7 @@ from bourbon.session.types import (
 )
 from bourbon.skills import SkillManager
 from bourbon.subagent.manager import SubagentManager
+from bourbon.subagent.types import SubagentMode
 from bourbon.todos import TodoManager
 from bourbon.tools import (
     ToolContext,
@@ -46,6 +48,7 @@ from bourbon.tools import (
     get_registry,
     get_tool_with_metadata,
 )
+from bourbon.tools.execution_queue import ToolExecutionQueue
 
 
 class AgentError(Exception):
@@ -175,6 +178,12 @@ class Agent:
         self.session_permissions = SessionPermissionStore()
         self.suspended_tool_round: SuspendedToolRound | None = None
         self.active_permission_request: PermissionRequest | None = None
+        # Subagent visibility mode, set by SubagentManager for child agents.
+        self.subagent_mode: SubagentMode = SubagentMode.NORMAL
+        # Teammate task list inheritance, overriding session_id for task resolution.
+        self.task_list_id_override: str | None = None
+        # Consecutive rounds without task management tool calls, used by task nudge.
+        self._rounds_without_task: int = 0
 
         # Track consecutive failures per tool to limit retries
         self._tool_consecutive_failures: dict[str, int] = {}
@@ -802,6 +811,7 @@ class Agent:
         completed_results: list[dict],
         next_tool_index: int,
         request: PermissionRequest,
+        task_nudge_tool_use_blocks: list[dict] | None = None,
     ) -> None:
         """Persist the current tool round until the permission request is resolved."""
         self.active_permission_request = request
@@ -811,6 +821,11 @@ class Agent:
             completed_results=completed_results,
             next_tool_index=next_tool_index,
             active_request=request,
+            task_nudge_tool_use_blocks=(
+                task_nudge_tool_use_blocks
+                if task_nudge_tool_use_blocks is not None
+                else tool_use_blocks
+            ),
         )
 
     def resume_permission_request(self, choice: PermissionChoice) -> str:
@@ -961,84 +976,146 @@ class Agent:
         tool_use_blocks: list[dict],
         *,
         source_assistant_uuid: UUID,
+        task_nudge_tool_use_blocks: list[dict] | None = None,
     ) -> list[dict]:
-        """Execute tool calls.
+        """Execute tool calls, running concurrent-safe tools in parallel."""
+        if task_nudge_tool_use_blocks is None:
+            task_nudge_tool_use_blocks = tool_use_blocks
 
-        Args:
-            tool_use_blocks: List of tool_use content blocks
-
-        Returns:
-            List of tool results
-        """
-        results = []
+        results: list[dict | None] = [None] * len(tool_use_blocks)
         manual_compact = False
+
+        def new_queue() -> ToolExecutionQueue:
+            return ToolExecutionQueue(
+                execute_fn=lambda block: self._execute_regular_tool(
+                    block.get("name", ""),
+                    block.get("input", {}),
+                    skip_policy_check=True,
+                ),
+                on_tool_start=self.on_tool_start,
+                on_tool_end=self.on_tool_end,
+            )
+
+        queue: ToolExecutionQueue | None = None
+
+        def ensure_queue() -> ToolExecutionQueue:
+            nonlocal queue
+            if queue is None:
+                queue = new_queue()
+            return queue
+
+        def safe_callback(fn, *args) -> None:
+            if fn is None:
+                return
+            with suppress(Exception):
+                fn(*args)
+
+        def direct_start(name: str, inp: dict) -> None:
+            safe_callback(self.on_tool_start, name, inp)
+
+        def direct_end(name: str, output: str) -> None:
+            safe_callback(self.on_tool_end, name, output)
+
+        id_to_index = {block.get("id", ""): i for i, block in enumerate(tool_use_blocks)}
+
+        def fill_queue_results() -> None:
+            nonlocal queue
+            if queue is None:
+                return
+            drained = queue
+            queue = None
+            for result in drained.execute_all():
+                index = id_to_index.get(result.get("tool_use_id", ""))
+                if index is not None and results[index] is None:
+                    results[index] = result
 
         for index, block in enumerate(tool_use_blocks):
             tool_name = block.get("name", "")
             tool_input = block.get("input", {})
             tool_id = block.get("id", "")
 
-            # Debug: log tool execution (uncomment for debugging)
-            # print(f"[DEBUG] Executing tool: {tool_name} with input: {tool_input}")
-
-            # Notify start of tool execution
-            if self.on_tool_start:
-                self.on_tool_start(tool_name, tool_input)
-
-            is_error = False
             denial = self._subagent_tool_denial(tool_name)
             if denial is not None:
-                output = denial
-                is_error = True
-            # Handle special tools
-            elif tool_name == "compress":
+                fill_queue_results()
+                direct_start(tool_name, tool_input)
+                results[index] = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": str(denial)[:50000],
+                    "is_error": True,
+                }
+                direct_end(tool_name, str(denial))
+                continue
+
+            if tool_name == "compress":
+                fill_queue_results()
+                direct_start(tool_name, tool_input)
                 manual_compact = True
                 output = "Compressing context..."
-            else:
-                permission = self._permission_decision_for_tool(tool_name, tool_input)
-                if permission.action == PermissionAction.DENY:
-                    output = f"Denied: {permission.reason}"
-                elif permission.action == PermissionAction.ASK:
-                    request = build_permission_request(
+                results[index] = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": output,
+                }
+                direct_end(tool_name, output)
+                continue
+
+            permission = self._permission_decision_for_tool(tool_name, tool_input)
+            if permission.action == PermissionAction.DENY:
+                fill_queue_results()
+                direct_start(tool_name, tool_input)
+                output = f"Denied: {permission.reason}"
+                results[index] = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": output,
+                }
+                direct_end(tool_name, output)
+                continue
+
+            if permission.action == PermissionAction.ASK:
+                fill_queue_results()
+                direct_start(tool_name, tool_input)
+                completed = [result for result in results if result is not None]
+                self._suspend_tool_round(
+                    source_assistant_uuid=source_assistant_uuid,
+                    tool_use_blocks=tool_use_blocks,
+                    task_nudge_tool_use_blocks=task_nudge_tool_use_blocks,
+                    completed_results=completed,
+                    next_tool_index=index,
+                    request=build_permission_request(
                         tool_name=tool_name,
                         tool_input=tool_input,
                         tool_use_id=tool_id,
                         decision=permission,
                         workdir=self.workdir,
-                    )
-                    self._suspend_tool_round(
-                        source_assistant_uuid=source_assistant_uuid,
-                        tool_use_blocks=tool_use_blocks,
-                        completed_results=results,
-                        next_tool_index=index,
-                        request=request,
-                    )
-                    if self.on_tool_end:
-                        self.on_tool_end(tool_name, "Requires permission")
-                    return results
-                else:
-                    output = self._execute_regular_tool(
-                        tool_name,
-                        tool_input,
-                        skip_policy_check=True,
-                    )
-            # Notify end of tool execution
-            if self.on_tool_end:
-                self.on_tool_end(tool_name, output)
+                    ),
+                )
+                direct_end(tool_name, "Requires permission")
+                return completed
 
-            result = {
+            tool_obj = get_tool_with_metadata(tool_name)
+            if tool_obj is not None:
+                ensure_queue().add(block, tool_obj, index)
+                continue
+
+            fill_queue_results()
+            direct_start(tool_name, tool_input)
+            output = f"Unknown tool: {tool_name}"
+            results[index] = {
                 "type": "tool_result",
                 "tool_use_id": tool_id,
-                "content": str(output)[:50000],
+                "content": output,
+                "is_error": True,
             }
-            if is_error:
-                result["is_error"] = True
-            results.append(result)
+            direct_end(tool_name, output)
+
+        fill_queue_results()
 
         if manual_compact:
             self._manual_compact()
 
-        return results
+        return [result for result in results if result is not None]
 
     def _build_assistant_transcript_message(self, content: list[dict]) -> TranscriptMessage:
         """Convert LLM response content blocks to TranscriptMessage."""
