@@ -28,7 +28,7 @@ def test_execute_all_returns_results_in_original_order():
     q = ToolExecutionQueue(execute_fn=simple_execute)
     blocks = [make_block(f"id{i}") for i in range(3)]
     tools = [make_tool_obj(concurrent=True) for _ in blocks]
-    for i, (block, tool) in enumerate(zip(blocks, tools)):
+    for i, (block, tool) in enumerate(zip(blocks, tools, strict=True)):
         q.add(block, tool, i)
 
     results = q.execute_all()

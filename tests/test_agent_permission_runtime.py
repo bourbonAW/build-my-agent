@@ -94,7 +94,12 @@ def test_execute_tools_suspends_round_on_permission_request(monkeypatch) -> None
     results = agent._execute_tools(
         [
             {"type": "tool_use", "id": "tool-1", "name": "Read", "input": {"path": "README.md"}},
-            {"type": "tool_use", "id": "tool-2", "name": "Bash", "input": {"command": "pip install flask"}},
+            {
+                "type": "tool_use",
+                "id": "tool-2",
+                "name": "Bash",
+                "input": {"command": "pip install flask"},
+            },
         ],
         source_assistant_uuid=uuid4(),
     )
@@ -122,7 +127,14 @@ def test_resume_permission_request_allow_session_stores_rule(monkeypatch) -> Non
     )
 
     agent._execute_tools(
-        [{"type": "tool_use", "id": "tool-1", "name": "Bash", "input": {"command": "pip install flask"}}],
+        [
+            {
+                "type": "tool_use",
+                "id": "tool-1",
+                "name": "Bash",
+                "input": {"command": "pip install flask"},
+            }
+        ],
         source_assistant_uuid=uuid4(),
     )
 
@@ -151,7 +163,14 @@ def test_resume_permission_request_reject_creates_error_tool_result(monkeypatch)
     )
 
     agent._execute_tools(
-        [{"type": "tool_use", "id": "tool-1", "name": "Bash", "input": {"command": "pip install flask"}}],
+        [
+            {
+                "type": "tool_use",
+                "id": "tool-1",
+                "name": "Bash",
+                "input": {"command": "pip install flask"},
+            }
+        ],
         source_assistant_uuid=uuid4(),
     )
 

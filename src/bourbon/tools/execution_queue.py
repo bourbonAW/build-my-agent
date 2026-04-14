@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -131,11 +132,8 @@ class ToolExecutionQueue:
     def _safe_callback(self, fn: Callable[..., None] | None, *args: Any) -> None:
         if fn is None:
             return
-        with self._callback_lock:
-            try:
-                fn(*args)
-            except Exception:
-                pass
+        with self._callback_lock, suppress(Exception):
+            fn(*args)
 
     def _on_tool_done(self, tool: TrackedTool) -> None:
         self._process_queue()
