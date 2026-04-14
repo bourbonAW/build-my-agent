@@ -1,12 +1,13 @@
 import threading
 import time
+from unittest.mock import MagicMock
 
 import pytest
 
 from bourbon.config import Config
 from bourbon.subagent.manager import SubagentManager
 from bourbon.subagent.result import AgentToolResult
-from bourbon.subagent.types import RunStatus
+from bourbon.subagent.types import RunStatus, SubagentMode
 
 
 class FakeSubagent:
@@ -221,3 +222,106 @@ def test_render_run_list(tmp_path):
     assert result.run_id in rendered
     assert "[completed]" in rendered
     assert "List me" in rendered
+
+
+def test_spawn_sets_subagent_mode_normal_for_sync(tmp_path):
+    """Regular sync spawn should produce NORMAL mode."""
+    received_modes = []
+
+    def agent_factory(run, agent_def):
+        received_modes.append(run.subagent_mode)
+        return FakeSubagent()
+
+    manager = SubagentManager(
+        config=Config(),
+        workdir=tmp_path,
+        agent_factory=agent_factory,
+    )
+
+    manager.spawn(description="test", prompt="do it", agent_type="default")
+
+    assert received_modes == [SubagentMode.NORMAL]
+
+
+def test_spawn_sets_subagent_mode_async_for_background(tmp_path):
+    """Background spawn should produce ASYNC mode."""
+    received_modes = []
+    done = threading.Event()
+
+    def agent_factory(run, agent_def):
+        received_modes.append(run.subagent_mode)
+        done.set()
+        return FakeSubagent()
+
+    manager = SubagentManager(
+        config=Config(),
+        workdir=tmp_path,
+        agent_factory=agent_factory,
+    )
+
+    manager.spawn(
+        description="bg",
+        prompt="do",
+        agent_type="default",
+        run_in_background=True,
+    )
+    done.wait(timeout=2)
+    manager.shutdown()
+
+    assert received_modes == [SubagentMode.ASYNC]
+
+
+def test_spawn_teammate_sets_mode_and_task_list_id(tmp_path):
+    """Teammate spawn should set TEAMMATE mode and parent task list id."""
+    received = []
+
+    def agent_factory(run, agent_def):
+        received.append((run.subagent_mode, run.parent_task_list_id))
+        return FakeSubagent()
+
+    parent = MagicMock()
+    parent.session.session_id = "parent-session-123"
+
+    manager = SubagentManager(
+        config=Config(),
+        workdir=tmp_path,
+        parent_agent=parent,
+        agent_factory=agent_factory,
+    )
+
+    manager.spawn(description="teammate", prompt="do", agent_type="teammate")
+
+    assert received[0][0] == SubagentMode.TEAMMATE
+    assert received[0][1] == "parent-session-123"
+
+
+def test_configure_subagent_runtime_applies_to_factory_agent(tmp_path):
+    """agent_factory branch must also receive subagent_mode and task_list_id_override."""
+    created_agents = []
+
+    class FakeAgentWithAttrs(FakeSubagent):
+        def __init__(self):
+            super().__init__()
+            self.subagent_mode = None
+            self.task_list_id_override = None
+
+    def agent_factory(run, agent_def):
+        agent = FakeAgentWithAttrs()
+        created_agents.append(agent)
+        return agent
+
+    parent = MagicMock()
+    parent.session.session_id = "parent-xyz"
+
+    manager = SubagentManager(
+        config=Config(),
+        workdir=tmp_path,
+        parent_agent=parent,
+        agent_factory=agent_factory,
+    )
+
+    manager.spawn(description="tm", prompt="do", agent_type="teammate")
+    agent = created_agents[0]
+
+    assert agent.subagent_mode == SubagentMode.TEAMMATE
+    assert agent.task_list_id_override == "parent-xyz"

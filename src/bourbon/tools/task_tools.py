@@ -20,6 +20,10 @@ def _resolve_task_list_id(ctx: ToolContext, task_list_id: str | None) -> str:
 
     agent = ctx.agent
     if agent is not None:
+        override = getattr(agent, "task_list_id_override", None)
+        if override:
+            return str(override)
+
         session = getattr(agent, "session", None)
         session_id = getattr(session, "session_id", None)
         if session_id is not None:

@@ -16,7 +16,7 @@ from bourbon.subagent.registry import RunRegistry
 from bourbon.subagent.result import AgentToolResult, finalize_agent_tool
 from bourbon.subagent.session_adapter import SubagentSessionAdapter
 from bourbon.subagent.tools import AGENT_TYPE_CONFIGS, ToolFilter
-from bourbon.subagent.types import AgentDefinition, RunStatus, SubagentRun
+from bourbon.subagent.types import AgentDefinition, RunStatus, SubagentMode, SubagentRun
 
 AgentFactory = Callable[[SubagentRun, AgentDefinition], Any]
 
@@ -56,6 +56,17 @@ class SubagentManager:
     ) -> AgentToolResult | str:
         """Start a subagent run synchronously or in the background."""
         agent_def = self._agent_definition(agent_type)
+        if agent_type == "teammate":
+            mode = SubagentMode.TEAMMATE
+            parent_session = getattr(self.parent_agent, "session", None)
+            parent_task_list_id = getattr(parent_session, "session_id", None)
+        elif run_in_background:
+            mode = SubagentMode.ASYNC
+            parent_task_list_id = None
+        else:
+            mode = SubagentMode.NORMAL
+            parent_task_list_id = None
+
         run = SubagentRun(
             description=description,
             prompt=prompt,
@@ -64,6 +75,10 @@ class SubagentManager:
             max_turns=max_turns or agent_def.max_turns,
             is_async=run_in_background,
             abort_controller=AbortController(),
+            subagent_mode=mode,
+            parent_task_list_id=(
+                str(parent_task_list_id) if parent_task_list_id is not None else None
+            ),
         )
         self.registry.register(run)
         self.resource_manager.register(run)
@@ -242,7 +257,9 @@ class SubagentManager:
         agent_factory: AgentFactory | None = None,
     ) -> Any:
         if agent_factory is not None:
-            return agent_factory(run, agent_def)
+            subagent = agent_factory(run, agent_def)
+            self._configure_subagent_runtime(subagent, run, agent_def, attach_session=False)
+            return subagent
 
         from bourbon.agent import Agent
 
@@ -259,10 +276,27 @@ class SubagentManager:
             workdir=self.workdir,
             system_prompt=system_prompt,
         )
+        self._configure_subagent_runtime(subagent, run, agent_def, attach_session=True)
+        return subagent
+
+    def _configure_subagent_runtime(
+        self,
+        subagent: Any,
+        run: SubagentRun,
+        agent_def: AgentDefinition,
+        *,
+        attach_session: bool,
+    ) -> None:
+        """Apply runtime settings to a subagent instance."""
         subagent._max_tool_rounds = run.max_turns
+        subagent.subagent_mode = run.subagent_mode
         subagent._subagent_agent_def = agent_def
         subagent._subagent_tool_filter = ToolFilter()
+        if run.parent_task_list_id:
+            subagent.task_list_id_override = run.parent_task_list_id
 
+        if not attach_session:
+            return
         parent_session_manager = getattr(self.parent_agent, "_session_manager", None)
         if parent_session_manager is not None:
             adapter = SubagentSessionAdapter(
@@ -272,8 +306,6 @@ class SubagentManager:
                 run_id=run.run_id,
             )
             subagent.session = adapter.create_session()
-
-        return subagent
 
     @staticmethod
     def _copy_agent_usage(subagent: Any, run: SubagentRun) -> None:
