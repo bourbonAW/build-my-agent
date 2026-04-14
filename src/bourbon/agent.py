@@ -40,6 +40,7 @@ from bourbon.session.types import (
 from bourbon.skills import SkillManager
 from bourbon.subagent.manager import SubagentManager
 from bourbon.subagent.types import SubagentMode
+from bourbon.tasks.constants import TASK_V2_TOOLS
 from bourbon.todos import TodoManager
 from bourbon.tools import (
     ToolContext,
@@ -55,6 +56,9 @@ class AgentError(Exception):
     """Agent execution error."""
 
     pass
+
+
+TASK_NUDGE_THRESHOLD = 10
 
 
 class Agent:
@@ -487,6 +491,7 @@ class Agent:
                 tool_turn_msg = self._build_tool_results_transcript_message(
                     tool_results, assistant_msg.uuid
                 )
+                self._append_task_nudge_if_due(tool_turn_msg, tool_use_blocks)
                 self.session.add_message(tool_turn_msg)
                 self.session.save()
 
@@ -656,6 +661,7 @@ class Agent:
                 tool_turn_msg = self._build_tool_results_transcript_message(
                     tool_results, assistant_msg.uuid
                 )
+                self._append_task_nudge_if_due(tool_turn_msg, tool_use_blocks)
                 self.session.add_message(tool_turn_msg)
                 self.session.save()
             else:
@@ -836,6 +842,74 @@ class Agent:
             ),
         )
 
+    def _append_task_nudge_if_due(
+        self,
+        tool_turn_msg: TranscriptMessage,
+        tool_use_blocks: list[dict],
+    ) -> None:
+        """Append a task reminder block when enough rounds skip task tools."""
+        if not tool_use_blocks:
+            return
+
+        rounds = getattr(self, "_rounds_without_task", 0)
+        used_task_tool = any(block.get("name") in TASK_V2_TOOLS for block in tool_use_blocks)
+        if used_task_tool:
+            self._rounds_without_task = 0
+            return
+
+        rounds += 1
+        self._rounds_without_task = rounds
+        if rounds < TASK_NUDGE_THRESHOLD:
+            return
+
+        reminder = self._build_task_reminder_block()
+        if reminder is not None:
+            tool_turn_msg.content.append(reminder)
+        self._rounds_without_task = 0
+
+    def _build_task_reminder_block(self) -> TextBlock | None:
+        """Build a task reminder for pending tasks in the current task list."""
+        from bourbon.tasks.service import TaskService
+        from bourbon.tasks.store import TaskStore
+
+        storage_dir = Path(self.config.tasks.storage_dir).expanduser()
+        service = TaskService(TaskStore(storage_dir))
+
+        task_list_id = (
+            getattr(self, "task_list_id_override", None)
+            or getattr(getattr(self, "session", None), "session_id", None)
+            or getattr(
+                getattr(getattr(self, "config", None), "tasks", None),
+                "default_list_id",
+                None,
+            )
+            or "default"
+        )
+
+        tasks = service.list_tasks(str(task_list_id))
+        pending = [task for task in tasks if task.status != "completed"]
+        if not pending:
+            return None
+
+        lines = "\n".join(
+            f"- [{task.status}] {task.subject}"
+            + (
+                f" (blocked by: {', '.join(task.blocked_by)})"
+                if task.blocked_by
+                else ""
+            )
+            for task in pending
+        )
+        return TextBlock(
+            text=(
+                "<task_reminder>\n"
+                f"You have {len(pending)} pending task(s). "
+                "Please update with TaskUpdate or create with TaskCreate.\n\n"
+                f"{lines}\n"
+                "</task_reminder>"
+            )
+        )
+
     def resume_permission_request(self, choice: PermissionChoice) -> str:
         """Resume a suspended tool round after the user resolves a permission request."""
         suspended = self.suspended_tool_round
@@ -891,12 +965,23 @@ class Agent:
                 self._execute_tools(
                     remaining_blocks,
                     source_assistant_uuid=source_assistant_uuid,
+                    task_nudge_tool_use_blocks=(
+                        suspended.task_nudge_tool_use_blocks
+                        if suspended.task_nudge_tool_use_blocks is not None
+                        else suspended.tool_use_blocks
+                    ),
                 )
             )
             if self.active_permission_request:
                 return ""
 
         tool_turn_msg = self._build_tool_results_transcript_message(results, source_assistant_uuid)
+        nudge_blocks = (
+            suspended.task_nudge_tool_use_blocks
+            if suspended.task_nudge_tool_use_blocks is not None
+            else suspended.tool_use_blocks
+        )
+        self._append_task_nudge_if_due(tool_turn_msg, nudge_blocks)
         self.session.add_message(tool_turn_msg)
         self.session.save()
         return self._run_conversation_loop()
