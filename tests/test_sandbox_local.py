@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -55,6 +56,18 @@ class TestSelectProvider:
     def test_select_auto_provider_returns_local_provider(self) -> None:
         provider = select_provider("auto")
 
+        if sys.platform == "linux":
+            from bourbon.sandbox.providers.bubblewrap import BwrapProvider
+
+            if BwrapProvider.is_available():
+                assert isinstance(provider, BwrapProvider)
+                return
+        if sys.platform == "darwin":
+            from bourbon.sandbox.providers.seatbelt import SeatbeltProvider
+
+            if SeatbeltProvider.is_available():
+                assert isinstance(provider, SeatbeltProvider)
+                return
         assert isinstance(provider, LocalProvider)
 
     def test_unknown_provider_raises(self) -> None:
@@ -79,7 +92,10 @@ class TestSelectProviderDocker:
         if not DockerProvider.is_available():
             pytest.skip("Docker not available")
 
-        provider = select_provider("docker", docker_config={"image": "python:3.11-slim", "user": "nobody"})
+        provider = select_provider(
+            "docker",
+            docker_config={"image": "python:3.11-slim", "user": "nobody"},
+        )
         assert isinstance(provider, DockerProvider)
 
 

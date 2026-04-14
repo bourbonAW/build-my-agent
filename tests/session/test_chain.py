@@ -1,17 +1,13 @@
 """Tests for MessageChain."""
 
 import copy
-
-import pytest
 from uuid import uuid4
 
-from bourbon.session.chain import MessageChain, build_conversation_from_transcript
+from bourbon.session.chain import MessageChain
 from bourbon.session.types import (
-    TranscriptMessage,
     MessageRole,
     TextBlock,
-    ToolUseBlock,
-    ToolResultBlock,
+    TranscriptMessage,
 )
 
 
@@ -151,7 +147,8 @@ class TestCompactManifestRoundTrip:
 
     Key modeling constraints:
     - transcript is append-only, messages written to disk before compact retain original parent_uuid
-    - tests use copy.deepcopy to freeze "disk state" snapshots, avoiding pollution by compact() in-memory mutations
+    - tests use copy.deepcopy to freeze "disk state" snapshots, avoiding pollution by
+      compact() in-memory mutations
     - after compact, boundary_msg is appended to transcript (maybe_compact behavior)
     """
 

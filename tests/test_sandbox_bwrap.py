@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import os
-import shutil
-import sys
 from pathlib import Path
 
 import pytest
 
 from bourbon.sandbox.providers.bubblewrap import BwrapProvider
-from bourbon.sandbox.runtime import ResourceUsage, SandboxContext
+from bourbon.sandbox.runtime import SandboxContext
 
 pytestmark = pytest.mark.skipif(
     not BwrapProvider.is_available(),
@@ -19,18 +17,18 @@ pytestmark = pytest.mark.skipif(
 
 
 def _make_context(tmp_path: Path, **overrides) -> SandboxContext:
-    defaults = dict(
-        workdir=tmp_path,
-        writable_paths=[str(tmp_path)],
-        readonly_paths=["/usr", "/lib", "/lib64", "/bin", "/sbin"],
-        deny_paths=[],
-        network_enabled=False,
-        allow_domains=[],
-        timeout=10,
-        max_memory="256M",
-        max_output=50000,
-        env_vars={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
-    )
+    defaults = {
+        "workdir": tmp_path,
+        "writable_paths": [str(tmp_path)],
+        "readonly_paths": ["/usr", "/lib", "/lib64", "/bin", "/sbin"],
+        "deny_paths": [],
+        "network_enabled": False,
+        "allow_domains": [],
+        "timeout": 10,
+        "max_memory": "256M",
+        "max_output": 50000,
+        "env_vars": {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+    }
     defaults.update(overrides)
     return SandboxContext(**defaults)
 

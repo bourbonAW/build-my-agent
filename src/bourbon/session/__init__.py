@@ -1,5 +1,9 @@
 """Bourbon Session System - structured message management."""
 
+from .chain import MessageChain, build_conversation_from_transcript
+from .context import ContextManager, TokenStatus
+from .manager import Session, SessionManager
+from .storage import TranscriptStore
 from .types import (
     CompactMetadata,
     CompactResult,
@@ -14,10 +18,6 @@ from .types import (
     ToolUseBlock,
     TranscriptMessage,
 )
-from .chain import MessageChain, build_conversation_from_transcript
-from .context import ContextManager, TokenStatus
-from .storage import TranscriptStore
-from .manager import Session, SessionManager
 
 __all__ = [
     # Types

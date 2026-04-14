@@ -203,7 +203,10 @@ def glob_files(pattern: str, path: str = ".", *, workdir: Path | None = None) ->
     if not matches:
         return f"No files matching '{pattern}'"
 
-    lines = [str(match.relative_to(cwd) if match.is_relative_to(cwd) else match) for match in matches]
+    lines = [
+        str(match.relative_to(cwd) if match.is_relative_to(cwd) else match)
+        for match in matches
+    ]
     if truncated:
         lines.append("... (results truncated to 100 files)")
     return "\n".join(lines)

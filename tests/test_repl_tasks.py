@@ -111,7 +111,7 @@ def test_tasks_command_renders_status_tokens_literally(tmp_path):
     repl = _make_repl(tmp_path)
     repl.console = Console(record=True, width=120, force_terminal=False, color_system=None)
     service = TaskService(TaskStore(tmp_path))
-    pending = service.create_task("session-123", "Pending task", "Show pending status")
+    service.create_task("session-123", "Pending task", "Show pending status")
     active = service.create_task("session-123", "Active task", "Show in_progress status")
     service.update_task("session-123", active.id, status="in_progress", owner="agent-5")
 
@@ -284,7 +284,10 @@ def test_task_commands_require_exactly_one_argument(tmp_path, command):
     repl._render_workflow_task.assert_not_called()
 
 
-@pytest.mark.parametrize("command", ["/run-show", "/run-show 1 extra", "/run-stop", "/run-stop 1 extra"])
+@pytest.mark.parametrize(
+    "command",
+    ["/run-show", "/run-show 1 extra", "/run-stop", "/run-stop 1 extra"],
+)
 def test_run_commands_require_exactly_one_argument(tmp_path, command):
     repl = _make_repl(tmp_path)
 

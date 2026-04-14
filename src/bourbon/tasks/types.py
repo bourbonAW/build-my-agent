@@ -35,7 +35,7 @@ class TaskRecord:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TaskRecord":
+    def from_dict(cls, data: dict[str, Any]) -> TaskRecord:
         """Deserialize a task record from JSON-compatible data."""
         return cls(
             id=str(data["id"]),

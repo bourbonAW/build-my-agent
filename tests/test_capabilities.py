@@ -179,7 +179,9 @@ class TestCapabilitiesNewNames:
         """Glob with no path argument should default to workdir ('.') for audit."""
         context = infer_capabilities("Glob", {}, [])
         assert CapabilityType.FILE_READ in context.capabilities
-        assert "." in context.file_paths, "Glob with no path should default to '.' like Grep/AstGrep"
+        assert "." in context.file_paths, (
+            "Glob with no path should default to '.' like Grep/AstGrep"
+        )
 
     def test_glob_with_explicit_path_uses_that_path(self):
         """Glob with explicit path should use that path, not default."""

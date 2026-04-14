@@ -14,7 +14,7 @@ class FileLock:
         self.path = Path(path)
         self._handle: TextIO | None = None
 
-    def __enter__(self) -> "FileLock":
+    def __enter__(self) -> FileLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch(exist_ok=True)
         self._handle = self.path.open("r+")

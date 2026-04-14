@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from bourbon.access_control.policy import PolicyAction
 from bourbon.agent import Agent
-from bourbon.todos import TodoManager
 from bourbon.tools import ToolContext, definitions
 
 

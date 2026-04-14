@@ -1,13 +1,13 @@
 """Tests for session core types."""
 
 from bourbon.session.types import (
-    MessageRole,
-    TranscriptMessage,
-    TextBlock,
-    ToolUseBlock,
-    ToolResultBlock,
-    TokenUsage,
     CompactResult,
+    MessageRole,
+    TextBlock,
+    TokenUsage,
+    ToolResultBlock,
+    ToolUseBlock,
+    TranscriptMessage,
 )
 
 

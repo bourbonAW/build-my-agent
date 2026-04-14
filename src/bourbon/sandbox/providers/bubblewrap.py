@@ -135,19 +135,22 @@ class BwrapProvider(SandboxProvider):
                 mounted.append(rule.path)
             elif rule.mode == MountMode.READ_ONLY:
                 # Skip if already covered by _SYSTEM_RO_BINDS
-                if not any(rule.path == s or rule.path.startswith(s + "/") for s in _SYSTEM_RO_BINDS):
-                    if os.path.exists(rule.path):
-                        args += ["--ro-bind", rule.path, rule.path]
+                covered_by_system = any(
+                    rule.path == path or rule.path.startswith(path + "/")
+                    for path in _SYSTEM_RO_BINDS
+                )
+                if not covered_by_system and os.path.exists(rule.path):
+                    args += ["--ro-bind", rule.path, rule.path]
                 mounted.append(rule.path)
 
         # Deny rules: if deny path is a subpath of a mounted path, use --tmpfs
         for rule in policy.rules:
-            if rule.mode == MountMode.DENY:
-                if any(
-                    rule.path.startswith(m + "/") or rule.path.startswith(m + os.sep)
-                    for m in mounted
-                ):
-                    args += ["--tmpfs", rule.path]
+            deny_covers_mount = any(
+                rule.path.startswith(m + "/") or rule.path.startswith(m + os.sep)
+                for m in mounted
+            )
+            if rule.mode == MountMode.DENY and deny_covers_mount:
+                args += ["--tmpfs", rule.path]
 
         # Network isolation
         if not context.network_enabled:

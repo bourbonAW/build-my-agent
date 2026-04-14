@@ -18,7 +18,9 @@ class AsyncRuntime:
         self._thread: threading.Thread | None = None
         self._started = threading.Event()
         self._lock = threading.Lock()
-        self._queue: asyncio.Queue[tuple[Coroutine[Any, Any, Any], Future] | None] | None = None
+        self._queue: (
+            asyncio.Queue[tuple[Coroutine[Any, Any, Any], Future[Any]] | None] | None
+        ) = None
         self._worker_task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -32,7 +34,7 @@ class AsyncRuntime:
 
             def run_loop() -> None:
                 asyncio.set_event_loop(loop)
-                queue: asyncio.Queue[tuple[Coroutine[Any, Any, Any], Future] | None] = (
+                queue: asyncio.Queue[tuple[Coroutine[Any, Any, Any], Future[Any]] | None] = (
                     asyncio.Queue()
                 )
                 self._queue = queue

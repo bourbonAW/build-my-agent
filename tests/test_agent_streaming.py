@@ -346,9 +346,10 @@ def test_step_stream_handles_multiple_tool_calls_per_turn():
 
 def test_resume_permission_request_persists_session_metadata():
     """Permission resume should persist the generated tool-result turn in session metadata."""
+    from uuid import uuid4
+
     from bourbon.agent import Agent
     from bourbon.config import Config
-    from uuid import uuid4
 
     agent = object.__new__(Agent)
     agent.config = Config()
@@ -368,7 +369,12 @@ def test_resume_permission_request_persists_session_metadata():
     agent.suspended_tool_round = SuspendedToolRound(
         source_assistant_uuid=uuid4(),
         tool_use_blocks=[
-            {"type": "tool_use", "id": "tool-1", "name": "bash", "input": {"command": "pip install thing"}}
+            {
+                "type": "tool_use",
+                "id": "tool-1",
+                "name": "bash",
+                "input": {"command": "pip install thing"},
+            }
         ],
         completed_results=[],
         next_tool_index=0,

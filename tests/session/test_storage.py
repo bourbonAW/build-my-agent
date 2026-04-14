@@ -1,8 +1,9 @@
 """Tests for TranscriptStore."""
 
-import pytest
-from pathlib import Path
+from datetime import datetime
 from uuid import uuid4
+
+import pytest
 
 from bourbon.session.storage import TranscriptStore
 from bourbon.session.types import (
@@ -16,7 +17,6 @@ from bourbon.session.types import (
     ToolUseBlock,
     TranscriptMessage,
 )
-from datetime import datetime
 
 
 @pytest.fixture

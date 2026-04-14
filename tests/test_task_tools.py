@@ -8,7 +8,12 @@ from bourbon.config import Config
 from bourbon.tools import ToolContext, definitions, get_registry
 
 
-def _make_agent(storage_dir: Path, *, session_id: str | None = None, default_list_id: str = "fallback"):
+def _make_agent(
+    storage_dir: Path,
+    *,
+    session_id: str | None = None,
+    default_list_id: str = "fallback",
+):
     config = Config()
     config.tasks.storage_dir = str(storage_dir)
     config.tasks.default_list_id = default_list_id

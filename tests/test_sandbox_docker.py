@@ -17,18 +17,18 @@ pytestmark = pytest.mark.skipif(
 
 
 def _make_context(tmp_path: Path, **overrides) -> SandboxContext:
-    defaults = dict(
-        workdir=tmp_path,
-        writable_paths=[str(tmp_path)],
-        readonly_paths=[],
-        deny_paths=[],
-        network_enabled=False,
-        allow_domains=[],
-        timeout=30,
-        max_memory="256M",
-        max_output=50000,
-        env_vars={"PATH": "/usr/bin:/usr/local/bin:/bin"},
-    )
+    defaults = {
+        "workdir": tmp_path,
+        "writable_paths": [str(tmp_path)],
+        "readonly_paths": [],
+        "deny_paths": [],
+        "network_enabled": False,
+        "allow_domains": [],
+        "timeout": 30,
+        "max_memory": "256M",
+        "max_output": 50000,
+        "env_vars": {"PATH": "/usr/bin:/usr/local/bin:/bin"},
+    }
     defaults.update(overrides)
     return SandboxContext(**defaults)
 

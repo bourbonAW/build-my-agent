@@ -1,7 +1,7 @@
 """Tests for TaskService business rules."""
 
-from bourbon.tasks.store import TaskStore
 from bourbon.tasks.service import TaskService
+from bourbon.tasks.store import TaskStore
 
 
 def test_add_blocks_updates_peer_blocked_by(tmp_path):

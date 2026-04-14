@@ -41,8 +41,14 @@ class TestTaskStore:
 
     def test_list_tasks_returns_records_sorted_by_numeric_id(self, tmp_path: Path):
         store = TaskStore(tmp_path)
-        store.create("default", TaskRecord(id="", subject="Task 1", description="One", status="open"))
-        store.create("default", TaskRecord(id="", subject="Task 2", description="Two", status="done"))
+        store.create(
+            "default",
+            TaskRecord(id="", subject="Task 1", description="One", status="open"),
+        )
+        store.create(
+            "default",
+            TaskRecord(id="", subject="Task 2", description="Two", status="done"),
+        )
 
         tasks = store.list_tasks("default")
 
@@ -80,7 +86,12 @@ class TestTaskStore:
 
         store.update_task(
             "default",
-            TaskRecord(id=created_id, subject="Delete via update", description="Transient", status="deleted"),
+            TaskRecord(
+                id=created_id,
+                subject="Delete via update",
+                description="Transient",
+                status="deleted",
+            ),
         )
 
         assert store.load_task("default", created_id) is None
@@ -89,7 +100,13 @@ class TestTaskStore:
     def test_delete_task_removes_task_file(self, tmp_path: Path):
         store = TaskStore(tmp_path)
         created_id = store.create(
-            "default", TaskRecord(id="", subject="Delete me", description="Transient", status="open")
+            "default",
+            TaskRecord(
+                id="",
+                subject="Delete me",
+                description="Transient",
+                status="open",
+            ),
         )
 
         store.delete_task("default", created_id)

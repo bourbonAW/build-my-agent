@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -18,18 +16,18 @@ pytestmark = pytest.mark.skipif(
 
 
 def _make_context(tmp_path: Path, **overrides) -> SandboxContext:
-    defaults = dict(
-        workdir=tmp_path,
-        writable_paths=[str(tmp_path)],
-        readonly_paths=["/usr", "/bin", "/sbin", "/Library"],
-        deny_paths=[],
-        network_enabled=False,
-        allow_domains=[],
-        timeout=10,
-        max_memory="256M",
-        max_output=50000,
-        env_vars={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
-    )
+    defaults = {
+        "workdir": tmp_path,
+        "writable_paths": [str(tmp_path)],
+        "readonly_paths": ["/usr", "/bin", "/sbin", "/Library"],
+        "deny_paths": [],
+        "network_enabled": False,
+        "allow_domains": [],
+        "timeout": 10,
+        "max_memory": "256M",
+        "max_output": 50000,
+        "env_vars": {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+    }
     defaults.update(overrides)
     return SandboxContext(**defaults)
 
@@ -60,11 +58,11 @@ class TestSeatbeltProvider:
     def test_filesystem_deny(self, tmp_path: Path) -> None:
         """Denied paths return EPERM (Operation not permitted)."""
         provider = SeatbeltProvider()
-        home = os.path.expanduser("~")
-        ssh_dir = os.path.join(home, ".ssh")
-        context = _make_context(tmp_path, deny_paths=[ssh_dir])
+        denied_dir = tmp_path / "denied"
+        denied_dir.mkdir()
+        context = _make_context(tmp_path, deny_paths=[str(denied_dir)])
 
-        result = provider.execute(f"ls {ssh_dir}", context)
+        result = provider.execute(f"ls {denied_dir}", context)
 
         assert result.exit_code != 0
         assert "Operation not permitted" in result.stderr or "Permission denied" in result.stderr
@@ -120,11 +118,13 @@ class TestSeatbeltProvider:
     def test_violation_detection(self, tmp_path: Path) -> None:
         """Violations list populated when access denied."""
         provider = SeatbeltProvider()
-        home = os.path.expanduser("~")
-        ssh_dir = os.path.join(home, ".ssh")
-        context = _make_context(tmp_path, deny_paths=[ssh_dir])
+        denied_dir = tmp_path / "denied"
+        denied_dir.mkdir()
+        denied_file = denied_dir / "secret.txt"
+        denied_file.write_text("secret")
+        context = _make_context(tmp_path, deny_paths=[str(denied_dir)])
 
-        result = provider.execute(f"cat {ssh_dir}/id_rsa", context)
+        result = provider.execute(f"cat {denied_file}", context)
 
         if "Operation not permitted" in result.stderr:
             path_violations = [v for v in result.violations if v.type == "path_denied"]

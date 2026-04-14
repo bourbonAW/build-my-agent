@@ -1,5 +1,8 @@
 """Tool registrations for persistent workflow task management."""
 
+# Tool schemas use Claude-style camelCase argument names.
+# ruff: noqa: N803
+
 from __future__ import annotations
 
 import json

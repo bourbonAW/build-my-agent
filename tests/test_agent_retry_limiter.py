@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bourbon.agent import Agent
-from bourbon.config import Config
 
 
 def _make_stub() -> Agent:
@@ -91,7 +90,7 @@ class TestRetryLimiterRecovery:
 class TestRetryLimiterFailureDetection:
     """Bug 2: failure detection must not be based on output text."""
 
-    def test_output_starting_with_Error_does_not_increment_counter(self):
+    def test_output_starting_with_error_does_not_increment_counter(self):
         """Successful tool call whose output starts with 'Error' must not count as failure."""
         agent = _make_stub()
         agent._tool_consecutive_failures = {}

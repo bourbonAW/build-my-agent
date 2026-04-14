@@ -1,11 +1,8 @@
 # tests/test_tool_concurrency_safe.py
 """Tests for Tool.concurrent_safe_for() and register_tool concurrency_fn parameter."""
-from dataclasses import field
-from unittest.mock import MagicMock
 
-import pytest
 
-from bourbon.tools import Tool, RiskLevel, register_tool
+from bourbon.tools import Tool, register_tool
 
 
 def make_tool(*, is_safe=False, fn=None):
@@ -28,7 +25,9 @@ def test_concurrent_safe_for_returns_bool_when_no_fn():
 
 
 def test_concurrent_safe_for_uses_fn_over_bool():
-    fn = lambda inp: inp.get("readonly", False)
+    def fn(inp):
+        return inp.get("readonly", False)
+
     t = make_tool(is_safe=False, fn=fn)  # bool says False
     assert t.concurrent_safe_for({"readonly": True}) is True
     assert t.concurrent_safe_for({"readonly": False}) is False

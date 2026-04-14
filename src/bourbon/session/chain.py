@@ -4,13 +4,12 @@ from collections import OrderedDict
 from uuid import UUID
 
 from .types import (
-    TranscriptMessage,
+    CompactMetadata,
+    CompactResult,
+    CompactTrigger,
     MessageRole,
     TextBlock,
-    CompactResult,
-    ToolResultBlock,
-    CompactMetadata,
-    CompactTrigger,
+    TranscriptMessage,
 )
 
 

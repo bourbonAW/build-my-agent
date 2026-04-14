@@ -9,7 +9,6 @@ import json
 from dataclasses import dataclass
 
 from .chain import MessageChain
-from .types import CompactResult, CompactTrigger
 
 
 @dataclass
@@ -83,7 +82,7 @@ class ContextManager:
 
         Keeps the most recent N tool results, clears older ones.
         """
-        from .types import ToolResultBlock, TextBlock
+        from .types import ToolResultBlock
 
         chain = self.chain.build_active_chain()
 

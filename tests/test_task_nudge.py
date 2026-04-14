@@ -63,12 +63,12 @@ def test_nudge_triggered_at_threshold_when_pending_tasks():
     fake_task.blocked_by = []
 
     with (
-        patch("bourbon.tasks.service.TaskService") as MockService,
+        patch("bourbon.tasks.service.TaskService") as mock_service_cls,
         patch("bourbon.tasks.store.TaskStore"),
     ):
         mock_service_instance = MagicMock()
         mock_service_instance.list_tasks.return_value = [fake_task]
-        MockService.return_value = mock_service_instance
+        mock_service_cls.return_value = mock_service_instance
 
         agent._append_task_nudge_if_due(msg, make_blocks("Read"))
 
@@ -86,12 +86,12 @@ def test_nudge_not_appended_when_no_pending_tasks():
     initial_len = len(msg.content)
 
     with (
-        patch("bourbon.tasks.service.TaskService") as MockService,
+        patch("bourbon.tasks.service.TaskService") as mock_service_cls,
         patch("bourbon.tasks.store.TaskStore"),
     ):
         mock_service_instance = MagicMock()
         mock_service_instance.list_tasks.return_value = []
-        MockService.return_value = mock_service_instance
+        mock_service_cls.return_value = mock_service_instance
 
         agent._append_task_nudge_if_due(msg, make_blocks("Read"))
 
@@ -221,10 +221,10 @@ def test_resume_permission_request_injects_nudge(tmp_path):
     fake_task.blocked_by = []
 
     with (
-        patch("bourbon.tasks.service.TaskService") as MockService,
+        patch("bourbon.tasks.service.TaskService") as mock_service_cls,
         patch("bourbon.tasks.store.TaskStore"),
     ):
-        MockService.return_value.list_tasks.return_value = [fake_task]
+        mock_service_cls.return_value.list_tasks.return_value = [fake_task]
         agent.resume_permission_request(PermissionChoice.ALLOW_ONCE)
 
     assert len(captured_tool_turn_msg) == 1

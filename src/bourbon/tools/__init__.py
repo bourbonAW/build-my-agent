@@ -6,10 +6,14 @@ Each tool has a name, description, input schema, and handler function.
 
 import inspect
 from collections.abc import Callable, Coroutine
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+ToolInput = dict[str, Any]
+ToolDefinition = dict[str, Any]
 
 
 class RiskLevel(Enum):
@@ -53,7 +57,7 @@ class Tool:
 
     name: str
     description: str
-    input_schema: dict[str, Any]
+    input_schema: ToolDefinition
     handler: ToolHandler
     risk_level: RiskLevel = RiskLevel.LOW
     risk_patterns: list[str] | None = None
@@ -62,12 +66,12 @@ class Tool:
     always_load: bool = True
     should_defer: bool = False
     is_concurrency_safe: bool = False
-    _concurrency_fn: Callable[[dict], bool] | None = field(default=None, repr=False)
+    _concurrency_fn: Callable[[ToolInput], bool] | None = field(default=None, repr=False)
     is_read_only: bool = False
     is_destructive: bool = False
     search_hint: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize default risk patterns and validate capability declarations."""
         # Enforce that deferred tools are never unconditionally loaded.
         if self.should_defer and self.always_load:
@@ -126,7 +130,7 @@ class Tool:
             else:
                 self.risk_patterns = []
 
-    def concurrent_safe_for(self, tool_input: dict) -> bool:
+    def concurrent_safe_for(self, tool_input: ToolInput) -> bool:
         """Return whether this tool can run concurrently for the given input.
 
         _concurrency_fn takes priority over is_concurrency_safe bool.
@@ -139,7 +143,7 @@ class Tool:
                 return False
         return self.is_concurrency_safe
 
-    def is_high_risk_operation(self, tool_input: dict) -> bool:
+    def is_high_risk_operation(self, tool_input: ToolInput) -> bool:
         """Check if this specific tool invocation is high-risk.
 
         For bash tool, checks command content against risk patterns.
@@ -147,14 +151,14 @@ class Tool:
         """
         if self.risk_level == RiskLevel.HIGH and self.is_destructive:
             command = tool_input.get("command", "")
-            return any(pattern in command for pattern in self.risk_patterns)
+            return any(pattern in command for pattern in self.risk_patterns or [])
         return self.risk_level == RiskLevel.HIGH
 
 
 class ToolRegistry:
     """Registry of available tools."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize empty registry."""
         self._tools: dict[str, Tool] = {}
         self._alias_map: dict[str, str] = {}
@@ -189,7 +193,7 @@ class ToolRegistry:
         """List all registered tools."""
         return list(self._tools.values())
 
-    def call(self, name: str, tool_input: dict, ctx: ToolContext) -> str:
+    def call(self, name: str, tool_input: ToolInput, ctx: ToolContext) -> str:
         """Call a tool handler with a shared execution context."""
         tool = self._resolve(name)
         if not tool:
@@ -197,10 +201,13 @@ class ToolRegistry:
 
         result = tool.handler(**tool_input, ctx=ctx)
         if inspect.isawaitable(result):
-            return _get_async_runtime().run(result)
+            return cast(str, _get_async_runtime().run(result))
         return result
 
-    def get_tool_definitions(self, discovered: set[str] | None = None) -> list[dict]:
+    def get_tool_definitions(
+        self,
+        discovered: set[str] | None = None,
+    ) -> list[ToolDefinition]:
         """Get tool definitions for LLM API."""
         discovered = discovered or set()
         return [
@@ -229,7 +236,7 @@ def get_registry() -> ToolRegistry:
 def register_tool(
     name: str,
     description: str,
-    input_schema: dict[str, Any],
+    input_schema: ToolDefinition,
     risk_level: RiskLevel = RiskLevel.LOW,
     risk_patterns: list[str] | None = None,
     required_capabilities: list[str] | None = None,
@@ -237,7 +244,7 @@ def register_tool(
     always_load: bool = True,
     should_defer: bool = False,
     is_concurrency_safe: bool = False,
-    concurrency_fn: "Callable[[dict], bool] | None" = None,
+    concurrency_fn: Callable[[ToolInput], bool] | None = None,
     is_read_only: bool = False,
     is_destructive: bool = False,
     search_hint: str | None = None,
@@ -253,7 +260,8 @@ def register_tool(
         required_capabilities: Access control capabilities required (e.g. ["exec"])
         aliases: Legacy names that resolve to this tool (e.g. ["bash", "run_bash"])
         always_load: If True, included in every LLM call's tool list (default True)
-        should_defer: If True, tool is hidden until discovered via ToolSearch; implies always_load=False
+        should_defer: If True, tool is hidden until discovered via ToolSearch;
+            implies always_load=False
         is_concurrency_safe: If True, tool can be called concurrently with others
         is_read_only: If True, tool makes no side-effects (safe for parallel use)
         is_destructive: If True, enables automatic risk_patterns population for HIGH-risk tools
@@ -310,18 +318,12 @@ def _ensure_imports() -> None:
         tool_search,
     )
 
-    try:
+    with suppress(ImportError):
         from bourbon.tools import web  # noqa: F401
-    except ImportError:
-        pass
-    try:
+    with suppress(ImportError):
         from bourbon.tools import data  # noqa: F401
-    except ImportError:
-        pass
-    try:
+    with suppress(ImportError):
         from bourbon.tools import documents  # noqa: F401
-    except ImportError:
-        pass
 
 
 def handler(name: str) -> ToolHandler | None:
@@ -336,7 +338,7 @@ def get_tool_with_metadata(name: str) -> Tool | None:
     return get_registry().get_tool(name)
 
 
-def definitions(discovered: set[str] | None = None) -> list[dict]:
+def definitions(discovered: set[str] | None = None) -> list[ToolDefinition]:
     """Get all tool definitions for LLM."""
     _ensure_imports()
     return get_registry().get_tool_definitions(discovered=discovered)

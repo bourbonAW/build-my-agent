@@ -71,8 +71,10 @@ def test_is_readonly_bash_non_string_command():
 
 def test_bash_tool_has_concurrency_fn():
     """Bash tool should have a _concurrency_fn, not just is_concurrency_safe=True."""
-    from bourbon.tools import get_registry
-    from bourbon.tools import definitions  # trigger registration
+    from bourbon.tools import (
+        definitions,  # trigger registration
+        get_registry,
+    )
     definitions()
     tool = get_registry().get_tool("Bash")
     assert tool is not None
@@ -80,7 +82,7 @@ def test_bash_tool_has_concurrency_fn():
 
 
 def test_agent_tool_is_concurrency_safe():
-    from bourbon.tools import get_registry, definitions
+    from bourbon.tools import definitions, get_registry
     definitions()
     tool = get_registry().get_tool("Agent")
     assert tool is not None
@@ -88,7 +90,7 @@ def test_agent_tool_is_concurrency_safe():
 
 
 def test_webfetch_is_concurrency_safe():
-    from bourbon.tools import get_registry, definitions
+    from bourbon.tools import definitions, get_registry
     definitions()
     tool = get_registry().get_tool("WebFetch")
     assert tool is not None

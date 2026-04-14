@@ -33,7 +33,7 @@ class MCPServerConfig:
     headers: dict[str, str] = field(default_factory=dict)  # Custom HTTP headers
     timeout: float | None = None  # Connection timeout override
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration after creation."""
         if self.transport not in ("stdio", "http"):
             raise ValueError(f"Invalid transport: {self.transport}. Must be 'stdio' or 'http'")

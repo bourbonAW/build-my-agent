@@ -96,7 +96,10 @@ The skill will provide detailed instructions, examples, and may include scripts 
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Name of the skill to activate (as shown in available_skills catalog)",
+                "description": (
+                    "Name of the skill to activate "
+                    "(as shown in available_skills catalog)"
+                ),
             },
             "args": {
                 "type": "string",

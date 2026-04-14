@@ -237,6 +237,7 @@ class StdioConnector:
             True if package is found in cache
         """
         # Get npm cache directory
+        npm_cache: str | Path
         try:
             result = subprocess.run(
                 ["npm", "config", "get", "cache"],
@@ -300,6 +301,9 @@ class StdioConnector:
         self._validate_command()
 
         command = self.config.command
+        if command is None:
+            raise MCPConnectionError("No command specified for stdio transport")
+
         args = list(self.config.args)
         if command == "npx":
             resolved_command = self._resolve_direct_npx_binary(args)
@@ -409,9 +413,11 @@ class HttpConnector:
             self._exit_stack = AsyncExitStack()
 
             # Enter streamable_http_client context
-            read_stream, write_stream = await self._exit_stack.enter_async_context(
+            transport = await self._exit_stack.enter_async_context(
                 streamable_http_client(self.config.url)
             )
+            read_stream = transport[0]
+            write_stream = transport[1]
 
             # ClientSession must be entered as an async context manager so its
             # internal receive loop starts before initialize().

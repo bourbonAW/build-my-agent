@@ -14,9 +14,11 @@ class TestContextCompressor:
 
     def test_init_warns_deprecated(self):
         """Legacy compressor should advertise migration to the session context manager."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with pytest.warns(DeprecationWarning, match="deprecated"):
-                ContextCompressor(transcript_dir=Path(tmpdir))
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            pytest.warns(DeprecationWarning, match="deprecated"),
+        ):
+            ContextCompressor(transcript_dir=Path(tmpdir))
 
     def test_estimate_tokens(self):
         """Test token estimation."""

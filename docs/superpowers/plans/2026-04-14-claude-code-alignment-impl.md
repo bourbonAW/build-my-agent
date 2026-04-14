@@ -1630,7 +1630,7 @@ git commit -m "feat: add SubagentMode to ToolFilter; add teammate to AGENT_TYPE_
 - Modify: `src/bourbon/subagent/manager.py`
 - Test: `tests/test_subagent/test_subagent_mode.py` (追加) + `tests/test_task_list_id_resolve.py` (新建)
 
-- [ ] **Step 1: 写失败测试（task_list_id_override 最高优先）**
+- [x] **Step 1: 写失败测试（task_list_id_override 最高优先）**
 
 ```python
 # tests/test_task_list_id_resolve.py
@@ -1688,7 +1688,7 @@ def test_no_agent_returns_default():
     assert resolve(agent=None) == "default"
 ```
 
-- [ ] **Step 2: 运行测试，预期 FAIL（override 未检查）**
+- [x] **Step 2: 运行测试，预期 FAIL（override 未检查）**
 
 ```bash
 pytest tests/test_task_list_id_resolve.py -v
@@ -1696,7 +1696,7 @@ pytest tests/test_task_list_id_resolve.py -v
 
 期望：`test_override_wins_over_session_id` FAIL
 
-- [ ] **Step 3: 修改 `src/bourbon/tools/task_tools.py` 中的 `_resolve_task_list_id`**
+- [x] **Step 3: 修改 `src/bourbon/tools/task_tools.py` 中的 `_resolve_task_list_id`**
 
 将整个 `_resolve_task_list_id` 函数替换为：
 
@@ -1728,7 +1728,7 @@ def _resolve_task_list_id(ctx: ToolContext, task_list_id: str | None) -> str:
     return "default"
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 ```bash
 pytest tests/test_task_list_id_resolve.py -v
@@ -1736,7 +1736,7 @@ pytest tests/test_task_list_id_resolve.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 5: 写 SubagentManager spawn 测试（追加到现有 test_manager.py）**
+- [x] **Step 5: 写 SubagentManager spawn 测试（追加到现有 test_manager.py）**
 
 在 `tests/test_subagent/test_manager.py` **末尾追加**：
 
@@ -1823,7 +1823,7 @@ def test_configure_subagent_runtime_applies_to_factory_agent(tmp_path):
 
 注意：需要在文件顶部追加 `from unittest.mock import MagicMock`（检查是否已有）。
 
-- [ ] **Step 6: 运行测试，预期 FAIL（spawn 未计算 mode）**
+- [x] **Step 6: 运行测试，预期 FAIL（spawn 未计算 mode）**
 
 ```bash
 pytest tests/test_subagent/test_manager.py -v -k "subagent_mode or teammate or configure"
@@ -1831,7 +1831,7 @@ pytest tests/test_subagent/test_manager.py -v -k "subagent_mode or teammate or c
 
 期望：FAIL
 
-- [ ] **Step 7: 修改 `src/bourbon/subagent/manager.py`**
+- [x] **Step 7: 修改 `src/bourbon/subagent/manager.py`**
 
 在 `spawn()` 方法中，在构造 `SubagentRun(...)` 之前添加 mode 计算逻辑：
 
@@ -1931,7 +1931,7 @@ from bourbon.subagent.types import AgentDefinition, RunStatus, SubagentMode, Sub
 
 注意：原 `_create_subagent` 中的 `subagent._max_tool_rounds = run.max_turns` 等行现在移到 `_configure_subagent_runtime`，替换掉原有的直接赋值代码。
 
-- [ ] **Step 8: 运行测试**
+- [x] **Step 8: 运行测试**
 
 ```bash
 pytest tests/test_subagent/test_manager.py tests/test_task_list_id_resolve.py -v
@@ -1939,7 +1939,7 @@ pytest tests/test_subagent/test_manager.py tests/test_task_list_id_resolve.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/bourbon/tools/task_tools.py src/bourbon/subagent/manager.py tests/test_task_list_id_resolve.py tests/test_subagent/test_manager.py
@@ -1954,7 +1954,7 @@ git commit -m "feat: add task_list_id_override to _resolve_task_list_id; refacto
 - Modify: `src/bourbon/agent.py`（添加辅助方法 + 在三条 loop 路径注入）
 - Create: `tests/test_task_nudge.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_task_nudge.py
@@ -2191,7 +2191,7 @@ def test_resume_permission_request_injects_nudge(tmp_path):
     assert "Important pending task" in reminder_blocks[0].text
 ```
 
-- [ ] **Step 2: 运行测试，预期 FAIL**
+- [x] **Step 2: 运行测试，预期 FAIL**
 
 ```bash
 pytest tests/test_task_nudge.py -v
@@ -2199,7 +2199,7 @@ pytest tests/test_task_nudge.py -v
 
 期望：FAIL — `Agent` 没有 `_append_task_nudge_if_due` 方法
 
-- [ ] **Step 3: 在 `src/bourbon/agent.py` 中添加必要导入**
+- [x] **Step 3: 在 `src/bourbon/agent.py` 中添加必要导入**
 
 在文件顶部确认以下导入存在（应该已有 `TextBlock`，需要补充新的）：
 
@@ -2209,7 +2209,7 @@ from pathlib import Path  # 已有
 
 无需新增（`TASK_V2_TOOLS` 和 `ToolExecutionQueue` 已在 Task 7 中添加），但需要确认 `TaskService` 和 `TaskStore` 是延迟导入（在方法内 `from bourbon.tasks.service import TaskService`）。对应测试必须 patch 源模块 `bourbon.tasks.service.TaskService` / `bourbon.tasks.store.TaskStore`，不要 patch `bourbon.agent` 模块属性，否则 lazy import 场景下这些属性不存在。
 
-- [ ] **Step 4: 在 `src/bourbon/agent.py` 中添加 `TASK_NUDGE_THRESHOLD` 常量和两个辅助方法**
+- [x] **Step 4: 在 `src/bourbon/agent.py` 中添加 `TASK_NUDGE_THRESHOLD` 常量和两个辅助方法**
 
 在 `class Agent:` **之前**（`AgentError` 类之后）添加：
 
@@ -2291,7 +2291,7 @@ TASK_NUDGE_THRESHOLD = 10
         ))
 ```
 
-- [ ] **Step 5: 运行 nudge 方法测试**
+- [x] **Step 5: 运行 nudge 方法测试**
 
 ```bash
 pytest tests/test_task_nudge.py -v
@@ -2299,7 +2299,7 @@ pytest tests/test_task_nudge.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 6: 在三条 loop 路径注入 nudge**
+- [x] **Step 6: 在三条 loop 路径注入 nudge**
 
 在 `_run_conversation_loop` 中找到：
 
@@ -2348,7 +2348,7 @@ pytest tests/test_task_nudge.py -v
             )
 ```
 
-- [ ] **Step 7: 运行全部相关测试**
+- [x] **Step 7: 运行全部相关测试**
 
 ```bash
 pytest tests/test_task_nudge.py tests/test_agent_permission_runtime.py tests/test_agent_error_policy.py -v
@@ -2356,7 +2356,7 @@ pytest tests/test_task_nudge.py tests/test_agent_permission_runtime.py tests/tes
 
 期望：全部 PASS
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/bourbon/agent.py tests/test_task_nudge.py
@@ -2369,7 +2369,7 @@ git commit -m "feat: add task nudge mechanism (_append_task_nudge_if_due, _build
 
 **Files:** 无新文件，验证整体
 
-- [ ] **Step 1: 运行全量测试套件**
+- [x] **Step 1: 运行全量测试套件**
 
 ```bash
 pytest -v --tb=short
@@ -2377,7 +2377,7 @@ pytest -v --tb=short
 
 期望：全部 PASS（或已知的 integration test 因 LLM key 缺失跳过）
 
-- [ ] **Step 2: 运行 lint 检查**
+- [x] **Step 2: 运行 lint 检查**
 
 ```bash
 ruff check src tests
@@ -2385,7 +2385,7 @@ ruff check src tests
 
 期望：无错误（警告可接受）
 
-- [ ] **Step 3: 运行类型检查（可选，部分模块可能有未解决的 mypy 警告）**
+- [x] **Step 3: 运行类型检查（可选，部分模块可能有未解决的 mypy 警告）**
 
 ```bash
 mypy src/bourbon/tools/__init__.py src/bourbon/tools/execution_queue.py src/bourbon/subagent/types.py src/bourbon/subagent/tools.py
@@ -2393,7 +2393,7 @@ mypy src/bourbon/tools/__init__.py src/bourbon/tools/execution_queue.py src/bour
 
 期望：无 `error` 级别问题（`note` 可忽略）
 
-- [ ] **Step 4: Final commit**
+- [x] **Step 4: Final commit**
 
 ```bash
 git add \

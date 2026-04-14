@@ -1,16 +1,15 @@
 """Tests for Session and SessionManager."""
 
-import pytest
-from pathlib import Path
 from uuid import uuid4
 
-from bourbon.session.manager import Session, SessionManager
+import pytest
+
+from bourbon.session.manager import SessionManager
 from bourbon.session.storage import TranscriptStore
 from bourbon.session.types import (
     CompactTrigger,
     MessageRole,
     TextBlock,
-    ToolResultBlock,
     TranscriptMessage,
 )
 

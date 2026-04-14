@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+ToolBlock = dict[str, Any]
+ToolResult = dict[str, Any]
+
 
 class ToolStatus(Enum):
     """Execution state for a queued tool call."""
@@ -23,13 +26,13 @@ class ToolStatus(Enum):
 class TrackedTool:
     """Tool call plus queue state."""
 
-    block: dict
+    block: ToolBlock
     tool: Any
     concurrent: bool
     original_index: int
     status: ToolStatus = ToolStatus.QUEUED
-    result: dict | None = None
-    future: Future | None = None
+    result: ToolResult | None = None
+    future: Future[None] | None = None
 
 
 class ToolExecutionQueue:
@@ -39,8 +42,8 @@ class ToolExecutionQueue:
 
     def __init__(
         self,
-        execute_fn: Callable[[dict], str],
-        on_tool_start: Callable[[str, dict], None] | None = None,
+        execute_fn: Callable[[ToolBlock], Any],
+        on_tool_start: Callable[[str, ToolBlock], None] | None = None,
         on_tool_end: Callable[[str, str], None] | None = None,
     ) -> None:
         self._tools: list[TrackedTool] = []
@@ -54,7 +57,7 @@ class ToolExecutionQueue:
         self._on_tool_start = on_tool_start
         self._on_tool_end = on_tool_end
 
-    def add(self, block: dict, tool: Any, index: int) -> None:
+    def add(self, block: ToolBlock, tool: Any, index: int) -> None:
         """Enqueue one tool call. Call before execute_all()."""
         concurrent_safe_for = getattr(tool, "concurrent_safe_for", None)
         concurrent = (
@@ -72,7 +75,7 @@ class ToolExecutionQueue:
                 )
             )
 
-    def execute_all(self) -> list[dict]:
+    def execute_all(self) -> list[ToolResult]:
         """Run all queued tools and return tool_result blocks in original order."""
         try:
             self._process_queue()
@@ -109,9 +112,13 @@ class ToolExecutionQueue:
         for tool in to_start:
             tool.future = self._thread_pool.submit(self._run_tool, tool)
             if tool.concurrent:
-                tool.future.add_done_callback(
-                    lambda _future, tracked=tool: self._on_tool_done(tracked)
-                )
+                def on_done(
+                    _future: Future[None],
+                    tracked: TrackedTool = tool,
+                ) -> None:
+                    self._on_tool_done(tracked)
+
+                tool.future.add_done_callback(on_done)
 
     def _run_tool(self, tool: TrackedTool) -> None:
         name = tool.block.get("name", "")
@@ -147,12 +154,12 @@ class ToolExecutionQueue:
         while True:
             with self._lock:
                 pending = [
-                    tool
+                    tool.future
                     for tool in self._tools
                     if tool.future is not None and tool.status != ToolStatus.COMPLETED
                 ]
             if not pending:
                 break
-            for tool in pending:
-                tool.future.result()
+            for future in pending:
+                future.result()
             self._process_queue()

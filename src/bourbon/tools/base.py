@@ -270,9 +270,7 @@ def _is_readonly_bash(input: dict) -> bool:  # noqa: A002
         return False
     if not argv or "/" in argv[0] or argv[0] not in READONLY_BASH_COMMANDS:
         return False
-    if _has_forbidden_readonly_arg(argv):
-        return False
-    return True
+    return not _has_forbidden_readonly_arg(argv)
 
 
 # Register tools with schemas
