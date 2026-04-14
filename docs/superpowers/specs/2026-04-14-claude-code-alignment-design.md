@@ -84,7 +84,7 @@ def register_tool(
 1. **Shell 控制符检测（优先）**：命令字符串含以下任一字符/序列时立即返回 `False`（`shell=True` 下均可组合副作用）：
    `;`、`|`、`&&`、`||`、`>`、`>>`、`<`、`$()`、反引号（`` ` ``）、换行（`\n`）、单独 `&`（后台执行）。
 
-2. **解析后精确命令白名单**：通过第一阶段后，用 `shlex.split(command, posix=True)` 解析 argv；解析失败、空命令、`argv[0]` 含 `/`、或 `argv[0]` 不在精确白名单时返回 `False`。白名单是命令名精确匹配，不允许前缀匹配（避免 `catwrite` / `sort-and-delete` / 工作区可执行文件伪装成只读命令）。
+2. **解析后精确命令白名单 + 参数黑名单**：通过第一阶段后，用 `shlex.split(command, posix=True)` 解析 argv；解析失败、空命令、`argv[0]` 含 `/`、或 `argv[0]` 不在精确白名单时返回 `False`。白名单是命令名精确匹配，不允许前缀匹配（避免 `catwrite` / `sort-and-delete` / 工作区可执行文件伪装成只读命令）。白名单命令还必须拒绝已知写入/长阻塞参数，例如 `tail -f`、`sort -o`、`uniq input output`、`find -fprint/-fprintf/-fls`。
 
 ```python
 import re
@@ -95,6 +95,14 @@ READONLY_BASH_COMMANDS = {
     "head", "tail", "stat", "diff", "sort", "uniq",
 }
 
+READONLY_BASH_FORBIDDEN_ARGS = {
+    "find": {
+        "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls",
+    },
+    "sort": {"-o", "--output"},
+    "tail": {"-f", "--follow"},
+}
+
 def _contains_shell_control_operator(command: str) -> bool:
     # 多字符 token 先列出；单独 & 用 regex 排除 &&。
     if any(token in command for token in ("&&", "||", ">>", "$(", "`", "\n")):
@@ -102,6 +110,21 @@ def _contains_shell_control_operator(command: str) -> bool:
     if any(token in command for token in (";", "|", ">", "<")):
         return True
     return bool(re.search(r"(?<!&)&(?!&)", command))
+
+def _has_forbidden_readonly_arg(argv: list[str]) -> bool:
+    command = argv[0]
+    forbidden = READONLY_BASH_FORBIDDEN_ARGS.get(command, set())
+    for arg in argv[1:]:
+        if arg in forbidden:
+            return True
+        if any(arg.startswith(f"{flag}=") for flag in forbidden if flag.startswith("--")):
+            return True
+
+    if command == "uniq":
+        operands = [arg for arg in argv[1:] if not arg.startswith("-")]
+        return len(operands) >= 2
+
+    return False
 
 def _is_readonly_bash(input: dict) -> bool:
     command = str(input.get("command", ""))
@@ -113,10 +136,7 @@ def _is_readonly_bash(input: dict) -> bool:
         return False
     if not argv or "/" in argv[0] or argv[0] not in READONLY_BASH_COMMANDS:
         return False
-    if argv[0] == "find" and any(
-        arg in {"-delete", "-exec", "-execdir", "-ok", "-okdir"}
-        for arg in argv[1:]
-    ):
+    if _has_forbidden_readonly_arg(argv):
         return False
     return True
 ```
@@ -750,7 +770,7 @@ def _build_task_reminder_block(self) -> TextBlock | None:
 | `src/bourbon/tools/__init__.py` | 修改 | `_concurrency_fn` + `concurrent_safe_for()`；`register_tool` 新增 `concurrency_fn` |
 | `src/bourbon/tools/execution_queue.py` | **新建** | `ToolStatus` / `TrackedTool` / `ToolExecutionQueue`；双 Lock（状态 + callback 串行化）；callback 异常隔离；finally shutdown |
 | `src/bourbon/tasks/constants.py` | **新建** | 定义 `TASK_V2_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}`，供 subagent filter 和 nudge 共用 |
-| `src/bourbon/tools/base.py` | 修改 | `Bash` 标注 `concurrency_fn=_is_readonly_bash`（两阶段：控制符含 `\n`/`&` + shlex 精确命令白名单）；`Read`/`Glob`/`Grep`/`AstGrep`/`WebFetch` 标注 `is_concurrency_safe=True`；`ToolSearch` 保持 `False` |
+| `src/bourbon/tools/base.py` | 修改 | `Bash` 标注 `concurrency_fn=_is_readonly_bash`（两阶段：控制符含 `\n`/`&` + shlex 精确命令白名单 + 写入/阻塞参数黑名单）；`Read`/`Glob`/`Grep`/`AstGrep`/`WebFetch` 标注 `is_concurrency_safe=True`；`ToolSearch` 保持 `False` |
 | `src/bourbon/tools/agent_tool.py` | 修改 | `Agent` 工具标注 `is_concurrency_safe=True`；`subagent_type` schema enum 新增 "teammate"；handler 继续映射到内部 `agent_type` |
 | `src/bourbon/tools/task_tools.py` | 修改 | `_resolve_task_list_id` 新增 `task_list_id_override` 最高优先检查 |
 | `src/bourbon/agent.py` | 修改 | `__init__` 新增 `subagent_mode`/`task_list_id_override`/`_rounds_without_task`；`_execute_tools` 重构（queue lazy create + queued callbacks 只由 queue 发出 + 非入队路径先 flush + flush on suspend）；两条 loop 和 `resume_permission_request()` 增 nudge；新增 `_append_task_nudge_if_due()` / `_build_task_reminder_block()` |
@@ -758,8 +778,8 @@ def _build_task_reminder_block(self) -> TextBlock | None:
 | `src/bourbon/subagent/types.py` | 修改 | 新增 `SubagentMode`；`SubagentRun` 新增 `subagent_mode`/`parent_task_list_id` |
 | `src/bourbon/subagent/tools.py` | 修改 | `AGENT_TYPE_CONFIGS` 新增 "teammate"；`ToolFilter` 接受 `subagent_mode`，`filter_tools` 传递 mode；导入共享 `TASK_V2_TOOLS` |
 | `src/bourbon/subagent/manager.py` | 修改 | `spawn()` 计算 mode/parent_task_list_id 写入 run；`_create_subagent()` 的默认和 `agent_factory` 分支都调用同一 runtime 配置 helper |
-| `tests/test_tool_execution_queue.py` | **新建** | `ToolStatus` 定义 + 并发 + serial 阻塞 + 顺序 + callback 串行化 + 异常隔离 + shutdown + queued start 不重复 + 空队列不创建 executor |
-| `tests/test_subagent_tool_visibility.py` | **新建** | teammate/async 双路径 + task_list_id 继承 + factory 分支继承 mode/override + `subagent_type` schema |
+| `tests/test_tool_execution_queue.py` | **新建** | `ToolStatus` 定义 + 并发 + serial 阻塞 + 顺序 + callback 串行化 + 异常隔离 + shutdown + queued start 不重复 + 空队列返回空结果 |
+| `tests/test_subagent/test_subagent_mode.py` | **新建** | teammate/async 双路径 + task_list_id 继承 + factory 分支继承 mode/override + `subagent_type` schema |
 | `tests/test_task_nudge.py` | **新建** | 阈值 + 重置 + 无 pending 跳过 + session_id 路由 + permission resume 保持计数 |
 
 ---
@@ -775,7 +795,7 @@ def _build_task_reminder_block(self) -> TextBlock | None:
 | Teammate task list | parent session | `task_list_id_override` 最高优先，不修改 config |
 | SubagentMode 传递 | run 对象 | `SubagentRun.subagent_mode`，`_create_subagent()` 写入 agent |
 | SubagentMode 执行层 | allowlist | `ToolFilter` 双路径均传 `subagent_mode` |
-| Bash 安全判断 | `isReadOnly` | 两阶段：控制符（含 `\n`/`&`）+ `shlex.split` 精确命令白名单 |
+| Bash 安全判断 | `isReadOnly` | 两阶段：控制符（含 `\n`/`&`）+ `shlex.split` 精确命令白名单 + 写入/阻塞参数黑名单 |
 
 ---
 

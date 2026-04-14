@@ -38,7 +38,7 @@
 - Create: `src/bourbon/tasks/constants.py`
 - Test: `tests/test_task_constants.py`
 
-- [ ] **Step 1: 新建 constants.py**
+- [x] **Step 1: 新建 constants.py**
 
 ```python
 # src/bourbon/tasks/constants.py
@@ -47,7 +47,7 @@
 TASK_V2_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
 ```
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 ```python
 # tests/test_task_constants.py
@@ -62,7 +62,7 @@ def test_task_v2_tools_is_a_set():
     assert isinstance(TASK_V2_TOOLS, set)
 ```
 
-- [ ] **Step 3: 运行测试**
+- [x] **Step 3: 运行测试**
 
 ```bash
 pytest tests/test_task_constants.py -v
@@ -70,7 +70,7 @@ pytest tests/test_task_constants.py -v
 
 期望：PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/bourbon/tasks/constants.py tests/test_task_constants.py
@@ -85,7 +85,7 @@ git commit -m "feat: add TASK_V2_TOOLS shared constant in tasks/constants.py"
 - Modify: `src/bourbon/subagent/types.py`
 - Test: `tests/test_subagent/test_types.py` (已有，追加测试)
 
-- [ ] **Step 1: 先跑现有 types 测试确认基准**
+- [x] **Step 1: 先跑现有 types 测试确认基准**
 
 ```bash
 pytest tests/test_subagent/test_types.py -v
@@ -93,7 +93,7 @@ pytest tests/test_subagent/test_types.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 在 `tests/test_subagent/test_types.py` **末尾追加**：
 
@@ -119,7 +119,7 @@ def test_subagent_run_has_parent_task_list_id_field():
     assert run.parent_task_list_id is None
 ```
 
-- [ ] **Step 3: 运行测试，预期 FAIL**
+- [x] **Step 3: 运行测试，预期 FAIL**
 
 ```bash
 pytest tests/test_subagent/test_types.py -v -k "subagent_mode or parent_task_list"
@@ -127,7 +127,7 @@ pytest tests/test_subagent/test_types.py -v -k "subagent_mode or parent_task_lis
 
 期望：FAIL — `ImportError: cannot import name 'SubagentMode'`
 
-- [ ] **Step 4: 在 `src/bourbon/subagent/types.py` 中添加 SubagentMode 枚举和 SubagentRun 新字段**
+- [x] **Step 4: 在 `src/bourbon/subagent/types.py` 中添加 SubagentMode 枚举和 SubagentRun 新字段**
 
 在文件顶部的 `class RunStatus(Enum):` **之前**插入（第 11 行之前）：
 
@@ -164,7 +164,7 @@ class SubagentMode(Enum):
     _subagent: Any | None = field(default=None, repr=False)
 ```
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 ```bash
 pytest tests/test_subagent/test_types.py -v
@@ -172,7 +172,7 @@ pytest tests/test_subagent/test_types.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/subagent/types.py tests/test_subagent/test_types.py
@@ -187,7 +187,7 @@ git commit -m "feat: add SubagentMode enum and subagent_mode/parent_task_list_id
 - Modify: `src/bourbon/tools/__init__.py`
 - Test: `tests/test_tool_concurrency_safe.py` (新建)
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_tool_concurrency_safe.py
@@ -258,7 +258,7 @@ def test_register_tool_accepts_concurrency_fn():
     assert called_with == [{"x": 1}]
 ```
 
-- [ ] **Step 2: 运行测试，预期 FAIL**
+- [x] **Step 2: 运行测试，预期 FAIL**
 
 ```bash
 pytest tests/test_tool_concurrency_safe.py -v
@@ -266,7 +266,7 @@ pytest tests/test_tool_concurrency_safe.py -v
 
 期望：FAIL — `TypeError: Tool.__init__() got an unexpected keyword argument '_concurrency_fn'`
 
-- [ ] **Step 3: 修改 `src/bourbon/tools/__init__.py`**
+- [x] **Step 3: 修改 `src/bourbon/tools/__init__.py`**
 
 在 `Tool` dataclass 中的 `is_concurrency_safe` 字段**之后**添加新字段（`is_read_only` 之前）：
 
@@ -310,7 +310,7 @@ pytest tests/test_tool_concurrency_safe.py -v
             _concurrency_fn=concurrency_fn,
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 ```bash
 pytest tests/test_tool_concurrency_safe.py -v
@@ -318,7 +318,7 @@ pytest tests/test_tool_concurrency_safe.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 5: 确保现有工具测试不受影响**
+- [x] **Step 5: 确保现有工具测试不受影响**
 
 ```bash
 pytest tests/test_tools_search.py tests/test_todo_tool.py -v
@@ -326,7 +326,7 @@ pytest tests/test_tools_search.py tests/test_todo_tool.py -v
 
 期望：PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/tools/__init__.py tests/test_tool_concurrency_safe.py
@@ -343,7 +343,7 @@ git commit -m "feat: add _concurrency_fn field and concurrent_safe_for() to Tool
 - Modify: `src/bourbon/tools/agent_tool.py`
 - Test: `tests/test_is_readonly_bash.py` (新建)
 
-- [ ] **Step 1: 写失败测试（_is_readonly_bash）**
+- [x] **Step 1: 写失败测试（_is_readonly_bash）**
 
 ```python
 # tests/test_is_readonly_bash.py
@@ -375,6 +375,15 @@ def get_fn():
     ("curl http://example.com", False),
     ("rm -rf /", False),
     ("python script.py", False),
+    # 白名单命令的可写/阻塞参数 → False
+    ("tail -f log", False),
+    ("tail --follow log", False),
+    ("sort -o sorted.txt items.txt", False),
+    ("sort --output=sorted.txt items.txt", False),
+    ("uniq input.txt output.txt", False),
+    ("find . -fprint out.txt", False),
+    ("find . -fprintf out.txt %p", False),
+    ("find . -fls out.txt", False),
     # 白名单命令 → True
     ("ls -la", True),
     ("cat README.md", True),
@@ -383,7 +392,7 @@ def get_fn():
     ("echo hello world", True),
     ("wc -l file.txt", True),
     ("head -20 file", True),
-    ("tail -f log", True),
+    ("tail -20 log", True),
     ("stat file.txt", True),
     ("diff a.txt b.txt", True),
     ("sort items.txt", True),
@@ -405,7 +414,7 @@ def test_is_readonly_bash_empty_input():
 
 def test_is_readonly_bash_non_string_command():
     fn = get_fn()
-    assert fn({"command": 42}) is False or fn({"command": 42}) is True  # doesn't raise
+    assert fn({"command": 42}) is False
 
 
 def test_bash_tool_has_concurrency_fn():
@@ -434,7 +443,7 @@ def test_webfetch_is_concurrency_safe():
     assert tool.is_concurrency_safe is True
 ```
 
-- [ ] **Step 2: 运行测试，预期 FAIL**
+- [x] **Step 2: 运行测试，预期 FAIL**
 
 ```bash
 pytest tests/test_is_readonly_bash.py -v
@@ -442,7 +451,7 @@ pytest tests/test_is_readonly_bash.py -v
 
 期望：FAIL — `ImportError: cannot import name '_is_readonly_bash'`
 
-- [ ] **Step 3: 在 `src/bourbon/tools/base.py` 顶部导入 `re` 和 `shlex`**
+- [x] **Step 3: 在 `src/bourbon/tools/base.py` 顶部导入 `re` 和 `shlex`**
 
 检查文件头部导入，在现有 `import` 语句**后**（`from __future__` 等之后）确保有：
 
@@ -453,7 +462,7 @@ import shlex
 
 如果已有则跳过，否则添加在 `import os` 或 `import json` 之后（按字母序）。
 
-- [ ] **Step 4: 在 `src/bourbon/tools/base.py` 中添加 `_is_readonly_bash`**
+- [x] **Step 4: 在 `src/bourbon/tools/base.py` 中添加 `_is_readonly_bash`**
 
 在 `@register_tool(name="Bash", ...)` 装饰器**之前**插入以下代码：
 
@@ -467,6 +476,14 @@ READONLY_BASH_COMMANDS = {
     "head", "tail", "stat", "diff", "sort", "uniq",
 }
 
+READONLY_BASH_FORBIDDEN_ARGS = {
+    "find": {
+        "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls",
+    },
+    "sort": {"-o", "--output"},
+    "tail": {"-f", "--follow"},
+}
+
 
 def _contains_shell_control_operator(command: str) -> bool:
     """Return True if command contains any shell control operator."""
@@ -477,12 +494,31 @@ def _contains_shell_control_operator(command: str) -> bool:
     return bool(re.search(r"(?<!&)&(?!&)", command))
 
 
+def _has_forbidden_readonly_arg(argv: list[str]) -> bool:
+    """Return True if a whitelisted command is using a write/blocking argument."""
+    command = argv[0]
+    forbidden = READONLY_BASH_FORBIDDEN_ARGS.get(command, set())
+    for arg in argv[1:]:
+        if arg in forbidden:
+            return True
+        if any(arg.startswith(f"{flag}=") for flag in forbidden if flag.startswith("--")):
+            return True
+
+    # uniq accepts OUTPUT as a second file operand, so two non-option operands can write.
+    if command == "uniq":
+        operands = [arg for arg in argv[1:] if not arg.startswith("-")]
+        return len(operands) >= 2
+
+    return False
+
+
 def _is_readonly_bash(input: dict) -> bool:  # noqa: A002
     """Return True only if the bash command is a safe read-only operation.
 
     Two-stage check:
     1. Reject if any shell control operator is present.
-    2. Accept only if argv[0] is in the exact read-only command whitelist.
+    2. Accept only if argv[0] is in the exact read-only command whitelist and
+       no known write/blocking argument is present.
     """
     command = str(input.get("command", ""))
     if _contains_shell_control_operator(command):
@@ -493,15 +529,12 @@ def _is_readonly_bash(input: dict) -> bool:  # noqa: A002
         return False
     if not argv or "/" in argv[0] or argv[0] not in READONLY_BASH_COMMANDS:
         return False
-    if argv[0] == "find" and any(
-        arg in {"-delete", "-exec", "-execdir", "-ok", "-okdir"}
-        for arg in argv[1:]
-    ):
+    if _has_forbidden_readonly_arg(argv):
         return False
     return True
 ```
 
-- [ ] **Step 5: 修改 `Bash` 的 `@register_tool` 装饰器**
+- [x] **Step 5: 修改 `Bash` 的 `@register_tool` 装饰器**
 
 找到 `@register_tool(\n    name="Bash",` 这段代码，在其中的 `risk_level=RiskLevel.HIGH,` 等参数之后添加 `concurrency_fn=_is_readonly_bash,`：
 
@@ -517,7 +550,7 @@ def _is_readonly_bash(input: dict) -> bool:  # noqa: A002
 
 注意：不要修改 `is_concurrency_safe`（它保持 `False`），只新增 `concurrency_fn` 参数。
 
-- [ ] **Step 6: 修改 `WebFetch` — 在 `src/bourbon/tools/web.py` 中添加 `is_concurrency_safe=True`**
+- [x] **Step 6: 修改 `WebFetch` — 在 `src/bourbon/tools/web.py` 中添加 `is_concurrency_safe=True`**
 
 找到 `@register_tool(` 内的 `name="WebFetch",` 的那段，在现有参数末尾（closing `)`之前）添加 `is_concurrency_safe=True,`：
 
@@ -536,7 +569,7 @@ def _is_readonly_bash(input: dict) -> bool:  # noqa: A002
 )
 ```
 
-- [ ] **Step 7: 修改 `Agent` 工具 — 在 `src/bourbon/tools/agent_tool.py` 中添加 `is_concurrency_safe=True` 和 "teammate"**
+- [x] **Step 7: 修改 `Agent` 工具 — 在 `src/bourbon/tools/agent_tool.py` 中添加 `is_concurrency_safe=True` 和 "teammate"**
 
 找到 `@register_tool(\n    name="Agent",` 这段，添加 `is_concurrency_safe=True,`：
 
@@ -558,7 +591,7 @@ def _is_readonly_bash(input: dict) -> bool:  # noqa: A002
 
 并更新 description 说明 teammate 是 in-process 模式。
 
-- [ ] **Step 8: 运行测试**
+- [x] **Step 8: 运行测试**
 
 ```bash
 pytest tests/test_is_readonly_bash.py -v
@@ -566,7 +599,7 @@ pytest tests/test_is_readonly_bash.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 9: 确保现有测试不受影响**
+- [x] **Step 9: 确保现有测试不受影响**
 
 ```bash
 pytest tests/test_subagent/ -v
@@ -574,7 +607,7 @@ pytest tests/test_subagent/ -v
 
 期望：全部 PASS
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/bourbon/tools/base.py src/bourbon/tools/web.py src/bourbon/tools/agent_tool.py tests/test_is_readonly_bash.py
@@ -589,7 +622,7 @@ git commit -m "feat: add _is_readonly_bash; annotate Bash/WebFetch/Agent with co
 - Create: `src/bourbon/tools/execution_queue.py`
 - Create: `tests/test_tool_execution_queue.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_tool_execution_queue.py
@@ -763,7 +796,7 @@ def test_result_content_is_string():
     assert isinstance(results[0]["content"], str)
 ```
 
-- [ ] **Step 2: 运行测试，预期 FAIL**
+- [x] **Step 2: 运行测试，预期 FAIL**
 
 ```bash
 pytest tests/test_tool_execution_queue.py -v
@@ -771,7 +804,7 @@ pytest tests/test_tool_execution_queue.py -v
 
 期望：FAIL — `ModuleNotFoundError: No module named 'bourbon.tools.execution_queue'`
 
-- [ ] **Step 3: 创建 `src/bourbon/tools/execution_queue.py`**
+- [x] **Step 3: 创建 `src/bourbon/tools/execution_queue.py`**
 
 ```python
 # src/bourbon/tools/execution_queue.py
@@ -939,7 +972,7 @@ class ToolExecutionQueue:
             self._process_queue()
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 ```bash
 pytest tests/test_tool_execution_queue.py -v
@@ -947,7 +980,7 @@ pytest tests/test_tool_execution_queue.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/bourbon/tools/execution_queue.py tests/test_tool_execution_queue.py
@@ -962,7 +995,7 @@ git commit -m "feat: add ToolExecutionQueue with concurrent + serial tool execut
 - Modify: `src/bourbon/permissions/runtime.py`
 - Test: `tests/test_agent_permission_runtime.py` (已有，追加测试)
 
-- [ ] **Step 1: 先确认现有测试全部通过**
+- [x] **Step 1: 先确认现有测试全部通过**
 
 ```bash
 pytest tests/test_agent_permission_runtime.py -v
@@ -970,7 +1003,7 @@ pytest tests/test_agent_permission_runtime.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 在 `tests/test_agent_permission_runtime.py` **末尾追加**：
 
@@ -1005,7 +1038,7 @@ def test_suspended_tool_round_accepts_task_nudge_blocks():
     assert s.task_nudge_tool_use_blocks == nudge_blocks
 ```
 
-- [ ] **Step 3: 运行测试，预期 FAIL**
+- [x] **Step 3: 运行测试，预期 FAIL**
 
 ```bash
 pytest tests/test_agent_permission_runtime.py -v -k "task_nudge"
@@ -1013,7 +1046,7 @@ pytest tests/test_agent_permission_runtime.py -v -k "task_nudge"
 
 期望：FAIL — `TypeError: SuspendedToolRound.__init__() got an unexpected keyword argument`
 
-- [ ] **Step 4: 修改 `src/bourbon/permissions/runtime.py`**
+- [x] **Step 4: 修改 `src/bourbon/permissions/runtime.py`**
 
 找到 `@dataclass\nclass SuspendedToolRound:` 定义，在最后一个字段 `active_request` 之后添加：
 
@@ -1023,7 +1056,7 @@ pytest tests/test_agent_permission_runtime.py -v -k "task_nudge"
 
 需要确保顶部已导入 `field`（已有 `from dataclasses import dataclass, field`）。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 ```bash
 pytest tests/test_agent_permission_runtime.py -v
@@ -1031,7 +1064,7 @@ pytest tests/test_agent_permission_runtime.py -v
 
 期望：全部 PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/permissions/runtime.py tests/test_agent_permission_runtime.py
@@ -1048,7 +1081,7 @@ git commit -m "feat: add task_nudge_tool_use_blocks field to SuspendedToolRound"
 
 这是最大的改动任务。分步实现。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_agent_execute_tools_queue.py
@@ -1084,26 +1117,30 @@ def make_agent():
     return agent
 
 
-def test_agent_init_has_subagent_mode():
-    config = Config()
+def make_initialized_agent(monkeypatch, tmp_path):
+    """Create a real Agent while stubbing external LLM credentials and HOME writes."""
 
     class MockLLM:
         def chat(self, **kwargs):
             return {"content": [], "stop_reason": "end_turn", "usage": {}}
 
-    # Can't easily test full __init__ without LLM credentials;
-    # test via object.__new__ approach instead
-    agent = make_agent()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("bourbon.agent.create_client", lambda config: MockLLM())
+    return Agent(Config(), workdir=tmp_path)
+
+
+def test_agent_init_has_subagent_mode(monkeypatch, tmp_path):
+    agent = make_initialized_agent(monkeypatch, tmp_path)
     assert agent.subagent_mode == SubagentMode.NORMAL
 
 
-def test_agent_init_has_task_list_id_override():
-    agent = make_agent()
+def test_agent_init_has_task_list_id_override(monkeypatch, tmp_path):
+    agent = make_initialized_agent(monkeypatch, tmp_path)
     assert agent.task_list_id_override is None
 
 
-def test_agent_init_has_rounds_without_task():
-    agent = make_agent()
+def test_agent_init_has_rounds_without_task(monkeypatch, tmp_path):
+    agent = make_initialized_agent(monkeypatch, tmp_path)
     assert agent._rounds_without_task == 0
 
 
@@ -1157,7 +1194,7 @@ def test_execute_tools_runs_via_queue(monkeypatch):
     assert len(results) == 2
 ```
 
-- [ ] **Step 2: 运行测试，预期 FAIL（Agent 未有 subagent_mode 等字段）**
+- [x] **Step 2: 运行测试，预期 FAIL（Agent 未有 subagent_mode 等字段）**
 
 ```bash
 pytest tests/test_agent_execute_tools_queue.py::test_agent_init_has_subagent_mode -v
@@ -1165,7 +1202,7 @@ pytest tests/test_agent_execute_tools_queue.py::test_agent_init_has_subagent_mod
 
 期望：FAIL 或 AttributeError
 
-- [ ] **Step 3: 在 `src/bourbon/agent.py` 的 import 区域添加新导入**
+- [x] **Step 3: 在 `src/bourbon/agent.py` 的 import 区域添加新导入**
 
 在现有 `from bourbon.subagent.manager import SubagentManager` 之后添加：
 
@@ -1175,7 +1212,7 @@ from bourbon.tasks.constants import TASK_V2_TOOLS
 from bourbon.tools.execution_queue import ToolExecutionQueue
 ```
 
-- [ ] **Step 4: 在 `Agent.__init__` 中添加三个新字段**
+- [x] **Step 4: 在 `Agent.__init__` 中添加三个新字段**
 
 在 `self.active_permission_request: PermissionRequest | None = None` 这行**之后**添加：
 
@@ -1188,7 +1225,7 @@ from bourbon.tools.execution_queue import ToolExecutionQueue
         self._rounds_without_task: int = 0
 ```
 
-- [ ] **Step 5: 改造 `_execute_tools` 方法**
+- [x] **Step 5: 改造 `_execute_tools` 方法**
 
 将现有 `_execute_tools` 方法（约 959-1060 行）**替换**为新实现：
 
@@ -1353,7 +1390,7 @@ from bourbon.tools.execution_queue import ToolExecutionQueue
         return [r for r in results if r is not None]
 ```
 
-- [ ] **Step 6: 更新 `_suspend_tool_round` 签名**
+- [x] **Step 6: 更新 `_suspend_tool_round` 签名**
 
 将现有 `_suspend_tool_round` 方法（约 797-815 行）中的签名更新，新增 `task_nudge_tool_use_blocks` 参数：
 
@@ -1380,7 +1417,7 @@ from bourbon.tools.execution_queue import ToolExecutionQueue
         )
 ```
 
-- [ ] **Step 7: 运行测试**
+- [x] **Step 7: 运行测试**
 
 ```bash
 pytest tests/test_agent_execute_tools_queue.py -v
@@ -1389,7 +1426,7 @@ pytest tests/test_agent_permission_runtime.py tests/test_agent_error_policy.py -
 
 期望：全部 PASS
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/bourbon/agent.py tests/test_agent_execute_tools_queue.py
@@ -1405,7 +1442,7 @@ git commit -m "feat: add subagent_mode/task_list_id_override/__rounds_without_ta
 - Modify: `src/bourbon/agent.py` (`_tool_definitions` + `_subagent_tool_denial`)
 - Create: `tests/test_subagent/test_subagent_mode.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 # tests/test_subagent/test_subagent_mode.py
@@ -1479,7 +1516,7 @@ def test_filter_tools_passes_subagent_mode():
     assert TASK_V2_TOOLS <= normal_names, "Task tools should be visible in NORMAL mode"
 ```
 
-- [ ] **Step 2: 运行测试，预期 FAIL**
+- [x] **Step 2: 运行测试，预期 FAIL**
 
 ```bash
 pytest tests/test_subagent/test_subagent_mode.py -v
@@ -1487,7 +1524,7 @@ pytest tests/test_subagent/test_subagent_mode.py -v
 
 期望：FAIL — `teammate` 不在 `AGENT_TYPE_CONFIGS`，`ToolFilter.is_allowed` 不接受 `subagent_mode`
 
-- [ ] **Step 3: 修改 `src/bourbon/subagent/tools.py`**
+- [x] **Step 3: 修改 `src/bourbon/subagent/tools.py`**
 
 在文件顶部导入中添加：
 
@@ -1553,7 +1590,7 @@ from bourbon.tasks.constants import TASK_V2_TOOLS
         ]
 ```
 
-- [ ] **Step 4: 更新 `src/bourbon/agent.py` 中 `_tool_definitions` 和 `_subagent_tool_denial`**
+- [x] **Step 4: 更新 `src/bourbon/agent.py` 中 `_tool_definitions` 和 `_subagent_tool_denial`**
 
 将 `_tool_definitions` 中的 `filter_engine.filter_tools(tool_defs, agent_def)` 改为：
 
@@ -1569,7 +1606,7 @@ from bourbon.tasks.constants import TASK_V2_TOOLS
         if filter_engine.is_allowed(tool_name, agent_def, subagent_mode=self.subagent_mode):
 ```
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 ```bash
 pytest tests/test_subagent/test_subagent_mode.py tests/test_subagent/test_tools.py -v
@@ -1577,7 +1614,7 @@ pytest tests/test_subagent/test_subagent_mode.py tests/test_subagent/test_tools.
 
 期望：全部 PASS（包括已有的 `test_tools.py`）
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/subagent/tools.py src/bourbon/agent.py tests/test_subagent/test_subagent_mode.py
@@ -1983,8 +2020,8 @@ def test_nudge_triggered_at_threshold_when_pending_tasks():
     fake_task.subject = "Fix the bug"
     fake_task.blocked_by = []
 
-    with patch("bourbon.agent.TaskService") as MockService, \
-         patch("bourbon.agent.TaskStore"):
+    with patch("bourbon.tasks.service.TaskService") as MockService, \
+         patch("bourbon.tasks.store.TaskStore"):
         mock_service_instance = MagicMock()
         mock_service_instance.list_tasks.return_value = [fake_task]
         MockService.return_value = mock_service_instance
@@ -2007,8 +2044,8 @@ def test_nudge_not_appended_when_no_pending_tasks():
     msg = make_tool_result_msg()
     initial_len = len(msg.content)
 
-    with patch("bourbon.agent.TaskService") as MockService, \
-         patch("bourbon.agent.TaskStore"):
+    with patch("bourbon.tasks.service.TaskService") as MockService, \
+         patch("bourbon.tasks.store.TaskStore"):
         mock_service_instance = MagicMock()
         mock_service_instance.list_tasks.return_value = []  # no tasks
         MockService.return_value = mock_service_instance
@@ -2138,8 +2175,8 @@ def test_resume_permission_request_injects_nudge(tmp_path):
     fake_task.subject = "Important pending task"
     fake_task.blocked_by = []
 
-    with patch("bourbon.agent.TaskService") as MockService, \
-         patch("bourbon.agent.TaskStore"):
+    with patch("bourbon.tasks.service.TaskService") as MockService, \
+         patch("bourbon.tasks.store.TaskStore"):
         MockService.return_value.list_tasks.return_value = [fake_task]
         agent.resume_permission_request(PermissionChoice.ALLOW_ONCE)
 
@@ -2170,7 +2207,7 @@ pytest tests/test_task_nudge.py -v
 from pathlib import Path  # 已有
 ```
 
-无需新增（`TASK_V2_TOOLS` 和 `ToolExecutionQueue` 已在 Task 7 中添加），但需要确认 `TaskService` 和 `TaskStore` 是延迟导入（在方法内 `from bourbon.tasks.service import TaskService`）。
+无需新增（`TASK_V2_TOOLS` 和 `ToolExecutionQueue` 已在 Task 7 中添加），但需要确认 `TaskService` 和 `TaskStore` 是延迟导入（在方法内 `from bourbon.tasks.service import TaskService`）。对应测试必须 patch 源模块 `bourbon.tasks.service.TaskService` / `bourbon.tasks.store.TaskStore`，不要 patch `bourbon.agent` 模块属性，否则 lazy import 场景下这些属性不存在。
 
 - [ ] **Step 4: 在 `src/bourbon/agent.py` 中添加 `TASK_NUDGE_THRESHOLD` 常量和两个辅助方法**
 
@@ -2335,7 +2372,7 @@ git commit -m "feat: add task nudge mechanism (_append_task_nudge_if_due, _build
 - [ ] **Step 1: 运行全量测试套件**
 
 ```bash
-pytest -v --tb=short 2>&1 | tail -40
+pytest -v --tb=short
 ```
 
 期望：全部 PASS（或已知的 integration test 因 LLM key 缺失跳过）
@@ -2359,7 +2396,29 @@ mypy src/bourbon/tools/__init__.py src/bourbon/tools/execution_queue.py src/bour
 - [ ] **Step 4: Final commit**
 
 ```bash
-git add -A
+git add \
+  src/bourbon/tools/__init__.py \
+  src/bourbon/tools/execution_queue.py \
+  src/bourbon/tasks/constants.py \
+  src/bourbon/tools/base.py \
+  src/bourbon/tools/web.py \
+  src/bourbon/tools/agent_tool.py \
+  src/bourbon/tools/task_tools.py \
+  src/bourbon/agent.py \
+  src/bourbon/permissions/runtime.py \
+  src/bourbon/subagent/types.py \
+  src/bourbon/subagent/tools.py \
+  src/bourbon/subagent/manager.py \
+  tests/test_tool_concurrency_safe.py \
+  tests/test_is_readonly_bash.py \
+  tests/test_tool_execution_queue.py \
+  tests/test_agent_execute_tools_queue.py \
+  tests/test_task_constants.py \
+  tests/test_task_list_id_resolve.py \
+  tests/test_task_nudge.py \
+  tests/test_subagent/test_types.py \
+  tests/test_subagent/test_subagent_mode.py \
+  tests/test_subagent/test_manager.py
 git commit -m "chore: final cleanup and verification for claude-code alignment (concurrent tools, SubagentMode, task nudge)"
 ```
 
