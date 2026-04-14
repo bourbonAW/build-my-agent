@@ -727,7 +727,11 @@ class Agent:
         agent_def = getattr(self, "_subagent_agent_def", None)
         if filter_engine is None or agent_def is None:
             return tool_defs
-        filtered_tools = filter_engine.filter_tools(tool_defs, agent_def)
+        filtered_tools = filter_engine.filter_tools(
+            tool_defs,
+            agent_def,
+            subagent_mode=self.subagent_mode,
+        )
         if len(filtered_tools) != len(tool_defs):
             visible_names = {tool.get("name") for tool in filtered_tools}
             hidden_names = [
@@ -750,7 +754,11 @@ class Agent:
         agent_def = getattr(self, "_subagent_agent_def", None)
         if filter_engine is None or agent_def is None:
             return None
-        if filter_engine.is_allowed(tool_name, agent_def):
+        if filter_engine.is_allowed(
+            tool_name,
+            agent_def,
+            subagent_mode=self.subagent_mode,
+        ):
             return None
         debug_log(
             "subagent.tool.denied",

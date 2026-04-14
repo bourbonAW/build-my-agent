@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from bourbon.subagent.types import AgentDefinition
+from bourbon.subagent.types import AgentDefinition, SubagentMode
+from bourbon.tasks.constants import TASK_V2_TOOLS
 
 ALL_AGENT_DISALLOWED_TOOLS = {
     "Agent",  # no recursive subagents
@@ -48,18 +49,33 @@ AGENT_TYPE_CONFIGS: dict[str, AgentDefinition] = {
         description="Fast execution for simple, bounded tasks",
         max_turns=20,
     ),
+    "teammate": AgentDefinition(
+        agent_type="teammate",
+        description="In-process teammate for task claiming and parallel execution",
+        allowed_tools=None,
+        max_turns=100,
+    ),
 }
 
 
 class ToolFilter:
     """Filters available tools based on an agent type definition."""
 
-    def is_allowed(self, tool_name: str, agent_def: AgentDefinition) -> bool:
+    def is_allowed(
+        self,
+        tool_name: str,
+        agent_def: AgentDefinition,
+        subagent_mode: SubagentMode | None = None,
+    ) -> bool:
         """Return whether a tool can be exposed to the given subagent."""
         if tool_name in ALL_AGENT_DISALLOWED_TOOLS:
             return False
         if tool_name in agent_def.disallowed_tools:
             return False
+        if subagent_mode == SubagentMode.ASYNC and tool_name in TASK_V2_TOOLS:
+            return False
+        if subagent_mode == SubagentMode.TEAMMATE and tool_name in TASK_V2_TOOLS:
+            return True
         if agent_def.allowed_tools is not None:
             return tool_name in agent_def.allowed_tools
         return True
@@ -68,10 +84,15 @@ class ToolFilter:
         self,
         tools: list[dict[str, Any]],
         agent_def: AgentDefinition,
+        subagent_mode: SubagentMode | None = None,
     ) -> list[dict[str, Any]]:
         """Filter tool definition dictionaries by their ``name`` field."""
         return [
             tool
             for tool in tools
-            if self.is_allowed(str(tool.get("name", "")), agent_def)
+            if self.is_allowed(
+                str(tool.get("name", "")),
+                agent_def,
+                subagent_mode=subagent_mode,
+            )
         ]
