@@ -162,3 +162,34 @@ def test_resume_permission_request_reject_creates_error_tool_result(monkeypatch)
     tool_turn_msg = agent.session.add_message.call_args.args[0]
     assert tool_turn_msg.content[0].is_error is True
     assert "Rejected by user" in tool_turn_msg.content[0].content
+
+
+def test_suspended_tool_round_has_task_nudge_tool_use_blocks_default() -> None:
+    from bourbon.permissions.runtime import SuspendedToolRound
+
+    mock_request = object()
+    round_state = SuspendedToolRound(
+        source_assistant_uuid=None,
+        tool_use_blocks=[{"id": "1"}],
+        completed_results=[],
+        next_tool_index=0,
+        active_request=mock_request,
+    )
+
+    assert round_state.task_nudge_tool_use_blocks == []
+
+
+def test_suspended_tool_round_accepts_task_nudge_blocks() -> None:
+    from bourbon.permissions.runtime import SuspendedToolRound
+
+    nudge_blocks = [{"id": "a"}, {"id": "b"}]
+    round_state = SuspendedToolRound(
+        source_assistant_uuid=None,
+        tool_use_blocks=[{"id": "1"}],
+        completed_results=[],
+        next_tool_index=0,
+        active_request=object(),
+        task_nudge_tool_use_blocks=nudge_blocks,
+    )
+
+    assert round_state.task_nudge_tool_use_blocks == nudge_blocks

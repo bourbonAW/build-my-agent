@@ -71,6 +71,7 @@ class SuspendedToolRound:
     completed_results: list[dict[str, Any]]
     next_tool_index: int
     active_request: PermissionRequest
+    task_nudge_tool_use_blocks: list[dict[str, Any]] = field(default_factory=list)
 
 
 class SessionPermissionStore:
