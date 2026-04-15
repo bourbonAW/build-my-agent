@@ -125,16 +125,19 @@ class ToolExecutionQueue:
         tool_input = tool.block.get("input", {})
         self._safe_callback(self._on_tool_start, name, tool_input)
 
+        is_error = False
         try:
             raw_output = self._execute_fn(tool.block)
         except Exception as exc:
             raw_output = f"Error: {exc}"
+            is_error = True
 
         output = str(raw_output)
         tool.result = {
             "type": "tool_result",
             "tool_use_id": tool.block.get("id", ""),
             "content": output[:50000],
+            **({"is_error": True} if is_error else {}),
         }
         self._safe_callback(self._on_tool_end, name, output)
 
@@ -158,7 +161,8 @@ class ToolExecutionQueue:
                     for tool in self._tools
                     if tool.future is not None and tool.status != ToolStatus.COMPLETED
                 ]
-            if not pending:
+                all_done = all(t.status == ToolStatus.COMPLETED for t in self._tools)
+            if all_done:
                 break
             for future in pending:
                 future.result()

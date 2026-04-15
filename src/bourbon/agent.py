@@ -3,6 +3,7 @@
 import time
 import warnings
 from collections.abc import Callable
+from typing import Any
 from contextlib import suppress
 from pathlib import Path
 from uuid import UUID
@@ -666,7 +667,7 @@ class Agent:
                 self.session.save()
             else:
                 # No actual tool_use blocks found despite stop_reason
-                print("[DEBUG] stop_reason was tool_use but no tool_use blocks found!")
+                debug_log("agent.loop.tool_use_blocks_missing", tool_round=tool_round)
                 text_parts = [
                     block["text"] for block in response["content"] if block.get("type") == "text"
                 ]
@@ -1040,14 +1041,12 @@ class Agent:
                 "Do not retry this tool. Try a different approach or tool."
             )
 
-        self._last_tool_execution_markers = set()
-
         try:
             ctx = self._make_tool_context()
             output = get_registry().call(tool_name, tool_input, ctx)
-            self._last_tool_execution_markers = set(ctx.execution_markers)
         except Exception as e:
-            self._last_tool_execution_markers = set()
+            # Note: _tool_consecutive_failures read-modify-write is not atomic under
+            # concurrent execution; failure counting is best-effort in parallel mode.
             _failures_map[tool_name] = failures + 1
             return f"Error executing {tool_name}: {e}"
 
@@ -1097,7 +1096,7 @@ class Agent:
                 queue = new_queue()
             return queue
 
-        def safe_callback(fn, *args) -> None:
+        def safe_callback(fn: Callable[..., Any] | None, *args: Any) -> None:
             if fn is None:
                 return
             with suppress(Exception):
