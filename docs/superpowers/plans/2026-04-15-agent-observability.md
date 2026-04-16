@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Instrument bourbon with OpenTelemetry tracing so every agent run produces a span tree (agent step → LLM call → tool calls) viewable in Langfuse or any OTel-compatible backend.
+**Goal:** Instrument bourbon with OpenTelemetry tracing so every agent run produces a span tree (agent step → LLM calls and tool calls) viewable in Langfuse or any OTel-compatible backend.
 
-**Architecture:** New `src/bourbon/observability/` module provides a `BourbonTracer` context-manager API. Core files get three instrumentation points: `agent.step()` emits the root span, each `llm.chat()` call emits an LLM span, and each `_run_tool()` emits a tool span. OTel context propagation via `contextvars` handles parent-child threading automatically. The module is a no-op when disabled or when the OTel SDK is not installed.
+**Architecture:** New `src/bourbon/observability/` module provides a `BourbonTracer` context-manager API. Core files get three instrumentation points: `agent.step()` emits the root span, each `llm.chat()` call emits an LLM span, and each `_run_tool()` emits a tool span. Tool spans are siblings of LLM spans under the root agent span because tools execute after the LLM call returns. `ToolExecutionQueue` explicitly copies the current `contextvars` context into worker threads so concurrent tool spans remain children of the active root span. The module is a no-op when disabled or when the OTel SDK is not installed.
 
 **Tech Stack:** `opentelemetry-sdk>=1.20`, `opentelemetry-exporter-otlp-proto-http>=1.20` (optional extra), `opentelemetry.sdk.trace.export.in_memory_span_exporter.InMemorySpanExporter` for tests.
 
@@ -21,7 +21,8 @@
 | Create | `src/bourbon/observability/manager.py` | `ObservabilityManager` — reads config + env vars, inits OTel SDK |
 | Modify | `src/bourbon/config.py` | Add `ObservabilityConfig` dataclass, wire into `Config` |
 | Modify | `src/bourbon/agent.py` | 3 instrumentation points (root, LLM ×2 paths, import) |
-| Modify | `src/bourbon/tools/execution_queue.py` | Tool span in `_run_tool()` |
+| Modify | `src/bourbon/tools/execution_queue.py` | Context propagation in `_process_queue()` and tool span in `_run_tool()` |
+| Modify | `src/bourbon/repl.py` | Flush observability manager during interactive shutdown |
 | Modify | `pyproject.toml` | Add `[observability]` optional-dependencies |
 | Create | `tests/test_observability.py` | Unit + attribute tests |
 
@@ -160,7 +161,7 @@ from bourbon.observability.tracer import BourbonTracer
 def test_noop_tracer_agent_step_no_error():
     tracer = BourbonTracer(otel_tracer=None)
     with tracer.agent_step(workdir="/tmp") as span:
-        span.set_attribute("gen_ai.system", "bourbon")
+        span.set_attribute("gen_ai.provider.name", "bourbon")
 
 
 def test_noop_tracer_llm_call_no_error():
@@ -173,7 +174,13 @@ def test_noop_tracer_llm_call_no_error():
 def test_noop_tracer_tool_call_no_error():
     tracer = BourbonTracer(otel_tracer=None)
     with tracer.tool_call(name="Bash", call_id="toolu_01", concurrent=False) as span:
-        span.set_attribute("gen_ai.tool.is_error", False)
+        span.set_attribute("bourbon.tool.concurrent", False)
+
+
+def test_noop_tracer_record_error_no_error():
+    tracer = BourbonTracer(otel_tracer=None)
+    with tracer.tool_call(name="Bash", call_id="toolu_01", concurrent=False) as span:
+        tracer.record_error(span, ValueError("boom"))
 
 
 def test_noop_tracer_agent_step_exception_propagates():
@@ -215,11 +222,28 @@ class _NoOpSpan:
     def set_attribute(self, key: str, value: Any) -> None:  # noqa: ARG002
         pass
 
+    def set_attributes(self, attributes: dict[str, Any]) -> None:  # noqa: ARG002
+        pass
+
+    def add_event(
+        self,
+        name: str,  # noqa: ARG002
+        attributes: dict[str, Any] | None = None,  # noqa: ARG002
+        timestamp: Any | None = None,  # noqa: ARG002
+    ) -> None:
+        pass
+
+    def update_name(self, name: str) -> None:  # noqa: ARG002
+        pass
+
     def record_exception(self, exc: Exception) -> None:  # noqa: ARG002
         pass
 
     def set_status(self, *args: Any, **kwargs: Any) -> None:
         pass
+
+    def __getattr__(self, name: str) -> Any:
+        return lambda *args, **kwargs: None
 
 
 class BourbonTracer:
@@ -231,12 +255,19 @@ class BourbonTracer:
 
     def __init__(self, otel_tracer: Any | None = None) -> None:
         self._tracer = otel_tracer
+        self._status_code = self._load_status_code()
+
+    @property
+    def enabled(self) -> bool:
+        """Return whether this tracer is backed by a real OTel tracer."""
+        return self._tracer is not None
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_status_code(self) -> Any:
+    @staticmethod
+    def _load_status_code() -> Any:
         """Import OTel StatusCode lazily; return None if SDK not installed."""
         try:
             from opentelemetry.trace import StatusCode  # type: ignore[import-untyped]
@@ -254,35 +285,32 @@ class BourbonTracer:
         if self._tracer is None:
             yield _NoOpSpan()
             return
-        StatusCode = self._get_status_code()
-        with self._tracer.start_as_current_span("gen_ai.agent.step") as span:
-            span.set_attribute("gen_ai.system", "bourbon")
-            span.set_attribute("gen_ai.agent.workdir", workdir)
+        with self._tracer.start_as_current_span("invoke_agent bourbon") as span:
+            span.set_attribute("gen_ai.operation.name", "invoke_agent")
+            span.set_attribute("gen_ai.provider.name", "bourbon")
+            span.set_attribute("gen_ai.agent.name", "bourbon")
+            span.set_attribute("bourbon.agent.workdir", workdir)
             try:
                 yield span
             except Exception as exc:
-                if StatusCode:
-                    span.record_exception(exc)
-                    span.set_status(StatusCode.ERROR, str(exc))
+                self.record_error(span, exc)
                 raise
 
     @contextmanager
-    def llm_call(self, model: str, max_tokens: int) -> Generator[Any, None, None]:
+    def llm_call(self, model: str, max_tokens: int, provider: str = "anthropic") -> Generator[Any, None, None]:
         """Child span covering one LLM chat() or chat_stream() call."""
         if self._tracer is None:
             yield _NoOpSpan()
             return
-        StatusCode = self._get_status_code()
-        with self._tracer.start_as_current_span("gen_ai.chat") as span:
-            span.set_attribute("gen_ai.system", "anthropic")
+        with self._tracer.start_as_current_span(f"chat {model}") as span:
+            span.set_attribute("gen_ai.operation.name", "chat")
+            span.set_attribute("gen_ai.provider.name", provider)
             span.set_attribute("gen_ai.request.model", model)
             span.set_attribute("gen_ai.request.max_tokens", max_tokens)
             try:
                 yield span
             except Exception as exc:
-                if StatusCode:
-                    span.record_exception(exc)
-                    span.set_status(StatusCode.ERROR, str(exc))
+                self.record_error(span, exc)
                 raise
 
     @contextmanager
@@ -291,18 +319,23 @@ class BourbonTracer:
         if self._tracer is None:
             yield _NoOpSpan()
             return
-        StatusCode = self._get_status_code()
-        with self._tracer.start_as_current_span(f"gen_ai.tool.{name}") as span:
+        with self._tracer.start_as_current_span(f"execute_tool {name}") as span:
+            span.set_attribute("gen_ai.operation.name", "execute_tool")
             span.set_attribute("gen_ai.tool.name", name)
             span.set_attribute("gen_ai.tool.call.id", call_id)
-            span.set_attribute("gen_ai.tool.concurrent", concurrent)
+            span.set_attribute("bourbon.tool.concurrent", concurrent)
             try:
                 yield span
             except Exception as exc:
-                if StatusCode:
-                    span.record_exception(exc)
-                    span.set_status(StatusCode.ERROR, str(exc))
+                self.record_error(span, exc)
                 raise
+
+    def record_error(self, span: Any, exc: Exception) -> None:
+        """Record an exception on an active span, including swallowed tool errors."""
+        span.record_exception(exc)
+        span.set_attribute("error.type", type(exc).__name__)
+        if self._status_code:
+            span.set_status(self._status_code.ERROR, str(exc))
 ```
 
 - [ ] **Step 5: Run tests to confirm PASS**
@@ -310,7 +343,7 @@ class BourbonTracer:
 ```bash
 uv run pytest tests/test_observability.py -k "noop" -v
 ```
-Expected: 4 passed
+Expected: 5 passed
 
 - [ ] **Step 6: Commit**
 
@@ -343,7 +376,9 @@ def test_manager_disabled_returns_noop_tracer():
         span.set_attribute("test", "ok")
 
 
-def test_manager_no_endpoint_returns_noop_tracer():
+def test_manager_no_endpoint_returns_noop_tracer(monkeypatch):
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
     cfg = ObservabilityConfig(enabled=True, otlp_endpoint="")
     manager = ObservabilityManager(cfg)
     tracer = manager.get_tracer()
@@ -357,8 +392,28 @@ def test_manager_env_var_endpoint_enables_when_config_disabled(monkeypatch):
     cfg = ObservabilityConfig(enabled=False)
     manager = ObservabilityManager(cfg)
     tracer = manager.get_tracer()
-    # Still no-op because enabled=False
+    # Still no-op because enabled=False is a hard kill switch.
     assert tracer._tracer is None
+
+
+def test_resolve_trace_endpoint_prefers_trace_specific_env(monkeypatch):
+    from bourbon.observability.manager import _resolve_trace_endpoint
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://trace:4318/v1/traces")
+    cfg = ObservabilityConfig(enabled=True, otlp_endpoint="http://config:4318/v1/traces")
+
+    assert _resolve_trace_endpoint(cfg) == "http://trace:4318/v1/traces"
+
+
+def test_resolve_trace_endpoint_appends_trace_path_for_generic_env(monkeypatch):
+    from bourbon.observability.manager import _resolve_trace_endpoint
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    cfg = ObservabilityConfig(enabled=True, otlp_endpoint="")
+
+    assert _resolve_trace_endpoint(cfg) == "http://localhost:4318/v1/traces"
 ```
 
 - [ ] **Step 2: Run to confirm FAIL**
@@ -375,34 +430,79 @@ Expected: `ModuleNotFoundError: No module named 'bourbon.observability.manager'`
 
 from __future__ import annotations
 
+import atexit
 import os
+import threading
+from typing import Any
 
 from bourbon.config import ObservabilityConfig
 from bourbon.observability.tracer import BourbonTracer
+
+_PROVIDER_LOCK = threading.Lock()
+_PROVIDER: Any | None = None
+
+
+def _append_trace_path(endpoint: str) -> str:
+    """Return an OTLP traces endpoint from a generic OTLP HTTP endpoint."""
+    stripped = endpoint.rstrip("/")
+    if stripped.endswith("/v1/traces"):
+        return stripped
+    return f"{stripped}/v1/traces"
+
+
+def _resolve_trace_endpoint(config: ObservabilityConfig) -> str:
+    """Resolve the final OTLP HTTP traces endpoint."""
+    trace_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+    if trace_endpoint:
+        return trace_endpoint
+
+    generic_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if generic_endpoint:
+        return _append_trace_path(generic_endpoint)
+
+    return config.otlp_endpoint
+
+
+def _resolve_headers(config: ObservabilityConfig) -> dict[str, str]:
+    """Merge config headers with OTel env-var headers."""
+    headers: dict[str, str] = dict(config.otlp_headers)
+    headers_env = (
+        os.environ.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS")
+        or os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", "")
+    )
+    if headers_env:
+        for pair in headers_env.split(","):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                headers[k.strip()] = v.strip()
+    return headers
 
 
 class ObservabilityManager:
     """Reads ObservabilityConfig (with env-var overrides) and builds a BourbonTracer."""
 
     def __init__(self, config: ObservabilityConfig) -> None:
+        self._provider: Any | None = None
         self._tracer = self._build(config)
 
     def get_tracer(self) -> BourbonTracer:
         return self._tracer
 
+    def shutdown(self) -> None:
+        """Flush any pending spans. Called automatically at process exit via atexit."""
+        if self._provider is not None:
+            self._provider.shutdown()
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _build(config: ObservabilityConfig) -> BourbonTracer:
+    def _build(self, config: ObservabilityConfig) -> BourbonTracer:
         if not config.enabled:
             return BourbonTracer(otel_tracer=None)
 
-        # Env vars override config values (standard OTel convention)
-        endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", config.otlp_endpoint)
+        endpoint = _resolve_trace_endpoint(config)
         service_name = os.environ.get("OTEL_SERVICE_NAME", config.service_name)
-        headers_env = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", "")
 
         if not endpoint:
             return BourbonTracer(otel_tracer=None)
@@ -418,19 +518,18 @@ class ObservabilityManager:
         except ImportError:
             return BourbonTracer(otel_tracer=None)
 
-        # Merge headers: config dict first, then env-var pairs override
-        headers: dict[str, str] = dict(config.otlp_headers)
-        if headers_env:
-            for pair in headers_env.split(","):
-                if "=" in pair:
-                    k, v = pair.split("=", 1)
-                    headers[k.strip()] = v.strip()
+        global _PROVIDER
+        with _PROVIDER_LOCK:
+            if _PROVIDER is None:
+                resource = Resource.create({SERVICE_NAME: service_name})
+                provider = TracerProvider(resource=resource)
+                exporter = OTLPSpanExporter(endpoint=endpoint, headers=_resolve_headers(config))
+                provider.add_span_processor(BatchSpanProcessor(exporter, max_queue_size=2048))
+                trace.set_tracer_provider(provider)
+                _PROVIDER = provider
+                atexit.register(provider.shutdown)
 
-        resource = Resource.create({SERVICE_NAME: service_name})
-        provider = TracerProvider(resource=resource)
-        exporter = OTLPSpanExporter(endpoint=endpoint, headers=headers)
-        provider.add_span_processor(BatchSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
+            self._provider = _PROVIDER
 
         otel_tracer = trace.get_tracer("bourbon")
         return BourbonTracer(otel_tracer=otel_tracer)
@@ -441,7 +540,7 @@ class ObservabilityManager:
 ```bash
 uv run pytest tests/test_observability.py -k "manager" -v
 ```
-Expected: 3 passed
+Expected: 5 passed
 
 - [ ] **Step 5: Commit**
 
@@ -475,10 +574,10 @@ def test_get_tracer_returns_noop_before_init():
 def test_init_tracer_replaces_singleton():
     original = get_tracer()
     custom = BourbonTracer(otel_tracer=None)
-    init_tracer(custom)
+    init_tracer(custom, force=True)
     assert get_tracer() is custom
     # Restore for other tests
-    init_tracer(original)
+    init_tracer(original, force=True)
 ```
 
 - [ ] **Step 2: Run to confirm FAIL**
@@ -506,9 +605,16 @@ def get_tracer() -> BourbonTracer:
     return _tracer
 
 
-def init_tracer(tracer: BourbonTracer) -> None:
-    """Replace the module-level tracer singleton. Called once from Agent.__init__."""
+def init_tracer(tracer: BourbonTracer, force: bool = False) -> None:
+    """Replace the module-level tracer singleton. Called from Agent.__init__.
+
+    By default this is idempotent: if a real tracer has already been set,
+    it will NOT be overwritten to avoid conflicts between parent and child agents.
+    Pass ``force=True`` to override.
+    """
     global _tracer
+    if not force and _tracer.enabled:
+        return
     _tracer = tracer
 ```
 
@@ -538,9 +644,6 @@ git commit -m "feat: add get_tracer/init_tracer singleton"
 Append to `tests/test_observability.py`:
 
 ```python
-from unittest.mock import MagicMock, patch
-
-
 def test_agent_init_calls_init_tracer(monkeypatch, tmp_path):
     """Agent.__init__ must call init_tracer() with a BourbonTracer."""
     from bourbon.observability import get_tracer
@@ -548,20 +651,23 @@ def test_agent_init_calls_init_tracer(monkeypatch, tmp_path):
 
     called_with = []
 
-    def fake_init_tracer(tracer):
-        called_with.append(tracer)
+    def fake_init_tracer(tracer, force=False):
+        called_with.append((tracer, force))
 
-    monkeypatch.setattr("bourbon.observability.init_tracer", fake_init_tracer)
-    monkeypatch.setattr("bourbon.agent.init_tracer", fake_init_tracer)
+    import bourbon.observability as observability
+    monkeypatch.setattr(observability, "init_tracer", fake_init_tracer)
 
-    from bourbon.agent import Agent
+    from bourbon import agent as agent_module
+    monkeypatch.setattr(agent_module, "init_tracer", fake_init_tracer, raising=False)
+    Agent = agent_module.Agent
     from bourbon.config import Config
 
     cfg = Config()
-    agent = Agent(config=cfg, workdir=tmp_path)
+    _agent = Agent(config=cfg, workdir=tmp_path)
 
     assert len(called_with) == 1
-    assert isinstance(called_with[0], BourbonTracer)
+    assert isinstance(called_with[0][0], BourbonTracer)
+    assert called_with[0][1] is False
 ```
 
 - [ ] **Step 2: Run to confirm FAIL**
@@ -586,29 +692,40 @@ In `Agent.__init__`, after `self.audit = AuditLogger(...)` (near line 180), add:
 
 ```python
 # Initialize observability tracer (no-op if disabled or OTel SDK not installed)
-_obs_manager = ObservabilityManager(config.observability)
-init_tracer(_obs_manager.get_tracer())
+# Use force=False so parent agent tracer is not overwritten by child agents.
+self._obs_manager = ObservabilityManager(config.observability)
+init_tracer(self._obs_manager.get_tracer(), force=False)
 ```
 
-- [ ] **Step 5: Run test to confirm PASS**
+- [ ] **Step 5: Add explicit shutdown hook in REPL exit path**
+
+In `src/bourbon/repl.py`, find `REPL.run()` and its `finally:` block (currently calls `self._shutdown_mcp()`). Add this before `_shutdown_mcp()`:
+
+```python
+# Flush any pending observability spans before exit
+if hasattr(self.agent, "_obs_manager"):
+    self.agent._obs_manager.shutdown()
+```
+
+- [ ] **Step 6: Run test to confirm PASS**
 
 ```bash
 uv run pytest tests/test_observability.py::test_agent_init_calls_init_tracer -v
 ```
 Expected: PASS
 
-- [ ] **Step 6: Run full test suite to check no regressions**
+- [ ] **Step 7: Run full test suite to check no regressions**
 
 ```bash
 uv run pytest tests/ -q
 ```
 Expected: all existing tests pass
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/bourbon/agent.py
-git commit -m "feat: wire ObservabilityManager into Agent.__init__"
+git add src/bourbon/agent.py src/bourbon/repl.py
+git commit -m "feat: wire ObservabilityManager into Agent.__init__ and add shutdown hook"
 ```
 
 ---
@@ -691,7 +808,9 @@ Replace the block from `response = self.llm.chat(...)` through the token-trackin
 
 ```python
                 with get_tracer().llm_call(
-                    model=self.config.llm.anthropic.model, max_tokens=64000
+                    model=str(getattr(self.llm, "model", "")),
+                    max_tokens=64000,
+                    provider=self.config.llm.default_provider,
                 ) as _llm_span:
                     response = self.llm.chat(
                         messages=messages,
@@ -701,7 +820,7 @@ Replace the block from `response = self.llm.chat(...)` through the token-trackin
                     )
                     # Set span attributes from response
                     _llm_span.set_attribute(
-                        "gen_ai.response.stop_reason", response.get("stop_reason", "")
+                        "gen_ai.response.finish_reasons", [response.get("stop_reason", "")]
                     )
                     if "usage" in response:
                         _usage = response["usage"]
@@ -767,7 +886,9 @@ After:
                 _span_output_tokens = 0
                 _span_stop_reason = "end_turn"
                 with get_tracer().llm_call(
-                    model=self.config.llm.anthropic.model, max_tokens=64000
+                    model=str(getattr(self.llm, "model", "")),
+                    max_tokens=64000,
+                    provider=self.config.llm.default_provider,
                 ) as _llm_span:
                     event_stream = self.llm.chat_stream(
                         messages=messages,
@@ -829,7 +950,7 @@ After the `for event in event_stream:` loop ends but still inside the `with _llm
                   # Set span attributes now that stream is complete
                   _llm_span.set_attribute("gen_ai.usage.input_tokens", _span_input_tokens)
                   _llm_span.set_attribute("gen_ai.usage.output_tokens", _span_output_tokens)
-                  _llm_span.set_attribute("gen_ai.response.stop_reason", _span_stop_reason)
+                  _llm_span.set_attribute("gen_ai.response.finish_reasons", [_span_stop_reason])
 ```
 
 Then close the `with _llm_span:` block. Everything that follows (building the assistant message, executing tools) is outside the span.
@@ -850,7 +971,7 @@ git commit -m "feat: add LLM span to _run_conversation_loop_stream (streaming)"
 
 ---
 
-## Task 9: Instrument tool span in `execution_queue._run_tool()`
+## Task 9: Propagate context and instrument tool spans in `execution_queue.py`
 
 **Files:**
 - Modify: `src/bourbon/tools/execution_queue.py`
@@ -866,10 +987,10 @@ def test_tool_call_span_is_error_false_on_success():
     is_error = False
     with tracer.tool_call(name="Read", call_id="id_1", concurrent=True) as span:
         try:
-            result = "file contents"  # simulate success
+            _result = "file contents"  # simulate success
         except Exception:
             is_error = True
-        span.set_attribute("gen_ai.tool.is_error", is_error)
+        span.set_attribute("bourbon.tool.is_error", is_error)
     assert is_error is False
 
 
@@ -881,9 +1002,10 @@ def test_tool_call_span_is_error_true_on_exception():
         try:
             raise RuntimeError("command failed")
         except Exception as exc:
+            tracer.record_error(span, exc)
             raw_output = f"Error: {exc}"
             is_error = True
-        span.set_attribute("gen_ai.tool.is_error", is_error)
+        span.set_attribute("bourbon.tool.is_error", is_error)
     assert is_error is True
     assert "command failed" in raw_output
 ```
@@ -895,7 +1017,30 @@ uv run pytest tests/test_observability.py -k "tool_call_span_is_error" -v
 ```
 Expected: 2 passed
 
-- [ ] **Step 3: Add the span to `_run_tool()` in `execution_queue.py`**
+- [ ] **Step 3: Copy the active OTel context into worker threads**
+
+At the top of `src/bourbon/tools/execution_queue.py`, add:
+
+```python
+from contextvars import copy_context
+```
+
+In `_process_queue()`, replace:
+
+```python
+            tool.future = self._thread_pool.submit(self._run_tool, tool)
+```
+
+with:
+
+```python
+            ctx = copy_context()
+            tool.future = self._thread_pool.submit(ctx.run, self._run_tool, tool)
+```
+
+This is required because `ThreadPoolExecutor` does not automatically propagate `contextvars`; without this, concurrent tool spans will lose the active root span parent.
+
+- [ ] **Step 4: Add the span to `_run_tool()` in `execution_queue.py`**
 
 Find `_run_tool()` in `src/bourbon/tools/execution_queue.py`:
 
@@ -928,13 +1073,15 @@ Replace with:
 
         is_error = False
         raw_output: Any = ""
-        with get_tracer().tool_call(name=name, call_id=call_id, concurrent=tool.concurrent) as _tool_span:
+        _tracer = get_tracer()
+        with _tracer.tool_call(name=name, call_id=call_id, concurrent=tool.concurrent) as _tool_span:
             try:
                 raw_output = self._execute_fn(tool.block)
             except Exception as exc:
+                _tracer.record_error(_tool_span, exc)
                 raw_output = f"Error: {exc}"
                 is_error = True
-            _tool_span.set_attribute("gen_ai.tool.is_error", is_error)
+            _tool_span.set_attribute("bourbon.tool.is_error", is_error)
 
         output = str(raw_output)
 ```
@@ -944,18 +1091,18 @@ Also add `Any` to the existing imports at the top of `execution_queue.py` if not
 from typing import Any
 ```
 
-- [ ] **Step 4: Run full test suite**
+- [ ] **Step 5: Run full test suite**
 
 ```bash
 uv run pytest tests/ -q
 ```
 Expected: all tests pass
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/bourbon/tools/execution_queue.py
-git commit -m "feat: add tool span to ToolExecutionQueue._run_tool"
+git commit -m "feat: add tool spans with context propagation"
 ```
 
 ---
@@ -970,14 +1117,9 @@ git commit -m "feat: add tool span to ToolExecutionQueue._run_tool"
 Append to `tests/test_observability.py`:
 
 ```python
-# ---------------------------------------------------------------------------
-# OTel SDK tests — skipped if opentelemetry is not installed
-# ---------------------------------------------------------------------------
-otel = pytest.importorskip("opentelemetry", reason="opentelemetry SDK not installed")
-
-
 def _make_test_tracer():
     """Create a BourbonTracer backed by InMemorySpanExporter for assertions."""
+    pytest.importorskip("opentelemetry.sdk", reason="opentelemetry SDK not installed")
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -996,63 +1138,126 @@ def test_agent_step_span_name_and_attributes():
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.name == "gen_ai.agent.step"
-    assert span.attributes["gen_ai.system"] == "bourbon"
-    assert span.attributes["gen_ai.agent.workdir"] == "/my/project"
+    assert span.name == "invoke_agent bourbon"
+    assert span.attributes["gen_ai.operation.name"] == "invoke_agent"
+    assert span.attributes["gen_ai.provider.name"] == "bourbon"
+    assert span.attributes["gen_ai.agent.name"] == "bourbon"
+    assert span.attributes["bourbon.agent.workdir"] == "/my/project"
 
 
 def test_llm_call_span_name_and_attributes():
     tracer, exporter = _make_test_tracer()
-    with tracer.llm_call(model="claude-sonnet-4-6", max_tokens=64000) as span:
+    with tracer.llm_call(model="claude-sonnet-4-6", max_tokens=64000, provider="anthropic") as span:
         span.set_attribute("gen_ai.usage.input_tokens", 123)
         span.set_attribute("gen_ai.usage.output_tokens", 456)
-        span.set_attribute("gen_ai.response.stop_reason", "tool_use")
+        span.set_attribute("gen_ai.response.finish_reasons", ["tool_use"])
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
     s = spans[0]
-    assert s.name == "gen_ai.chat"
-    assert s.attributes["gen_ai.system"] == "anthropic"
+    assert s.name == "chat claude-sonnet-4-6"
+    assert s.attributes["gen_ai.operation.name"] == "chat"
+    assert s.attributes["gen_ai.provider.name"] == "anthropic"
     assert s.attributes["gen_ai.request.model"] == "claude-sonnet-4-6"
     assert s.attributes["gen_ai.request.max_tokens"] == 64000
     assert s.attributes["gen_ai.usage.input_tokens"] == 123
     assert s.attributes["gen_ai.usage.output_tokens"] == 456
-    assert s.attributes["gen_ai.response.stop_reason"] == "tool_use"
+    assert s.attributes["gen_ai.response.finish_reasons"] == ("tool_use",)
 
 
 def test_tool_call_span_name_and_attributes():
     tracer, exporter = _make_test_tracer()
     with tracer.tool_call(name="Bash", call_id="toolu_01", concurrent=False) as span:
-        span.set_attribute("gen_ai.tool.is_error", False)
+        span.set_attribute("bourbon.tool.is_error", False)
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
     s = spans[0]
-    assert s.name == "gen_ai.tool.Bash"
+    assert s.name == "execute_tool Bash"
+    assert s.attributes["gen_ai.operation.name"] == "execute_tool"
     assert s.attributes["gen_ai.tool.name"] == "Bash"
     assert s.attributes["gen_ai.tool.call.id"] == "toolu_01"
-    assert s.attributes["gen_ai.tool.concurrent"] is False
-    assert s.attributes["gen_ai.tool.is_error"] is False
+    assert s.attributes["bourbon.tool.concurrent"] is False
+    assert s.attributes["bourbon.tool.is_error"] is False
 
 
 def test_span_parent_child_relationships():
     tracer, exporter = _make_test_tracer()
     with tracer.agent_step(workdir="/tmp"):
-        with tracer.llm_call(model="m", max_tokens=100):
-            with tracer.tool_call(name="Read", call_id="id_1", concurrent=True):
-                pass
+        with tracer.llm_call(model="m", max_tokens=100, provider="anthropic"):
+            pass
+        with tracer.tool_call(name="Read", call_id="id_1", concurrent=True):
+            pass
     spans = exporter.get_finished_spans()
     assert len(spans) == 3
     by_name = {s.name: s for s in spans}
-    agent_span = by_name["gen_ai.agent.step"]
-    llm_span = by_name["gen_ai.chat"]
-    tool_span = by_name["gen_ai.tool.Read"]
+    agent_span = by_name["invoke_agent bourbon"]
+    llm_span = by_name["chat m"]
+    tool_span = by_name["execute_tool Read"]
     assert llm_span.parent.span_id == agent_span.context.span_id
-    assert tool_span.parent.span_id == llm_span.context.span_id
+    assert tool_span.parent.span_id == agent_span.context.span_id
+
+
+def test_tool_execution_queue_preserves_context_in_threadpool():
+    """Verify queue-created tool spans keep the active root span parent."""
+    tracer, exporter = _make_test_tracer()
+    from bourbon.observability import get_tracer, init_tracer
+    from bourbon.tools.execution_queue import ToolExecutionQueue
+
+    class ConcurrentTool:
+        def concurrent_safe_for(self, tool_input: dict) -> bool:
+            return True
+
+    original = get_tracer()
+    init_tracer(tracer, force=True)
+    try:
+        with tracer.agent_step(workdir="/tmp"):
+            queue = ToolExecutionQueue(execute_fn=lambda block: "ok")
+            queue.add({"id": "id_1", "name": "Read", "input": {}}, ConcurrentTool(), 0)
+            queue.add({"id": "id_2", "name": "Bash", "input": {}}, ConcurrentTool(), 1)
+            assert len(queue.execute_all()) == 2
+    finally:
+        init_tracer(original, force=True)
+
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 3
+    agent_span = [s for s in spans if s.name == "invoke_agent bourbon"][0]
+    tool_spans = [s for s in spans if s.name.startswith("execute_tool ")]
+    assert len(tool_spans) == 2
+    for ts in tool_spans:
+        assert ts.parent.span_id == agent_span.context.span_id
+
+
+def test_tool_execution_queue_records_swallowed_exception_as_error_span():
+    tracer, exporter = _make_test_tracer()
+    from opentelemetry.trace import StatusCode
+    from bourbon.observability import get_tracer, init_tracer
+    from bourbon.tools.execution_queue import ToolExecutionQueue
+
+    class SerialTool:
+        def concurrent_safe_for(self, tool_input: dict) -> bool:
+            return False
+
+    def fail(block: dict) -> str:
+        raise RuntimeError("command failed")
+
+    original = get_tracer()
+    init_tracer(tracer, force=True)
+    try:
+        with tracer.agent_step(workdir="/tmp"):
+            queue = ToolExecutionQueue(execute_fn=fail)
+            queue.add({"id": "id_err", "name": "Bash", "input": {}}, SerialTool(), 0)
+            results = queue.execute_all()
+            assert results[0]["is_error"] is True
+    finally:
+        init_tracer(original, force=True)
+
+    tool_span = [s for s in exporter.get_finished_spans() if s.name == "execute_tool Bash"][0]
+    assert tool_span.status.status_code == StatusCode.ERROR
+    assert tool_span.attributes["error.type"] == "RuntimeError"
 
 
 def test_error_span_records_exception():
-    from opentelemetry.trace import StatusCode
-
     tracer, exporter = _make_test_tracer()
+    from opentelemetry.trace import StatusCode
     with pytest.raises(ValueError):
         with tracer.tool_call(name="Bash", call_id="id_err", concurrent=False):
             raise ValueError("tool blew up")
@@ -1060,17 +1265,18 @@ def test_error_span_records_exception():
     assert len(spans) == 1
     s = spans[0]
     assert s.status.status_code == StatusCode.ERROR
+    assert s.attributes["error.type"] == "ValueError"
     assert len(s.events) == 1  # record_exception adds one event
     assert s.events[0].name == "exception"
 ```
 
 - [ ] **Step 2: Install OTel SDK for tests**
 
-```bash
-uv pip install -e ".[observability]"
-```
+Because `pyproject.toml` has not been updated yet (Task 11 comes later), install the packages directly:
 
-(This requires Task 11's `pyproject.toml` changes. If pyproject.toml is not yet updated, install directly: `uv pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`)
+```bash
+uv pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+```
 
 - [ ] **Step 3: Run OTel attribute tests**
 
@@ -1136,7 +1342,7 @@ After all tasks are complete, verify the full integration manually:
 # 2. Configure ~/.bourbon/config.toml:
 #    [observability]
 #    enabled = true
-#    otlp_endpoint = "https://cloud.langfuse.com/api/public/otel"
+#    otlp_endpoint = "https://cloud.langfuse.com/api/public/otel/v1/traces"
 #    otlp_headers = { Authorization = "Basic <base64(pk:sk)>" }
 
 # 3. Run bourbon
@@ -1144,7 +1350,7 @@ python -m bourbon
 # > 帮我列出当前目录的文件
 
 # 4. Check Langfuse UI for:
-#    - Root span "gen_ai.agent.step" with workdir attribute
-#    - Child span "gen_ai.chat" with input/output token counts
-#    - Child span "gen_ai.tool.Bash" with call_id and is_error=false
+#    - Root span "invoke_agent bourbon" with workdir attribute
+#    - Child span "chat <model>" with input/output token counts
+#    - Child span "execute_tool Bash" with call_id and no error status
 ```
