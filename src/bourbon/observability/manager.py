@@ -35,9 +35,8 @@ def _resolve_trace_endpoint(config: ObservabilityConfig) -> str:
 
 def _resolve_headers(config: ObservabilityConfig) -> dict[str, str]:
     headers = dict(config.otlp_headers)
-    headers_env = (
-        os.environ.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS")
-        or os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", "")
+    headers_env = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") or os.environ.get(
+        "OTEL_EXPORTER_OTLP_HEADERS", ""
     )
     for pair in headers_env.split(","):
         if "=" in pair:
@@ -85,9 +84,14 @@ class ObservabilityManager:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[import-untyped]
                 OTLPSpanExporter,
             )
-            from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # type: ignore[import-untyped]
+            from opentelemetry.sdk.resources import (  # type: ignore[import-untyped]
+                SERVICE_NAME,
+                Resource,
+            )
             from opentelemetry.sdk.trace import TracerProvider  # type: ignore[import-untyped]
-            from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore[import-untyped]
+            from opentelemetry.sdk.trace.export import (
+                BatchSpanProcessor,  # type: ignore[import-untyped]
+            )
         except ImportError:
             return BourbonTracer(otel_tracer=None)
 

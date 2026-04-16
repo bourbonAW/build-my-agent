@@ -12,7 +12,12 @@ from bourbon.agent import Agent
 from bourbon.config import Config, ObservabilityConfig
 from bourbon.observability.manager import ObservabilityManager, _resolve_trace_endpoint
 from bourbon.observability.tracer import BourbonTracer
-from bourbon.permissions import PermissionAction, PermissionChoice, PermissionDecision, PermissionRequest
+from bourbon.permissions import (
+    PermissionAction,
+    PermissionChoice,
+    PermissionDecision,
+    PermissionRequest,
+)
 from bourbon.permissions.runtime import SuspendedToolRound
 
 
@@ -60,9 +65,8 @@ def test_noop_tracer_contexts_do_not_error():
 
 def test_noop_tracer_exceptions_propagate():
     tracer = BourbonTracer(otel_tracer=None)
-    with pytest.raises(ValueError):
-        with tracer.agent_step(workdir="/tmp", entrypoint="step"):
-            raise ValueError("boom")
+    with pytest.raises(ValueError), tracer.agent_step(workdir="/tmp", entrypoint="step"):
+        raise ValueError("boom")
 
 
 def test_manager_disabled_returns_noop_even_with_env(monkeypatch):
@@ -788,24 +792,22 @@ def test_otel_queue_parallel_and_serial_tools_keep_agent_root_parent():
 def test_inline_subagent_root_span_is_child_of_agent_tool_span():
     tracer, exporter = _make_test_tracer()
 
-    with tracer.agent_step(workdir="/tmp", entrypoint="step"):
-        with tracer.tool_call(name="Agent", call_id="tool-agent", concurrent=False):
-            with tracer.agent_step(workdir="/tmp/sub", entrypoint="step"):
-                pass
+    with (
+        tracer.agent_step(workdir="/tmp", entrypoint="step"),
+        tracer.tool_call(name="Agent", call_id="tool-agent", concurrent=False),
+        tracer.agent_step(workdir="/tmp/sub", entrypoint="step"),
+    ):
+        pass
 
     root_spans = [
         span for span in exporter.get_finished_spans() if span.name == "invoke_agent bourbon"
     ]
     tool = _span_named(exporter, "execute_tool Agent")
     subagent_root = next(
-        span
-        for span in root_spans
-        if span.attributes["bourbon.agent.workdir"] == "/tmp/sub"
+        span for span in root_spans if span.attributes["bourbon.agent.workdir"] == "/tmp/sub"
     )
     top_root = next(
-        span
-        for span in root_spans
-        if span.attributes["bourbon.agent.workdir"] == "/tmp"
+        span for span in root_spans if span.attributes["bourbon.agent.workdir"] == "/tmp"
     )
     assert tool.parent.span_id == top_root.context.span_id
     assert subagent_root.parent.span_id == tool.context.span_id

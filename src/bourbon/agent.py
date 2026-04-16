@@ -4,8 +4,8 @@ import time
 import warnings
 from collections.abc import Callable
 from contextlib import contextmanager, suppress
-from typing import Any
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from bourbon.access_control import AccessController
@@ -451,8 +451,7 @@ class Agent:
                             self.token_usage["input_tokens"] += input_tokens
                             self.token_usage["output_tokens"] += output_tokens
                             self.token_usage["total_tokens"] = (
-                                self.token_usage["input_tokens"]
-                                + self.token_usage["output_tokens"]
+                                self.token_usage["input_tokens"] + self.token_usage["output_tokens"]
                             )
                             debug_log(
                                 "agent.stream.event.usage",
@@ -475,9 +474,7 @@ class Agent:
                                 elapsed_ms=int((time.monotonic() - stream_started_at) * 1000),
                             )
 
-                    _llm_span.set_attribute(
-                        "gen_ai.response.finish_reasons", [span_stop_reason]
-                    )
+                    _llm_span.set_attribute("gen_ai.response.finish_reasons", [span_stop_reason])
                     _llm_span.set_attribute("gen_ai.usage.input_tokens", span_input_tokens)
                     _llm_span.set_attribute("gen_ai.usage.output_tokens", span_output_tokens)
 
@@ -975,11 +972,7 @@ class Agent:
 
         lines = "\n".join(
             f"- [{task.status}] {task.subject}"
-            + (
-                f" (blocked by: {', '.join(task.blocked_by)})"
-                if task.blocked_by
-                else ""
-            )
+            + (f" (blocked by: {', '.join(task.blocked_by)})" if task.blocked_by else "")
             for task in pending
         )
         return TextBlock(

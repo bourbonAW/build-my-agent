@@ -5,8 +5,8 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextvars import Context, copy_context
 from contextlib import suppress
+from contextvars import Context, copy_context
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -110,9 +110,7 @@ class ToolExecutionQueue:
     def _can_execute(self, concurrent: bool) -> bool:
         """Return whether a queued tool can start now. Requires self._lock."""
         executing = [tool for tool in self._tools if tool.status == ToolStatus.EXECUTING]
-        return len(executing) == 0 or (
-            concurrent and all(tool.concurrent for tool in executing)
-        )
+        return len(executing) == 0 or (concurrent and all(tool.concurrent for tool in executing))
 
     def _process_queue(self) -> None:
         """Start every currently eligible queued tool."""
