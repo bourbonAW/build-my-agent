@@ -125,11 +125,33 @@ def test_disabled_agent_does_not_reuse_enabled_tracer(monkeypatch, tmp_path):
 class RecordingTracer:
     def __init__(self):
         self.entrypoints = []
+        self.llm_calls = []
 
     @contextmanager
     def agent_step(self, workdir: str, entrypoint: str = "step"):
         self.entrypoints.append(entrypoint)
         yield object()
+
+    @contextmanager
+    def llm_call(self, model: str, max_tokens: int, provider: str = "anthropic"):
+        span = RecordingSpan()
+        self.llm_calls.append(
+            {
+                "model": model,
+                "max_tokens": max_tokens,
+                "provider": provider,
+                "span": span,
+            }
+        )
+        yield span
+
+
+class RecordingSpan:
+    def __init__(self):
+        self.attributes = {}
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
 
 
 class AsyncPromptBuilder:
@@ -192,3 +214,70 @@ def test_resume_permission_request_records_resume_entrypoint(tmp_path):
     assert agent.resume_permission_request(PermissionChoice.REJECT).startswith("Error:")
 
     assert agent._tracer.entrypoints == ["resume_permission"]
+
+
+def make_llm_loop_agent(tmp_path, llm):
+    from bourbon.agent import Agent
+
+    agent = object.__new__(Agent)
+    agent.workdir = tmp_path
+    agent._tracer = RecordingTracer()
+    agent.llm = llm
+    agent.config = Config()
+    agent.system_prompt = "system"
+    agent.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    agent._max_tool_rounds = 1
+    agent._tool_definitions = lambda: []
+    agent._subagent_debug_fields = lambda: {}
+    agent._execute_tools = lambda *args, **kwargs: []
+    agent.active_permission_request = None
+    agent._append_task_nudge_if_due = lambda *args, **kwargs: None
+    agent.session = SimpleNamespace(
+        get_messages_for_llm=lambda: [{"role": "user", "content": "hi"}],
+        add_message=lambda msg: None,
+        save=lambda: None,
+    )
+    return agent
+
+
+def test_non_streaming_llm_call_records_span_attributes(tmp_path):
+    llm = SimpleNamespace(
+        model="model-x",
+        chat=lambda **kwargs: {
+            "content": [{"type": "text", "text": "done"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        },
+    )
+    agent = make_llm_loop_agent(tmp_path, llm)
+
+    assert agent._run_conversation_loop() == "done"
+
+    call = agent._tracer.llm_calls[0]
+    assert call["model"] == "model-x"
+    assert call["max_tokens"] == 64000
+    assert call["provider"] == "anthropic"
+    assert call["span"].attributes["gen_ai.response.finish_reasons"] == ["end_turn"]
+    assert call["span"].attributes["gen_ai.usage.input_tokens"] == 11
+    assert call["span"].attributes["gen_ai.usage.output_tokens"] == 7
+
+
+def test_streaming_llm_call_records_span_attributes(tmp_path):
+    def chat_stream(**kwargs):
+        yield {"type": "text", "text": "hi"}
+        yield {"type": "usage", "input_tokens": 5, "output_tokens": 3}
+        yield {"type": "stop", "stop_reason": "end_turn"}
+
+    llm = SimpleNamespace(model="stream-model", chat_stream=chat_stream)
+    agent = make_llm_loop_agent(tmp_path, llm)
+    chunks = []
+
+    assert agent._run_conversation_loop_stream(chunks.append) == "hi"
+
+    call = agent._tracer.llm_calls[0]
+    assert call["model"] == "stream-model"
+    assert call["max_tokens"] == 64000
+    assert call["provider"] == "anthropic"
+    assert call["span"].attributes["gen_ai.response.finish_reasons"] == ["end_turn"]
+    assert call["span"].attributes["gen_ai.usage.input_tokens"] == 5
+    assert call["span"].attributes["gen_ai.usage.output_tokens"] == 3

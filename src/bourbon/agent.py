@@ -384,81 +384,102 @@ class Agent:
                     message_count=len(messages),
                     tool_definition_count=len(self._tool_definitions()),
                 )
-                event_stream = self.llm.chat_stream(
-                    messages=messages,
-                    tools=self._tool_definitions(),
-                    system=self.system_prompt,
+                tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+                with tracer.llm_call(
+                    model=str(getattr(self.llm, "model", "")),
                     max_tokens=64000,
-                )
+                    provider=self.config.llm.default_provider,
+                ) as _llm_span:
+                    event_stream = self.llm.chat_stream(
+                        messages=messages,
+                        tools=self._tool_definitions(),
+                        system=self.system_prompt,
+                        max_tokens=64000,
+                    )
 
-                current_text = ""
-                has_tool_calls = False
-                # Collect ALL tool_use events (model may return multiple per turn)
-                tool_use_blocks: list[dict] = []
-                saw_text = False
+                    current_text = ""
+                    has_tool_calls = False
+                    # Collect ALL tool_use events (model may return multiple per turn)
+                    tool_use_blocks: list[dict] = []
+                    saw_text = False
+                    span_input_tokens = 0
+                    span_output_tokens = 0
+                    span_stop_reason = ""
 
-                for event in event_stream:
-                    if event["type"] == "text":
-                        text_chunk = event["text"]
-                        current_text += text_chunk
-                        accumulated_text += text_chunk
-                        debug_log(
-                            "agent.stream.event.text",
-                            tool_round=tool_round,
-                            chunk_len=len(text_chunk),
-                            current_text_len=len(current_text),
-                            accumulated_text_len=len(accumulated_text),
-                            first_text_chunk=not saw_text,
-                        )
-                        saw_text = True
-                        # Protect callback — log and continue on error (per design spec)
-                        try:
-                            on_text_chunk(text_chunk)
-                        except Exception:
-                            logging.getLogger(__name__).warning(
-                                "on_text_chunk callback error", exc_info=True
+                    for event in event_stream:
+                        if event["type"] == "text":
+                            text_chunk = event["text"]
+                            current_text += text_chunk
+                            accumulated_text += text_chunk
+                            debug_log(
+                                "agent.stream.event.text",
+                                tool_round=tool_round,
+                                chunk_len=len(text_chunk),
+                                current_text_len=len(current_text),
+                                accumulated_text_len=len(accumulated_text),
+                                first_text_chunk=not saw_text,
+                            )
+                            saw_text = True
+                            # Protect callback — log and continue on error (per design spec)
+                            try:
+                                on_text_chunk(text_chunk)
+                            except Exception:
+                                logging.getLogger(__name__).warning(
+                                    "on_text_chunk callback error", exc_info=True
+                                )
+                                debug_log(
+                                    "agent.stream.chunk_callback.error",
+                                    tool_round=tool_round,
+                                )
+
+                        elif event["type"] == "tool_use":
+                            has_tool_calls = True
+                            tool_use_blocks.append(event)
+                            debug_log(
+                                "agent.stream.event.tool_use",
+                                tool_round=tool_round,
+                                tool_name=event.get("name"),
+                                tool_id=event.get("id"),
+                            )
+
+                        elif event["type"] == "usage":
+                            usage = event
+                            input_tokens = usage.get("input_tokens", 0)
+                            output_tokens = usage.get("output_tokens", 0)
+                            span_input_tokens += input_tokens
+                            span_output_tokens += output_tokens
+                            self.token_usage["input_tokens"] += input_tokens
+                            self.token_usage["output_tokens"] += output_tokens
+                            self.token_usage["total_tokens"] = (
+                                self.token_usage["input_tokens"]
+                                + self.token_usage["output_tokens"]
                             )
                             debug_log(
-                                "agent.stream.chunk_callback.error",
+                                "agent.stream.event.usage",
                                 tool_round=tool_round,
+                                input_tokens=input_tokens,
+                                output_tokens=output_tokens,
+                                total_tokens=self.token_usage["total_tokens"],
                             )
 
-                    elif event["type"] == "tool_use":
-                        has_tool_calls = True
-                        tool_use_blocks.append(event)
-                        debug_log(
-                            "agent.stream.event.tool_use",
-                            tool_round=tool_round,
-                            tool_name=event.get("name"),
-                            tool_id=event.get("id"),
-                        )
+                        elif event["type"] == "stop":
+                            stop_reason = event.get("stop_reason", "end_turn")
+                            span_stop_reason = stop_reason
+                            has_tool_calls = stop_reason == "tool_use" or has_tool_calls
+                            debug_log(
+                                "agent.stream.event.stop",
+                                tool_round=tool_round,
+                                stop_reason=stop_reason,
+                                tool_use_count=len(tool_use_blocks),
+                                current_text_len=len(current_text),
+                                elapsed_ms=int((time.monotonic() - stream_started_at) * 1000),
+                            )
 
-                    elif event["type"] == "usage":
-                        usage = event
-                        self.token_usage["input_tokens"] += usage.get("input_tokens", 0)
-                        self.token_usage["output_tokens"] += usage.get("output_tokens", 0)
-                        self.token_usage["total_tokens"] = (
-                            self.token_usage["input_tokens"] + self.token_usage["output_tokens"]
-                        )
-                        debug_log(
-                            "agent.stream.event.usage",
-                            tool_round=tool_round,
-                            input_tokens=usage.get("input_tokens", 0),
-                            output_tokens=usage.get("output_tokens", 0),
-                            total_tokens=self.token_usage["total_tokens"],
-                        )
-
-                    elif event["type"] == "stop":
-                        stop_reason = event.get("stop_reason", "end_turn")
-                        has_tool_calls = stop_reason == "tool_use" or has_tool_calls
-                        debug_log(
-                            "agent.stream.event.stop",
-                            tool_round=tool_round,
-                            stop_reason=stop_reason,
-                            tool_use_count=len(tool_use_blocks),
-                            current_text_len=len(current_text),
-                            elapsed_ms=int((time.monotonic() - stream_started_at) * 1000),
-                        )
+                    _llm_span.set_attribute(
+                        "gen_ai.response.finish_reasons", [span_stop_reason]
+                    )
+                    _llm_span.set_attribute("gen_ai.usage.input_tokens", span_input_tokens)
+                    _llm_span.set_attribute("gen_ai.usage.output_tokens", span_output_tokens)
 
                 # Build assistant response content
                 content = []
@@ -579,12 +600,30 @@ class Agent:
                     tool_definition_count=len(tool_defs),
                     **self._subagent_debug_fields(),
                 )
-                response = self.llm.chat(
-                    messages=messages,
-                    tools=tool_defs,
-                    system=self.system_prompt,
+                tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+                with tracer.llm_call(
+                    model=str(getattr(self.llm, "model", "")),
                     max_tokens=64000,
-                )
+                    provider=self.config.llm.default_provider,
+                ) as _llm_span:
+                    response = self.llm.chat(
+                        messages=messages,
+                        tools=tool_defs,
+                        system=self.system_prompt,
+                        max_tokens=64000,
+                    )
+                    _llm_span.set_attribute(
+                        "gen_ai.response.finish_reasons",
+                        [response.get("stop_reason", "")],
+                    )
+                    if "usage" in response:
+                        usage = response["usage"]
+                        _llm_span.set_attribute(
+                            "gen_ai.usage.input_tokens", usage.get("input_tokens", 0)
+                        )
+                        _llm_span.set_attribute(
+                            "gen_ai.usage.output_tokens", usage.get("output_tokens", 0)
+                        )
                 response_content = response.get("content", [])
                 response_tool_uses = [
                     block for block in response_content if block.get("type") == "tool_use"
