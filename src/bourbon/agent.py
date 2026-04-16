@@ -17,6 +17,7 @@ from bourbon.debug import debug_log
 from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
 from bourbon.observability.manager import ObservabilityManager
+from bourbon.observability.tracer import BourbonTracer
 from bourbon.permissions import (
     PermissionAction,
     PermissionChoice,
@@ -266,6 +267,12 @@ class Agent:
 
     def step(self, user_input: str) -> str:
         """Process one user input and return assistant response."""
+        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+        with tracer.agent_step(workdir=str(self.workdir), entrypoint="step"):
+            return self._step_impl(user_input)
+
+    def _step_impl(self, user_input: str) -> str:
+        """Process one user input and return assistant response."""
         self.system_prompt = _get_async_runtime().run(self._prompt_builder.build(self._prompt_ctx))
 
         if self.active_permission_request:
@@ -306,6 +313,16 @@ class Agent:
         Returns:
             Complete response text (for history and optional markdown re-rendering)
         """
+        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+        with tracer.agent_step(workdir=str(self.workdir), entrypoint="step_stream"):
+            return self._step_stream_impl(user_input, on_text_chunk)
+
+    def _step_stream_impl(
+        self,
+        user_input: str,
+        on_text_chunk: Callable[[str], None],
+    ) -> str:
+        """Process user input with streaming text output."""
         started_at = time.monotonic()
         debug_log(
             "agent.step_stream.start",
@@ -920,6 +937,12 @@ class Agent:
         )
 
     def resume_permission_request(self, choice: PermissionChoice) -> str:
+        """Resume a suspended tool round after the user resolves a permission request."""
+        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+        with tracer.agent_step(workdir=str(self.workdir), entrypoint="resume_permission"):
+            return self._resume_permission_request_impl(choice)
+
+    def _resume_permission_request_impl(self, choice: PermissionChoice) -> str:
         """Resume a suspended tool round after the user resolves a permission request."""
         suspended = self.suspended_tool_round
         if suspended is None:

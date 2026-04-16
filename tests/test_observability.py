@@ -1,5 +1,6 @@
 """Tests for OpenTelemetry observability integration."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from bourbon.config import Config, ObservabilityConfig
 from bourbon.observability.manager import ObservabilityManager, _resolve_trace_endpoint
 from bourbon.observability.tracer import BourbonTracer
+from bourbon.permissions import PermissionChoice
 
 
 def test_observability_config_defaults():
@@ -118,3 +120,75 @@ def test_disabled_agent_does_not_reuse_enabled_tracer(monkeypatch, tmp_path):
     second = Agent(config=disabled, workdir=tmp_path / "b")
     assert first._tracer is enabled_tracer
     assert second._tracer is disabled_tracer
+
+
+class RecordingTracer:
+    def __init__(self):
+        self.entrypoints = []
+
+    @contextmanager
+    def agent_step(self, workdir: str, entrypoint: str = "step"):
+        self.entrypoints.append(entrypoint)
+        yield object()
+
+
+class AsyncPromptBuilder:
+    async def build(self, prompt_ctx):
+        return "system"
+
+
+class AsyncContextInjector:
+    async def inject(self, user_input, prompt_ctx):
+        return user_input
+
+
+def make_entrypoint_agent(tmp_path):
+    from bourbon.agent import Agent
+
+    agent = object.__new__(Agent)
+    agent.workdir = tmp_path
+    agent._tracer = RecordingTracer()
+    agent._prompt_builder = AsyncPromptBuilder()
+    agent._prompt_ctx = object()
+    agent._context_injector = AsyncContextInjector()
+    agent.system_prompt = "system"
+    agent.active_permission_request = None
+    agent.session = SimpleNamespace(
+        chain=SimpleNamespace(message_count=0),
+        add_message=lambda msg: None,
+        save=lambda: None,
+        context_manager=SimpleNamespace(microcompact=lambda: None),
+        maybe_compact=lambda: None,
+    )
+    agent._run_conversation_loop = lambda: "ok"
+    agent._run_conversation_loop_stream = lambda on_text_chunk: "stream-ok"
+    return agent
+
+
+def test_step_records_step_entrypoint(tmp_path):
+    agent = make_entrypoint_agent(tmp_path)
+
+    assert agent.step("hello") == "ok"
+
+    assert agent._tracer.entrypoints == ["step"]
+
+
+def test_step_stream_records_step_stream_entrypoint(tmp_path):
+    agent = make_entrypoint_agent(tmp_path)
+
+    assert agent.step_stream("hello", lambda chunk: None) == "stream-ok"
+
+    assert agent._tracer.entrypoints == ["step_stream"]
+
+
+def test_resume_permission_request_records_resume_entrypoint(tmp_path):
+    from bourbon.agent import Agent
+
+    agent = object.__new__(Agent)
+    agent.workdir = tmp_path
+    agent._tracer = RecordingTracer()
+    agent.suspended_tool_round = None
+
+    assert agent.resume_permission_request(PermissionChoice.REJECT).startswith("Error:")
+
+    assert agent._tracer.entrypoints == ["resume_permission"]
