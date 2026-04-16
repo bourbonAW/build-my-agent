@@ -46,13 +46,17 @@ stage-b = [
     "aiohttp>=3.9.0",
     "beautifulsoup4>=4.12.0",
 ]
+observability = [
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp-proto-http>=1.20",
+]
 loaders = [
     "datasets>=2.18",
     "huggingface-hub>=0.21",
     "pyyaml>=6.0",
 ]
 all = [
-    "bourbon[dev,stage-b]",
+    "bourbon[dev,stage-b,observability]",
 ]
 
 [project.scripts]
