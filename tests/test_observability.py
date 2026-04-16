@@ -3,6 +3,7 @@
 import pytest
 
 from bourbon.config import Config, ObservabilityConfig
+from bourbon.observability.manager import ObservabilityManager, _resolve_trace_endpoint
 from bourbon.observability.tracer import BourbonTracer
 
 
@@ -53,3 +54,23 @@ def test_noop_tracer_exceptions_propagate():
     with pytest.raises(ValueError):
         with tracer.agent_step(workdir="/tmp", entrypoint="step"):
             raise ValueError("boom")
+
+
+def test_manager_disabled_returns_noop_even_with_env(monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    manager = ObservabilityManager(ObservabilityConfig(enabled=False))
+    assert manager.get_tracer().enabled is False
+
+
+def test_resolve_trace_endpoint_prefers_trace_specific_env(monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://trace:4318/v1/traces")
+    cfg = ObservabilityConfig(enabled=True, otlp_endpoint="http://config:4318")
+    assert _resolve_trace_endpoint(cfg) == "http://trace:4318/v1/traces"
+
+
+def test_resolve_trace_endpoint_appends_trace_path(monkeypatch):
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    cfg = ObservabilityConfig(enabled=True, otlp_endpoint="http://localhost:4318")
+    assert _resolve_trace_endpoint(cfg) == "http://localhost:4318/v1/traces"
