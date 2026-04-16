@@ -111,6 +111,25 @@ class TasksConfig:
 
 
 @dataclass
+class ObservabilityConfig:
+    """OpenTelemetry observability configuration."""
+
+    enabled: bool = False
+    service_name: str = "bourbon"
+    otlp_endpoint: str = ""
+    otlp_headers: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ObservabilityConfig":
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            service_name=str(data.get("service_name", "bourbon")),
+            otlp_endpoint=str(data.get("otlp_endpoint", "")),
+            otlp_headers=dict(data.get("otlp_headers", {})),
+        )
+
+
+@dataclass
 class Config:
     """Root configuration."""
 
@@ -118,6 +137,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     tasks: TasksConfig = field(default_factory=TasksConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     access_control: dict = field(
         default_factory=lambda: {
@@ -190,6 +210,7 @@ class Config:
 
         ui_data = data.get("ui", {})
         tasks_data = data.get("tasks", {})
+        observability_data = data.get("observability", {})
         mcp_data = data.get("mcp", {})
         access_control_data = data.get("access_control", {})
         sandbox_data = data.get("sandbox", {})
@@ -208,6 +229,7 @@ class Config:
             ),
             ui=UIConfig(**ui_data),
             tasks=TasksConfig(**tasks_data),
+            observability=ObservabilityConfig.from_dict(observability_data),
             mcp=MCPConfig.from_dict(mcp_data),
             access_control=_deep_merge(Config().access_control, access_control_data),
             sandbox=_deep_merge(Config().sandbox, sandbox_data),
@@ -262,6 +284,12 @@ class Config:
                 "enabled": self.tasks.enabled,
                 "storage_dir": self.tasks.storage_dir,
                 "default_list_id": self.tasks.default_list_id,
+            },
+            "observability": {
+                "enabled": self.observability.enabled,
+                "service_name": self.observability.service_name,
+                "otlp_endpoint": self.observability.otlp_endpoint,
+                "otlp_headers": self.observability.otlp_headers,
             },
             "mcp": self.mcp.to_dict(),
             "access_control": self.access_control,
