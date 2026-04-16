@@ -56,7 +56,7 @@ loaders = [
     "pyyaml>=6.0",
 ]
 all = [
-    "bourbon[dev,stage-b,observability]",
+    "bourbon[stage-b,observability,loaders]",
 ]
 
 [project.scripts]

@@ -44,7 +44,7 @@ class BourbonTracer:
     @staticmethod
     def _load_status_code() -> Any:
         try:
-            from opentelemetry.trace import StatusCode  # type: ignore[import-untyped]
+            from opentelemetry.trace import StatusCode  # type: ignore[import-untyped,unused-ignore]
 
             return StatusCode
         except ImportError:
