@@ -3,8 +3,8 @@
 import time
 import warnings
 from collections.abc import Callable
+from contextlib import contextmanager, suppress
 from typing import Any
-from contextlib import suppress
 from pathlib import Path
 from uuid import UUID
 
@@ -907,6 +907,23 @@ class Agent:
             ),
         )
 
+    @contextmanager
+    def _direct_tool_span(
+        self,
+        name: str,
+        call_id: str,
+        *,
+        is_error: bool = False,
+        error_type: str = "tool_error",
+        message: str = "",
+    ):
+        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+        with tracer.tool_call(name=name, call_id=call_id, concurrent=False) as span:
+            if is_error:
+                tracer.mark_error(span, error_type, message)
+            span.set_attribute("bourbon.tool.is_error", is_error)
+            yield span
+
     def _append_task_nudge_if_due(
         self,
         tool_turn_msg: TranscriptMessage,
@@ -998,37 +1015,73 @@ class Agent:
             self.session_permissions.add(request.match_candidate)
 
         if choice == PermissionChoice.REJECT:
-            results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": request.tool_use_id,
-                    "content": f"Rejected by user: {request.reason}",
-                    "is_error": True,
-                }
-            )
-        else:
-            denial = self._subagent_tool_denial(request.tool_name)
-            if denial is not None:
+            with self._direct_tool_span(
+                request.tool_name,
+                request.tool_use_id,
+                is_error=True,
+                error_type="permission_rejected",
+                message=request.reason,
+            ):
                 results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": request.tool_use_id,
-                        "content": denial,
+                        "content": f"Rejected by user: {request.reason}",
                         "is_error": True,
                     }
                 )
+        else:
+            denial = self._subagent_tool_denial(request.tool_name)
+            if denial is not None:
+                with self._direct_tool_span(
+                    request.tool_name,
+                    request.tool_use_id,
+                    is_error=True,
+                    error_type="subagent_tool_denial",
+                    message=denial,
+                ):
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": request.tool_use_id,
+                            "content": denial,
+                            "is_error": True,
+                        }
+                    )
             else:
-                results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": request.tool_use_id,
-                        "content": self._execute_regular_tool(
+                with self._direct_tool_span(
+                    request.tool_name,
+                    request.tool_use_id,
+                ) as span:
+                    if "_execute_regular_tool" in getattr(self, "__dict__", {}):
+                        output = self._execute_regular_tool(
                             request.tool_name,
                             request.tool_input,
                             skip_policy_check=True,
-                        ),
+                        )
+                        outcome = (
+                            output
+                            if isinstance(output, ToolExecutionOutcome)
+                            else ToolExecutionOutcome(content=str(output))
+                        )
+                    else:
+                        outcome = self._execute_regular_tool_outcome(
+                            request.tool_name,
+                            request.tool_input,
+                            skip_policy_check=True,
+                        )
+                    if outcome.is_error:
+                        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+                        tracer.mark_error(span, outcome.error_type, outcome.error_message)
+                        span.set_attribute("bourbon.tool.is_error", True)
+                    result = {
+                        "type": "tool_result",
+                        "tool_use_id": request.tool_use_id,
+                        "content": outcome.content,
                     }
-                )
+                    if outcome.is_error:
+                        result["is_error"] = True
+                    results.append(result)
 
         remaining_blocks = suspended.tool_use_blocks[suspended.next_tool_index + 1 :]
         if remaining_blocks:
@@ -1259,61 +1312,78 @@ class Agent:
             denial = self._subagent_tool_denial(tool_name)
             if denial is not None:
                 fill_queue_results()
-                direct_start(tool_name, tool_input)
-                results[index] = {
-                    "type": "tool_result",
-                    "tool_use_id": tool_id,
-                    "content": str(denial)[:50000],
-                    "is_error": True,
-                }
-                direct_end(tool_name, str(denial))
+                with self._direct_tool_span(
+                    tool_name,
+                    tool_id,
+                    is_error=True,
+                    error_type="subagent_tool_denial",
+                    message=str(denial),
+                ):
+                    direct_start(tool_name, tool_input)
+                    results[index] = {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": str(denial)[:50000],
+                        "is_error": True,
+                    }
+                    direct_end(tool_name, str(denial))
                 continue
 
             if tool_name == "compress":
                 fill_queue_results()
-                direct_start(tool_name, tool_input)
-                manual_compact = True
-                output = "Compressing context..."
-                results[index] = {
-                    "type": "tool_result",
-                    "tool_use_id": tool_id,
-                    "content": output,
-                }
-                direct_end(tool_name, output)
+                with self._direct_tool_span(tool_name, tool_id):
+                    direct_start(tool_name, tool_input)
+                    manual_compact = True
+                    output = "Compressing context..."
+                    results[index] = {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": output,
+                    }
+                    direct_end(tool_name, output)
                 continue
 
             permission = self._permission_decision_for_tool(tool_name, tool_input)
             if permission.action == PermissionAction.DENY:
                 fill_queue_results()
-                direct_start(tool_name, tool_input)
-                output = f"Denied: {permission.reason}"
-                results[index] = {
-                    "type": "tool_result",
-                    "tool_use_id": tool_id,
-                    "content": output,
-                }
-                direct_end(tool_name, output)
+                with self._direct_tool_span(
+                    tool_name,
+                    tool_id,
+                    is_error=True,
+                    error_type="permission_denied",
+                    message=permission.reason,
+                ):
+                    direct_start(tool_name, tool_input)
+                    output = f"Denied: {permission.reason}"
+                    results[index] = {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": output,
+                    }
+                    direct_end(tool_name, output)
                 continue
 
             if permission.action == PermissionAction.ASK:
                 fill_queue_results()
-                direct_start(tool_name, tool_input)
-                completed = [result for result in results if result is not None]
-                self._suspend_tool_round(
-                    source_assistant_uuid=source_assistant_uuid,
-                    tool_use_blocks=tool_use_blocks,
-                    task_nudge_tool_use_blocks=task_nudge_tool_use_blocks,
-                    completed_results=completed,
-                    next_tool_index=index,
-                    request=build_permission_request(
-                        tool_name=tool_name,
-                        tool_input=tool_input,
-                        tool_use_id=tool_id,
-                        decision=permission,
-                        workdir=self.workdir,
-                    ),
-                )
-                direct_end(tool_name, "Requires permission")
+                with self._direct_tool_span(tool_name, tool_id) as span:
+                    direct_start(tool_name, tool_input)
+                    completed = [result for result in results if result is not None]
+                    self._suspend_tool_round(
+                        source_assistant_uuid=source_assistant_uuid,
+                        tool_use_blocks=tool_use_blocks,
+                        task_nudge_tool_use_blocks=task_nudge_tool_use_blocks,
+                        completed_results=completed,
+                        next_tool_index=index,
+                        request=build_permission_request(
+                            tool_name=tool_name,
+                            tool_input=tool_input,
+                            tool_use_id=tool_id,
+                            decision=permission,
+                            workdir=self.workdir,
+                        ),
+                    )
+                    span.set_attribute("bourbon.tool.suspended", True)
+                    direct_end(tool_name, "Requires permission")
                 return completed
 
             tool_obj = get_tool_with_metadata(tool_name)
@@ -1322,15 +1392,22 @@ class Agent:
                 continue
 
             fill_queue_results()
-            direct_start(tool_name, tool_input)
-            output = f"Unknown tool: {tool_name}"
-            results[index] = {
-                "type": "tool_result",
-                "tool_use_id": tool_id,
-                "content": output,
-                "is_error": True,
-            }
-            direct_end(tool_name, output)
+            with self._direct_tool_span(
+                tool_name,
+                tool_id,
+                is_error=True,
+                error_type="unknown_tool",
+                message=tool_name,
+            ):
+                direct_start(tool_name, tool_input)
+                output = f"Unknown tool: {tool_name}"
+                results[index] = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": output,
+                    "is_error": True,
+                }
+                direct_end(tool_name, output)
 
         fill_queue_results()
 

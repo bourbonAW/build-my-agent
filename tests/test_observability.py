@@ -12,7 +12,8 @@ from bourbon.agent import Agent
 from bourbon.config import Config, ObservabilityConfig
 from bourbon.observability.manager import ObservabilityManager, _resolve_trace_endpoint
 from bourbon.observability.tracer import BourbonTracer
-from bourbon.permissions import PermissionChoice
+from bourbon.permissions import PermissionAction, PermissionChoice, PermissionDecision, PermissionRequest
+from bourbon.permissions.runtime import SuspendedToolRound
 
 
 def test_observability_config_defaults():
@@ -295,6 +296,10 @@ class ToolRecordingTracer:
         self.tool_calls = []
 
     @contextmanager
+    def agent_step(self, workdir: str, entrypoint: str = "step"):
+        yield object()
+
+    @contextmanager
     def tool_call(self, name: str, call_id: str, concurrent: bool):
         span = RecordingSpan()
         self.tool_calls.append(
@@ -475,3 +480,180 @@ def test_regular_tool_outcome_marks_policy_denial_error():
     assert outcome.content == "Denied: denied by policy"
     assert outcome.is_error is True
     assert outcome.error_type == "permission_denied"
+
+
+def make_direct_tool_agent(tmp_path):
+    agent = object.__new__(Agent)
+    agent.workdir = tmp_path
+    agent._tracer = ToolRecordingTracer()
+    agent.on_tool_start = None
+    agent.on_tool_end = None
+    agent.active_permission_request = None
+    agent.suspended_tool_round = None
+    agent.session_permissions = SimpleNamespace(add=lambda candidate: None)
+    agent._subagent_tool_denial = lambda tool_name: None
+    agent._permission_decision_for_tool = lambda tool_name, tool_input: PermissionDecision(
+        action=PermissionAction.ALLOW,
+        reason="allowed",
+    )
+    agent._manual_compact = lambda: None
+    agent._execute_regular_tool_outcome = lambda *args, **kwargs: __import__(
+        "bourbon.tools.execution_queue", fromlist=["ToolExecutionOutcome"]
+    ).ToolExecutionOutcome(content="ok")
+    agent._build_tool_results_transcript_message = lambda results, source_uuid: SimpleNamespace(
+        results=results
+    )
+    agent._append_task_nudge_if_due = lambda *args, **kwargs: None
+    agent._run_conversation_loop = lambda: "continued"
+    agent.session = SimpleNamespace(add_message=lambda msg: None, save=lambda: None)
+    return agent
+
+
+def test_direct_tool_span_records_subagent_tool_denial(tmp_path):
+    agent = make_direct_tool_agent(tmp_path)
+    agent._subagent_tool_denial = lambda tool_name: "Denied for subagent"
+
+    results = agent._execute_tools(
+        [{"id": "deny1", "name": "Bash", "input": {}}],
+        source_assistant_uuid="assistant",
+    )
+
+    assert results[0]["is_error"] is True
+    call = agent._tracer.tool_calls[0]
+    assert call["name"] == "Bash"
+    assert call["span"].attributes["bourbon.tool.is_error"] is True
+    assert call["span"].attributes["error.type"] == "subagent_tool_denial"
+
+
+def test_direct_tool_span_records_compress(tmp_path):
+    agent = make_direct_tool_agent(tmp_path)
+    compacted = []
+    agent._manual_compact = lambda: compacted.append(True)
+
+    results = agent._execute_tools(
+        [{"id": "compact1", "name": "compress", "input": {}}],
+        source_assistant_uuid="assistant",
+    )
+
+    assert results[0]["content"] == "Compressing context..."
+    assert compacted == [True]
+    call = agent._tracer.tool_calls[0]
+    assert call["name"] == "compress"
+    assert call["span"].attributes["bourbon.tool.is_error"] is False
+
+
+def test_direct_tool_span_records_policy_denial(tmp_path):
+    agent = make_direct_tool_agent(tmp_path)
+    agent._permission_decision_for_tool = lambda tool_name, tool_input: PermissionDecision(
+        action=PermissionAction.DENY,
+        reason="blocked",
+    )
+
+    results = agent._execute_tools(
+        [{"id": "deny-policy", "name": "Read", "input": {}}],
+        source_assistant_uuid="assistant",
+    )
+
+    assert results[0]["content"] == "Denied: blocked"
+    call = agent._tracer.tool_calls[0]
+    assert call["span"].attributes["bourbon.tool.is_error"] is True
+    assert call["span"].attributes["error.type"] == "permission_denied"
+
+
+def test_direct_tool_span_records_permission_ask(tmp_path):
+    agent = make_direct_tool_agent(tmp_path)
+    agent._permission_decision_for_tool = lambda tool_name, tool_input: PermissionDecision(
+        action=PermissionAction.ASK,
+        reason="needs approval",
+    )
+
+    results = agent._execute_tools(
+        [{"id": "ask1", "name": "Bash", "input": {"command": "pip install flask"}}],
+        source_assistant_uuid="assistant",
+    )
+
+    assert results == []
+    assert agent.active_permission_request is not None
+    call = agent._tracer.tool_calls[0]
+    assert call["span"].attributes["bourbon.tool.is_error"] is False
+    assert call["span"].attributes["bourbon.tool.suspended"] is True
+
+
+def test_direct_tool_span_records_unknown_tool(tmp_path, monkeypatch):
+    agent = make_direct_tool_agent(tmp_path)
+    monkeypatch.setattr("bourbon.agent.get_tool_with_metadata", lambda name: None)
+
+    results = agent._execute_tools(
+        [{"id": "unknown1", "name": "MissingTool", "input": {}}],
+        source_assistant_uuid="assistant",
+    )
+
+    assert results[0]["is_error"] is True
+    call = agent._tracer.tool_calls[0]
+    assert call["name"] == "MissingTool"
+    assert call["span"].attributes["bourbon.tool.is_error"] is True
+    assert call["span"].attributes["error.type"] == "unknown_tool"
+
+
+def make_permission_request(tool_name: str = "Bash") -> PermissionRequest:
+    return PermissionRequest(
+        request_id="req1",
+        tool_use_id="tool1",
+        tool_name=tool_name,
+        tool_input={"command": "pip install flask"},
+        title="Needs approval",
+        description="Approve",
+        reason="needs approval",
+    )
+
+
+def suspend_direct_tool_agent(agent, request: PermissionRequest) -> None:
+    agent.suspended_tool_round = SuspendedToolRound(
+        source_assistant_uuid="assistant",
+        tool_use_blocks=[
+            {
+                "id": request.tool_use_id,
+                "name": request.tool_name,
+                "input": request.tool_input,
+            }
+        ],
+        completed_results=[],
+        next_tool_index=0,
+        active_request=request,
+    )
+
+
+def test_resume_permission_request_reject_records_tool_span(tmp_path):
+    agent = make_direct_tool_agent(tmp_path)
+    suspend_direct_tool_agent(agent, make_permission_request())
+
+    assert agent.resume_permission_request(PermissionChoice.REJECT) == "continued"
+
+    call = agent._tracer.tool_calls[0]
+    assert call["name"] == "Bash"
+    assert call["span"].attributes["bourbon.tool.is_error"] is True
+    assert call["span"].attributes["error.type"] == "permission_rejected"
+
+
+def test_resume_permission_request_approved_execution_records_tool_span(tmp_path):
+    agent = make_direct_tool_agent(tmp_path)
+    suspend_direct_tool_agent(agent, make_permission_request())
+
+    assert agent.resume_permission_request(PermissionChoice.ALLOW_ONCE) == "continued"
+
+    call = agent._tracer.tool_calls[0]
+    assert call["name"] == "Bash"
+    assert call["span"].attributes["bourbon.tool.is_error"] is False
+
+
+def test_resume_permission_request_subagent_denial_after_approval_records_tool_span(tmp_path):
+    agent = make_direct_tool_agent(tmp_path)
+    agent._subagent_tool_denial = lambda tool_name: "Denied after approval"
+    suspend_direct_tool_agent(agent, make_permission_request())
+
+    assert agent.resume_permission_request(PermissionChoice.ALLOW_ONCE) == "continued"
+
+    call = agent._tracer.tool_calls[0]
+    assert call["name"] == "Bash"
+    assert call["span"].attributes["bourbon.tool.is_error"] is True
+    assert call["span"].attributes["error.type"] == "subagent_tool_denial"
