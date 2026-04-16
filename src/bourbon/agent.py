@@ -16,6 +16,7 @@ from bourbon.config import Config
 from bourbon.debug import debug_log
 from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
+from bourbon.observability.manager import ObservabilityManager
 from bourbon.permissions import (
     PermissionAction,
     PermissionChoice,
@@ -179,6 +180,9 @@ class Agent:
         sandbox_config = config.sandbox if hasattr(config, "sandbox") else {}
         self.sandbox = SandboxManager(config=sandbox_config, workdir=self.workdir, audit=self.audit)
 
+        self._obs_manager = ObservabilityManager(config.observability)
+        self._tracer = self._obs_manager.get_tracer()
+
         # Permission runtime state
         self.session_permissions = SessionPermissionStore()
         self.suspended_tool_round: SuspendedToolRound | None = None
@@ -251,6 +255,10 @@ class Agent:
     def shutdown_mcp_sync(self, timeout: float | None = None) -> None:
         """Disconnect MCP connections from sync code."""
         self.mcp.disconnect_all_sync(timeout=timeout)
+
+    def shutdown_observability(self) -> None:
+        """Flush pending observability spans. Safe to call multiple times."""
+        self._obs_manager.shutdown()
 
     def _finalize_mcp_initialization(self, results: dict) -> dict:
         """MCP init complete; next step() call will rebuild system_prompt automatically."""

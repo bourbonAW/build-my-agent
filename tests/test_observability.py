@@ -1,5 +1,7 @@
 """Tests for OpenTelemetry observability integration."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from bourbon.config import Config, ObservabilityConfig
@@ -74,3 +76,45 @@ def test_resolve_trace_endpoint_appends_trace_path(monkeypatch):
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
     cfg = ObservabilityConfig(enabled=True, otlp_endpoint="http://localhost:4318")
     assert _resolve_trace_endpoint(cfg) == "http://localhost:4318/v1/traces"
+
+
+def test_agent_gets_instance_tracer(monkeypatch, tmp_path):
+    from bourbon.agent import Agent
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("bourbon.agent.create_client", lambda cfg: SimpleNamespace(model="m"))
+    cfg = Config()
+    cfg.observability = ObservabilityConfig(enabled=False)
+    agent = Agent(config=cfg, workdir=tmp_path)
+    assert isinstance(agent._tracer, BourbonTracer)
+    assert agent._tracer.enabled is False
+
+
+def test_disabled_agent_does_not_reuse_enabled_tracer(monkeypatch, tmp_path):
+    from bourbon.agent import Agent
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("bourbon.agent.create_client", lambda cfg: SimpleNamespace(model="m"))
+    enabled_tracer = BourbonTracer(otel_tracer=object())
+    disabled_tracer = BourbonTracer(otel_tracer=None)
+
+    class FakeManager:
+        def __init__(self, config):
+            self.config = config
+
+        def get_tracer(self):
+            return enabled_tracer if self.config.enabled else disabled_tracer
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr("bourbon.agent.ObservabilityManager", FakeManager, raising=False)
+
+    enabled = Config()
+    enabled.observability = ObservabilityConfig(enabled=True, otlp_endpoint="http://otel:4318")
+    disabled = Config()
+    disabled.observability = ObservabilityConfig(enabled=False)
+    first = Agent(config=enabled, workdir=tmp_path / "a")
+    second = Agent(config=disabled, workdir=tmp_path / "b")
+    assert first._tracer is enabled_tracer
+    assert second._tracer is disabled_tracer

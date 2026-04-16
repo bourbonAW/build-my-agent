@@ -354,6 +354,7 @@ class REPL:
                     self.console.print("\n[dim]Goodbye![/dim]")
                     break
         finally:
+            self.agent.shutdown_observability()
             self._shutdown_mcp()
 
     def _process_input(self, user_input: str) -> None:
