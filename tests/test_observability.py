@@ -1,10 +1,14 @@
 """Tests for OpenTelemetry observability integration."""
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from types import SimpleNamespace
 
 import pytest
 
+from bourbon.access_control.capabilities import CapabilityType
+from bourbon.access_control.policy import CapabilityDecision, PolicyAction, PolicyDecision
+from bourbon.agent import Agent
 from bourbon.config import Config, ObservabilityConfig
 from bourbon.observability.manager import ObservabilityManager, _resolve_trace_endpoint
 from bourbon.observability.tracer import BourbonTracer
@@ -281,3 +285,193 @@ def test_streaming_llm_call_records_span_attributes(tmp_path):
     assert call["span"].attributes["gen_ai.response.finish_reasons"] == ["end_turn"]
     assert call["span"].attributes["gen_ai.usage.input_tokens"] == 5
     assert call["span"].attributes["gen_ai.usage.output_tokens"] == 3
+
+
+CURRENT_ROOT = ContextVar("CURRENT_ROOT", default=None)
+
+
+class ToolRecordingTracer:
+    def __init__(self):
+        self.tool_calls = []
+
+    @contextmanager
+    def tool_call(self, name: str, call_id: str, concurrent: bool):
+        span = RecordingSpan()
+        self.tool_calls.append(
+            {
+                "name": name,
+                "call_id": call_id,
+                "concurrent": concurrent,
+                "parent": CURRENT_ROOT.get(),
+                "span": span,
+            }
+        )
+        yield span
+
+    def mark_error(self, span, error_type: str = "tool_error", message: str = ""):
+        span.set_attribute("error.type", error_type)
+        span.set_attribute("error.message", message)
+
+    def record_error(self, span, exc: Exception):
+        span.set_attribute("exception.type", type(exc).__name__)
+        self.mark_error(span, type(exc).__name__, str(exc))
+
+
+def make_queue_tool(*, concurrent: bool):
+    return SimpleNamespace(concurrent_safe_for=lambda tool_input: concurrent)
+
+
+def make_queue_block(tool_id: str, name: str = "Read"):
+    return {"id": tool_id, "name": name, "input": {}}
+
+
+def test_tool_execution_queue_preserves_parent_context_for_parallel_and_serial_tools():
+    from bourbon.tools.execution_queue import ToolExecutionQueue
+
+    tracer = ToolRecordingTracer()
+    q = ToolExecutionQueue(execute_fn=lambda block: "ok", tracer=tracer)
+    q.add(make_queue_block("c1"), make_queue_tool(concurrent=True), 0)
+    q.add(make_queue_block("c2"), make_queue_tool(concurrent=True), 1)
+    q.add(make_queue_block("s1"), make_queue_tool(concurrent=False), 2)
+
+    token = CURRENT_ROOT.set("root-span")
+    try:
+        q.execute_all()
+    finally:
+        CURRENT_ROOT.reset(token)
+
+    assert [call["parent"] for call in tracer.tool_calls] == [
+        "root-span",
+        "root-span",
+        "root-span",
+    ]
+
+
+def test_tool_execution_outcome_marks_tool_span_error():
+    from bourbon.tools.execution_queue import ToolExecutionOutcome, ToolExecutionQueue
+
+    tracer = ToolRecordingTracer()
+    q = ToolExecutionQueue(
+        execute_fn=lambda block: ToolExecutionOutcome(
+            content="bad",
+            is_error=True,
+            error_type="custom_tool_error",
+            error_message="bad things happened",
+        ),
+        tracer=tracer,
+    )
+    q.add(make_queue_block("err"), make_queue_tool(concurrent=False), 0)
+
+    results = q.execute_all()
+
+    assert results[0]["is_error"] is True
+    assert tracer.tool_calls[0]["span"].attributes["bourbon.tool.is_error"] is True
+    assert tracer.tool_calls[0]["span"].attributes["error.type"] == "custom_tool_error"
+
+
+def test_tool_execution_outcome_success_can_start_with_error_text():
+    from bourbon.tools.execution_queue import ToolExecutionOutcome, ToolExecutionQueue
+
+    tracer = ToolRecordingTracer()
+    q = ToolExecutionQueue(
+        execute_fn=lambda block: ToolExecutionOutcome(
+            content="Error: no matches found",
+            is_error=False,
+        ),
+        tracer=tracer,
+    )
+    q.add(make_queue_block("ok"), make_queue_tool(concurrent=False), 0)
+
+    results = q.execute_all()
+
+    assert results == [
+        {"type": "tool_result", "tool_use_id": "ok", "content": "Error: no matches found"}
+    ]
+    assert tracer.tool_calls[0]["span"].attributes["bourbon.tool.is_error"] is False
+
+
+def test_tool_execution_exception_marks_tool_span_error():
+    from bourbon.tools.execution_queue import ToolExecutionQueue
+
+    def bad_execute(block):
+        raise ValueError("boom")
+
+    tracer = ToolRecordingTracer()
+    q = ToolExecutionQueue(execute_fn=bad_execute, tracer=tracer)
+    q.add(make_queue_block("boom"), make_queue_tool(concurrent=False), 0)
+
+    results = q.execute_all()
+
+    assert results[0]["is_error"] is True
+    assert results[0]["content"] == "Error: boom"
+    assert tracer.tool_calls[0]["span"].attributes["bourbon.tool.is_error"] is True
+    assert tracer.tool_calls[0]["span"].attributes["error.type"] == "ValueError"
+
+
+def allow_policy_decision():
+    return PolicyDecision(
+        action=PolicyAction.ALLOW,
+        reason="allowed",
+        decisions=[
+            CapabilityDecision(
+                capability=CapabilityType.FILE_READ,
+                action=PolicyAction.ALLOW,
+                matched_rule="default",
+            )
+        ],
+    )
+
+
+def deny_policy_decision():
+    return PolicyDecision(
+        action=PolicyAction.DENY,
+        reason="denied by policy",
+        decisions=[
+            CapabilityDecision(
+                capability=CapabilityType.FILE_READ,
+                action=PolicyAction.DENY,
+                matched_rule="deny",
+            )
+        ],
+    )
+
+
+def make_regular_tool_agent():
+    agent = object.__new__(Agent)
+    agent.workdir = "/tmp"
+    agent.access_controller = SimpleNamespace(evaluate=lambda name, inp: allow_policy_decision())
+    agent._record_policy_decision = lambda **kwargs: None
+    agent.sandbox = SimpleNamespace(enabled=False)
+    agent.audit = SimpleNamespace(record=lambda event: None)
+    agent.skills = SimpleNamespace()
+    agent._discovered_tools = set()
+    agent._tool_consecutive_failures = {}
+    agent._max_tool_consecutive_failures = 3
+    return agent
+
+
+def test_regular_tool_outcome_keeps_error_prefixed_success_successful(monkeypatch):
+    agent = make_regular_tool_agent()
+    registry = SimpleNamespace(call=lambda name, inp, ctx: "Error: no matches found")
+    monkeypatch.setattr("bourbon.agent.get_registry", lambda: registry)
+    monkeypatch.setattr("bourbon.agent.get_tool_with_metadata", lambda name: None)
+
+    outcome = agent._execute_regular_tool_outcome(
+        "Grep",
+        {"pattern": "missing"},
+        skip_policy_check=True,
+    )
+
+    assert outcome.content == "Error: no matches found"
+    assert outcome.is_error is False
+
+
+def test_regular_tool_outcome_marks_policy_denial_error():
+    agent = make_regular_tool_agent()
+    agent.access_controller = SimpleNamespace(evaluate=lambda name, inp: deny_policy_decision())
+
+    outcome = agent._execute_regular_tool_outcome("Read", {"path": "secret.txt"})
+
+    assert outcome.content == "Denied: denied by policy"
+    assert outcome.is_error is True
+    assert outcome.error_type == "permission_denied"

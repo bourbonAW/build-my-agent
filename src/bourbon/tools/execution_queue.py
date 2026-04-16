@@ -5,10 +5,13 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import Context, copy_context
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+
+from bourbon.observability.tracer import BourbonTracer
 
 ToolBlock = dict[str, Any]
 ToolResult = dict[str, Any]
@@ -35,6 +38,14 @@ class TrackedTool:
     future: Future[None] | None = None
 
 
+@dataclass(frozen=True)
+class ToolExecutionOutcome:
+    content: str
+    is_error: bool = False
+    error_type: str = "tool_error"
+    error_message: str = ""
+
+
 class ToolExecutionQueue:
     """Execute concurrent-safe tools in parallel and serial tools exclusively."""
 
@@ -45,6 +56,7 @@ class ToolExecutionQueue:
         execute_fn: Callable[[ToolBlock], Any],
         on_tool_start: Callable[[str, ToolBlock], None] | None = None,
         on_tool_end: Callable[[str, str], None] | None = None,
+        tracer: BourbonTracer | None = None,
     ) -> None:
         self._tools: list[TrackedTool] = []
         self._lock = threading.Lock()
@@ -56,6 +68,8 @@ class ToolExecutionQueue:
         self._execute_fn = execute_fn
         self._on_tool_start = on_tool_start
         self._on_tool_end = on_tool_end
+        self._tracer = tracer or BourbonTracer(otel_tracer=None)
+        self._parent_context: Context | None = None
 
     def add(self, block: ToolBlock, tool: Any, index: int) -> None:
         """Enqueue one tool call. Call before execute_all()."""
@@ -78,6 +92,7 @@ class ToolExecutionQueue:
     def execute_all(self) -> list[ToolResult]:
         """Run all queued tools and return tool_result blocks in original order."""
         try:
+            self._parent_context = copy_context()
             self._process_queue()
             self._wait_all()
             with self._lock:
@@ -88,6 +103,9 @@ class ToolExecutionQueue:
                 ]
         finally:
             self._thread_pool.shutdown(wait=True)
+
+    def _copy_parent_context(self) -> Context:
+        return self._parent_context.copy() if self._parent_context is not None else copy_context()
 
     def _can_execute(self, concurrent: bool) -> bool:
         """Return whether a queued tool can start now. Requires self._lock."""
@@ -110,13 +128,17 @@ class ToolExecutionQueue:
                     break
 
         for tool in to_start:
-            tool.future = self._thread_pool.submit(self._run_tool, tool)
+            ctx = self._copy_parent_context()
+            tool.future = self._thread_pool.submit(ctx.run, self._run_tool, tool)
             if tool.concurrent:
+                callback_ctx = self._copy_parent_context()
+
                 def on_done(
                     _future: Future[None],
                     tracked: TrackedTool = tool,
+                    cb_ctx: Context = callback_ctx,
                 ) -> None:
-                    self._on_tool_done(tracked)
+                    cb_ctx.run(self._on_tool_done, tracked)
 
                 tool.future.add_done_callback(on_done)
 
@@ -126,11 +148,34 @@ class ToolExecutionQueue:
         self._safe_callback(self._on_tool_start, name, tool_input)
 
         is_error = False
-        try:
-            raw_output = self._execute_fn(tool.block)
-        except Exception as exc:
-            raw_output = f"Error: {exc}"
-            is_error = True
+        error_type = "tool_error"
+        error_message = ""
+        with self._tracer.tool_call(
+            name=name,
+            call_id=tool.block.get("id", ""),
+            concurrent=tool.concurrent,
+        ) as _tool_span:
+            try:
+                raw = self._execute_fn(tool.block)
+            except Exception as exc:
+                raw_output = f"Error: {exc}"
+                is_error = True
+                error_type = type(exc).__name__
+                error_message = str(exc)
+                self._tracer.record_error(_tool_span, exc)
+            else:
+                if isinstance(raw, ToolExecutionOutcome):
+                    raw_output = raw.content
+                    is_error = raw.is_error
+                    error_type = raw.error_type
+                    error_message = raw.error_message or raw.content
+                else:
+                    raw_output = str(raw)
+                    is_error = False
+
+                if is_error:
+                    self._tracer.mark_error(_tool_span, error_type, error_message)
+            _tool_span.set_attribute("bourbon.tool.is_error", is_error)
 
         output = str(raw_output)
         tool.result = {

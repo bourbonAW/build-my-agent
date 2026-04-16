@@ -52,7 +52,7 @@ from bourbon.tools import (
     get_registry,
     get_tool_with_metadata,
 )
-from bourbon.tools.execution_queue import ToolExecutionQueue
+from bourbon.tools.execution_queue import ToolExecutionOutcome, ToolExecutionQueue
 
 
 class AgentError(Exception):
@@ -1065,6 +1065,20 @@ class Agent:
         skip_policy_check: bool = False,
     ) -> str:
         """Execute one tool call with policy, audit, and sandbox integration."""
+        return self._execute_regular_tool_outcome(
+            tool_name,
+            tool_input,
+            skip_policy_check=skip_policy_check,
+        ).content
+
+    def _execute_regular_tool_outcome(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        *,
+        skip_policy_check: bool = False,
+    ) -> ToolExecutionOutcome:
+        """Execute one tool call and return structured success/error metadata."""
         tool_metadata = get_tool_with_metadata(tool_name)
 
         if not skip_policy_check:
@@ -1076,10 +1090,20 @@ class Agent:
             )
 
             if decision.action == PolicyAction.DENY:
-                return f"Denied: {decision.reason}"
+                return ToolExecutionOutcome(
+                    content=f"Denied: {decision.reason}",
+                    is_error=True,
+                    error_type="permission_denied",
+                    error_message=decision.reason,
+                )
 
             if decision.action == PolicyAction.NEED_APPROVAL:
-                return f"Requires approval: {decision.reason}"
+                return ToolExecutionOutcome(
+                    content=f"Requires approval: {decision.reason}",
+                    is_error=True,
+                    error_type="permission_required",
+                    error_message=decision.reason,
+                )
 
         if (
             tool_metadata
@@ -1097,18 +1121,35 @@ class Agent:
                     sandboxed=True,
                 )
             )
-            return output
+            is_error = bool(
+                getattr(sandbox_result, "timed_out", False)
+                or getattr(sandbox_result, "exit_code", 0) != 0
+            )
+            return ToolExecutionOutcome(
+                content=output,
+                is_error=is_error,
+                error_type="sandbox_error" if is_error else "tool_error",
+                error_message=output if is_error else "",
+            )
 
         # Check if this tool has exceeded consecutive failure limit.
         # Use getattr fallback to support Agent.__new__-constructed stubs in tests.
-        _failures_map = getattr(self, "_tool_consecutive_failures", {})
+        if not hasattr(self, "_tool_consecutive_failures"):
+            self._tool_consecutive_failures = {}
+        _failures_map = self._tool_consecutive_failures
         failures = _failures_map.get(tool_name, 0)
         if failures >= self._max_tool_consecutive_failures:
             # Reset counter so the tool is recoverable after the LLM backs off.
             _failures_map.pop(tool_name, None)
-            return (
+            content = (
                 f"Error: Tool '{tool_name}' has failed {failures} consecutive times. "
                 "Do not retry this tool. Try a different approach or tool."
+            )
+            return ToolExecutionOutcome(
+                content=content,
+                is_error=True,
+                error_type="tool_retry_limit",
+                error_message=content,
             )
 
         try:
@@ -1118,7 +1159,13 @@ class Agent:
             # Note: _tool_consecutive_failures read-modify-write is not atomic under
             # concurrent execution; failure counting is best-effort in parallel mode.
             _failures_map[tool_name] = failures + 1
-            return f"Error executing {tool_name}: {e}"
+            content = f"Error executing {tool_name}: {e}"
+            return ToolExecutionOutcome(
+                content=content,
+                is_error=True,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
 
         self.audit.record(
             AuditEvent.tool_call(
@@ -1131,7 +1178,7 @@ class Agent:
         # Do not inspect output text — tool output may legitimately start with "Error".
         _failures_map.pop(tool_name, None)
 
-        return output
+        return ToolExecutionOutcome(content=str(output), is_error=False)
 
     def _execute_tools(
         self,
@@ -1148,14 +1195,27 @@ class Agent:
         manual_compact = False
 
         def new_queue() -> ToolExecutionQueue:
-            return ToolExecutionQueue(
-                execute_fn=lambda block: self._execute_regular_tool(
+            def execute_block(block: dict) -> ToolExecutionOutcome:
+                if "_execute_regular_tool" in getattr(self, "__dict__", {}):
+                    output = self._execute_regular_tool(
+                        block.get("name", ""),
+                        block.get("input", {}),
+                        skip_policy_check=True,
+                    )
+                    if isinstance(output, ToolExecutionOutcome):
+                        return output
+                    return ToolExecutionOutcome(content=str(output), is_error=False)
+                return self._execute_regular_tool_outcome(
                     block.get("name", ""),
                     block.get("input", {}),
                     skip_policy_check=True,
-                ),
+                )
+
+            return ToolExecutionQueue(
+                execute_fn=execute_block,
                 on_tool_start=self.on_tool_start,
                 on_tool_end=self.on_tool_end,
+                tracer=getattr(self, "_tracer", BourbonTracer(otel_tracer=None)),
             )
 
         queue: ToolExecutionQueue | None = None
