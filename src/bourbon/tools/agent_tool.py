@@ -20,7 +20,12 @@ def get_manager(ctx: ToolContext):
 
 @register_tool(
     name="Agent",
-    description="Start a focused subagent run for isolated work.",
+    description=(
+        "Start a focused subagent run for isolated work. For parallel work whose "
+        "results are needed before continuing, issue multiple foreground Agent tool "
+        "calls in the same tool round; Bourbon waits for all results before the "
+        "next reasoning step. Use background mode only for independent work."
+    ),
     input_schema={
         "type": "object",
         "properties": {
@@ -40,7 +45,17 @@ def get_manager(ctx: ToolContext):
             },
             "model": {"type": ["string", "null"]},
             "max_turns": {"type": ["integer", "null"]},
-            "run_in_background": {"type": "boolean", "default": False},
+            "run_in_background": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "When true, return a run_id immediately instead of waiting. Use "
+                    "only when the parent can proceed without the result; otherwise "
+                    "leave false so the Agent call blocks until the subagent result "
+                    "is available. If a background result later becomes necessary, "
+                    "call AgentWait with the returned run_id."
+                ),
+            },
         },
         "required": ["description", "prompt"],
     },
@@ -97,7 +112,10 @@ def agent_tool_handler(
             run_in_background=True,
             elapsed_ms=int((time.monotonic() - started_at) * 1000),
         )
-        return f"Started background run: {run_id}\nUse `/run-show {run_id}` to check status."
+        return (
+            f"Started background run: {run_id}\n"
+            f'Use AgentWait with run_ids ["{run_id}"] if you need the result before continuing.'
+        )
 
     if not isinstance(result, AgentToolResult):
         return f"Error: Expected AgentToolResult, got {type(result).__name__}"
@@ -118,3 +136,46 @@ def agent_tool_handler(
         f"Tokens: {result.total_tokens}, Tool calls: {result.total_tool_calls}\n\n"
         f"Result:\n{result.content}"
     )
+
+
+@register_tool(
+    name="AgentWait",
+    description=(
+        "Wait for one or more background Agent runs to finish and return their outputs. "
+        "Use this after run_in_background=True when the parent needs those results "
+        "before continuing."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "run_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Background run IDs returned by Agent. If omitted or empty, wait "
+                    "for all active background runs."
+                ),
+            },
+            "timeout_seconds": {
+                "type": ["number", "null"],
+                "default": None,
+                "description": (
+                    "Maximum seconds to wait for each run. Omit to wait until completion."
+                ),
+            },
+        },
+    },
+    risk_level=RiskLevel.LOW,
+)
+def agent_wait_tool_handler(
+    *,
+    ctx: ToolContext,
+    run_ids: list[str] | None = None,
+    timeout_seconds: float | None = None,
+) -> str:
+    """Wait for background subagent runs and format their current outputs."""
+    try:
+        manager = get_manager(ctx)
+        return manager.wait_for_runs(run_ids or None, timeout=timeout_seconds)
+    except Exception as exc:
+        return f"Error: {exc}"

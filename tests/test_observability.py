@@ -1,8 +1,11 @@
 """Tests for OpenTelemetry observability integration."""
 
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
+from threading import Event
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -89,6 +92,22 @@ def test_resolve_trace_endpoint_appends_trace_path(monkeypatch):
     assert _resolve_trace_endpoint(cfg) == "http://localhost:4318/v1/traces"
 
 
+def test_create_tracer_provider_disables_sdk_atexit():
+    from bourbon.observability.manager import _create_tracer_provider
+
+    calls = []
+    resource = object()
+
+    class FakeTracerProvider:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    provider = _create_tracer_provider(FakeTracerProvider, resource)
+
+    assert isinstance(provider, FakeTracerProvider)
+    assert calls == [{"resource": resource, "shutdown_on_exit": False}]
+
+
 def test_agent_gets_instance_tracer(monkeypatch, tmp_path):
     from bourbon.agent import Agent
 
@@ -135,11 +154,16 @@ class RecordingTracer:
     def __init__(self):
         self.entrypoints = []
         self.llm_calls = []
+        self.events = []
 
     @contextmanager
     def agent_step(self, workdir: str, entrypoint: str = "step"):
         self.entrypoints.append(entrypoint)
-        yield object()
+        self.events.append(f"{entrypoint}:enter")
+        try:
+            yield object()
+        finally:
+            self.events.append(f"{entrypoint}:exit")
 
     @contextmanager
     def llm_call(self, model: str, max_tokens: int, provider: str = "anthropic"):
@@ -179,6 +203,10 @@ def make_entrypoint_agent(tmp_path):
     agent = object.__new__(Agent)
     agent.workdir = tmp_path
     agent._tracer = RecordingTracer()
+    agent._obs_manager = SimpleNamespace(
+        force_flush=lambda timeout=None: agent._tracer.events.append(f"flush:{timeout}")
+        or True
+    )
     agent._prompt_builder = AsyncPromptBuilder()
     agent._prompt_ctx = object()
     agent._context_injector = AsyncContextInjector()
@@ -202,6 +230,7 @@ def test_step_records_step_entrypoint(tmp_path):
     assert agent.step("hello") == "ok"
 
     assert agent._tracer.entrypoints == ["step"]
+    assert agent._tracer.events == ["step:enter", "step:exit", "flush:2.0"]
 
 
 def test_step_stream_records_step_stream_entrypoint(tmp_path):
@@ -210,6 +239,7 @@ def test_step_stream_records_step_stream_entrypoint(tmp_path):
     assert agent.step_stream("hello", lambda chunk: None) == "stream-ok"
 
     assert agent._tracer.entrypoints == ["step_stream"]
+    assert agent._tracer.events == ["step_stream:enter", "step_stream:exit", "flush:2.0"]
 
 
 def test_resume_permission_request_records_resume_entrypoint(tmp_path):
@@ -218,11 +248,20 @@ def test_resume_permission_request_records_resume_entrypoint(tmp_path):
     agent = object.__new__(Agent)
     agent.workdir = tmp_path
     agent._tracer = RecordingTracer()
+    agent._obs_manager = SimpleNamespace(
+        force_flush=lambda timeout=None: agent._tracer.events.append(f"flush:{timeout}")
+        or True
+    )
     agent.suspended_tool_round = None
 
     assert agent.resume_permission_request(PermissionChoice.REJECT).startswith("Error:")
 
     assert agent._tracer.entrypoints == ["resume_permission"]
+    assert agent._tracer.events == [
+        "resume_permission:enter",
+        "resume_permission:exit",
+        "flush:2.0",
+    ]
 
 
 def make_llm_loop_agent(tmp_path, llm):
@@ -795,7 +834,9 @@ def test_manager_shutdown_calls_shutdown_provider_once(monkeypatch):
 
     shutdown_once_calls = []
     monkeypatch.setattr(
-        mgr_module, "_shutdown_provider_once", lambda: shutdown_once_calls.append(True)
+        mgr_module,
+        "_shutdown_provider_once",
+        lambda timeout=None: shutdown_once_calls.append(timeout),
     )
 
     manager = object.__new__(ObservabilityManager)
@@ -805,7 +846,7 @@ def test_manager_shutdown_calls_shutdown_provider_once(monkeypatch):
 
     manager.shutdown()
 
-    assert shutdown_once_calls, (
+    assert shutdown_once_calls == [mgr_module.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS], (
         "shutdown() must call _shutdown_provider_once() to fully stop BatchSpanProcessor"
     )
 
@@ -815,7 +856,11 @@ def test_manager_shutdown_is_idempotent(monkeypatch):
     import bourbon.observability.manager as mgr_module
 
     calls = []
-    monkeypatch.setattr(mgr_module, "_shutdown_provider_once", lambda: calls.append(True))
+    monkeypatch.setattr(
+        mgr_module,
+        "_shutdown_provider_once",
+        lambda timeout=None: calls.append(timeout),
+    )
 
     manager = object.__new__(ObservabilityManager)
     manager._shutdown_called = False
@@ -826,6 +871,70 @@ def test_manager_shutdown_is_idempotent(monkeypatch):
     manager.shutdown()
 
     assert len(calls) == 1, "shutdown() must be idempotent"
+
+
+def test_shutdown_provider_once_returns_after_timeout(monkeypatch):
+    """Provider shutdown can block on exporter flush; manager shutdown must be bounded."""
+    import bourbon.observability.manager as mgr_module
+
+    shutdown_started = Event()
+    shutdown_finished = Event()
+
+    class BlockingProvider:
+        def shutdown(self):
+            shutdown_started.set()
+            time.sleep(0.2)
+            shutdown_finished.set()
+
+    monkeypatch.setattr(mgr_module, "_PROVIDER", BlockingProvider())
+    monkeypatch.setattr(mgr_module, "_PROVIDER_SHUTDOWN", False)
+
+    started_at = time.monotonic()
+    completed = mgr_module._shutdown_provider_once(timeout=0.01)
+    elapsed = time.monotonic() - started_at
+
+    assert completed is False
+    assert elapsed < 0.1
+    assert shutdown_started.is_set()
+    assert mgr_module._PROVIDER is None
+    assert mgr_module._PROVIDER_SHUTDOWN is True
+
+    assert shutdown_finished.wait(timeout=1)
+
+
+def test_manager_force_flush_delegates_to_provider_timeout_millis():
+    calls = []
+
+    class Provider:
+        def force_flush(self, timeout_millis):
+            calls.append(timeout_millis)
+            return True
+
+    manager = object.__new__(ObservabilityManager)
+    manager._provider = Provider()
+    manager._shutdown_called = False
+    manager._tracer = BourbonTracer(otel_tracer=None)
+
+    assert manager.force_flush(timeout=0.5) is True
+    assert calls == [500]
+
+
+def test_manager_force_flush_handles_missing_provider():
+    manager = object.__new__(ObservabilityManager)
+    manager._provider = None
+    manager._shutdown_called = False
+    manager._tracer = BourbonTracer(otel_tracer=None)
+
+    assert manager.force_flush(timeout=0.5) is True
+
+
+def test_agent_shutdown_observability_forwards_timeout():
+    agent = object.__new__(Agent)
+    agent._obs_manager = SimpleNamespace(shutdown=MagicMock())
+
+    agent.shutdown_observability(timeout=0.5)
+
+    agent._obs_manager.shutdown.assert_called_once_with(timeout=0.5)
 
 
 def test_inline_subagent_root_span_is_child_of_agent_tool_span():

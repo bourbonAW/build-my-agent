@@ -26,6 +26,8 @@ The `Agent` tool accepts these primary fields:
 - `model`: optional model override for the child agent.
 - `max_turns`: optional cap on child agent tool rounds.
 
+The companion `AgentWait` tool waits for background run IDs and returns their outputs when the parent agent needs those results later.
+
 Example foreground call:
 
 ```json
@@ -49,7 +51,7 @@ Example background call:
 }
 ```
 
-Background execution returns a `run_id` immediately. Use the runtime commands below to inspect or stop the job.
+Background execution returns a `run_id` immediately. Use `AgentWait` with that run ID if the parent agent needs the result before continuing.
 
 ## Subagent Types
 
@@ -63,7 +65,7 @@ Background execution returns a `run_id` immediately. Use the runtime commands be
 
 `quick_task` is for short, simple jobs with a lower turn cap.
 
-All subagent profiles block recursive subagents and parent checklist mutation. The hidden tools include `Agent`, `TodoWrite`, and `compress`, and the same deny check is enforced again if a hidden tool is somehow requested at execution time.
+All subagent profiles block recursive subagents, background-run joins, and parent checklist mutation. The hidden tools include `Agent`, `AgentWait`, `TodoWrite`, and `compress`, and the same deny check is enforced again if a hidden tool is somehow requested at execution time.
 
 ## Runtime Commands
 
@@ -81,4 +83,4 @@ Write prompts as if the child agent has no parent conversation history. Include 
 
 Prefer `explore` for read-only discovery before asking a `coder` subagent to edit. This keeps tool permissions aligned with intent and reduces accidental file changes.
 
-Use background mode only when the parent can do useful independent work. If the parent needs the result before proceeding, use foreground mode.
+Use background mode only when the parent can do useful independent work. If the parent needs the result before proceeding, use foreground mode. If a background run has already started and the result becomes necessary, use `AgentWait`; do not poll with shell sleeps or REPL commands.

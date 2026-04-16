@@ -9,6 +9,7 @@ from bourbon.tasks.constants import TASK_V2_TOOLS
 
 ALL_AGENT_DISALLOWED_TOOLS = {
     "Agent",  # no recursive subagents
+    "AgentWait",  # parent controls background joins
     "TodoWrite",  # do not pollute parent agent checklist state
     "compress",  # parent controls context compression
 }

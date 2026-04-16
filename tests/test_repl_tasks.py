@@ -48,6 +48,21 @@ def test_repl_commands_include_todos_and_tasks():
     assert "/run-stop <id>" in REPL.COMMANDS
 
 
+def test_ctrl_d_exit_uses_bounded_observability_shutdown():
+    repl = object.__new__(REPL)
+    repl.console = MagicMock()
+    repl.session = SimpleNamespace(prompt=MagicMock(side_effect=EOFError))
+    repl.style = None
+    repl.agent = SimpleNamespace(shutdown_observability=MagicMock())
+    repl._print_banner = MagicMock()
+    repl._shutdown_mcp = MagicMock()
+
+    repl.run()
+
+    repl.agent.shutdown_observability.assert_called_once_with(timeout=2.0)
+    repl._shutdown_mcp.assert_called_once_with()
+
+
 def test_todos_command_prints_legacy_todo_output(tmp_path):
     repl = _make_repl(tmp_path, todos_output="[>] Keep legacy Todo V1")
 

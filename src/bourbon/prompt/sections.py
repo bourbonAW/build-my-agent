@@ -29,6 +29,24 @@ TASK_GUIDELINES = PromptSection(
     ),
 )
 
+SUBAGENT_GUIDELINES = PromptSection(
+    name="subagent_guidelines",
+    order=25,
+    content=(
+        "SUBAGENT GUIDELINES:\n"
+        "- Use multiple foreground Agent tool calls in the same tool round when you "
+        "want parallel subagents and need their findings before continuing; Bourbon "
+        "waits for all of their results before the next reasoning step.\n"
+        "- Use run_in_background=True only when the parent can proceed without the "
+        "result. If your next step depends on the subagent output, keep foreground "
+        "mode. If you already started a background run and now need its result, use "
+        "AgentWait with the returned run_id; do not poll with shell sleeps or "
+        "/run-show.\n"
+        "- After foreground subagents return, synthesize their results directly "
+        "instead of repeating their exploration."
+    ),
+)
+
 ERROR_HANDLING = PromptSection(
     name="error_handling",
     order=30,
@@ -69,6 +87,7 @@ TASK_ADAPTABILITY = PromptSection(
 DEFAULT_SECTIONS: list[PromptSection] = [
     IDENTITY,
     TASK_GUIDELINES,
+    SUBAGENT_GUIDELINES,
     ERROR_HANDLING,
     TASK_ADAPTABILITY,
 ]

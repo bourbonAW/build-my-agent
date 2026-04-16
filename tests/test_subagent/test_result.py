@@ -36,7 +36,7 @@ def test_agent_tool_result_to_notification():
     assert "Refactor auth module" in notification
     assert "12.5s" in notification
     assert "2450" in notification
-    assert "/run-show abc123" in notification
+    assert 'AgentWait with run_ids ["abc123"]' in notification
 
 
 def test_notification_truncates_long_content():

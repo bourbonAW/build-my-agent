@@ -19,6 +19,7 @@ def test_agent_tool_appears_in_definitions():
     names = {tool["name"] for tool in definitions()}
 
     assert "Agent" in names
+    assert "AgentWait" in names
 
 
 def test_agent_tool_schema_warns_explore_cannot_run_bash():
@@ -29,6 +30,60 @@ def test_agent_tool_schema_warns_explore_cannot_run_bash():
     assert "explore" in description
     assert "read-only tools" in description
     assert "system information" in description
+
+
+def test_agent_tool_schema_explains_foreground_parallel_waiting():
+    agent_def = next(tool for tool in definitions() if tool["name"] == "Agent")
+
+    tool_description = agent_def["description"]
+    background_description = agent_def["input_schema"]["properties"]["run_in_background"][
+        "description"
+    ]
+
+    assert "multiple foreground Agent tool calls" in tool_description
+    assert "same tool round" in tool_description
+    assert "waits for all results" in tool_description
+    assert "only when the parent can proceed without the result" in background_description
+
+
+def test_agent_tool_background_points_to_agent_wait_not_repl_command():
+    manager = FakeSubagentManager("run-bg")
+    agent = SimpleNamespace(subagent_manager=manager)
+    ctx = ToolContext(workdir=Path("/tmp"), agent=agent)
+
+    output = get_registry().call(
+        "Agent",
+        {
+            "description": "Do work",
+            "prompt": "Complete this task",
+            "run_in_background": True,
+        },
+        ctx,
+    )
+
+    assert "AgentWait" in output
+    assert "/run-show" not in output
+
+
+def test_agent_wait_tool_calls_manager_wait_for_runs():
+    manager = SimpleNamespace(
+        wait_for_runs=lambda run_ids, timeout=None: (
+            f"waited for {','.join(run_ids)} with timeout {timeout}"
+        )
+    )
+    agent = SimpleNamespace(subagent_manager=manager)
+    ctx = ToolContext(workdir=Path("/tmp"), agent=agent)
+
+    output = get_registry().call(
+        "AgentWait",
+        {
+            "run_ids": ["run-1", "run-2"],
+            "timeout_seconds": 3,
+        },
+        ctx,
+    )
+
+    assert output == "waited for run-1,run-2 with timeout 3"
 
 
 def test_agent_tool_sync_returns_formatted_result():
@@ -113,7 +168,10 @@ def test_agent_tool_background_returns_run_message():
         ctx,
     )
 
-    assert output == "Started background run: run-bg\nUse `/run-show run-bg` to check status."
+    assert output == (
+        "Started background run: run-bg\n"
+        'Use AgentWait with run_ids ["run-bg"] if you need the result before continuing.'
+    )
     assert manager.calls[0]["run_in_background"] is True
 
 

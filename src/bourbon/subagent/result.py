@@ -42,7 +42,7 @@ Tool Calls: {self.total_tool_calls}
 Result:
 {content_preview}
 
-Use `/run-show {self.run_id}` for full details.
+Use AgentWait with run_ids ["{self.run_id}"] for full details.
 """
 
 

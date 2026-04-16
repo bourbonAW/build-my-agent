@@ -110,6 +110,73 @@ def test_spawn_background_returns_run_id_and_completes(tmp_path):
     manager.shutdown()
 
 
+def test_wait_for_runs_blocks_until_background_run_completes(tmp_path):
+    release = threading.Event()
+
+    def agent_factory(run, agent_def):
+        class BlockingFakeSubagent(FakeSubagent):
+            def step(self, prompt: str) -> str:
+                release.wait(timeout=1)
+                return super().step(prompt)
+
+        return BlockingFakeSubagent(response="joined background result")
+
+    manager = SubagentManager(
+        config=Config(),
+        workdir=tmp_path,
+        agent_factory=agent_factory,
+    )
+    run_id = manager.spawn(
+        description="Background join",
+        prompt="Run in background",
+        run_in_background=True,
+    )
+
+    def release_later():
+        time.sleep(0.05)
+        release.set()
+
+    thread = threading.Thread(target=release_later)
+    thread.start()
+    output = manager.wait_for_runs([run_id], timeout=1)
+    thread.join(timeout=1)
+
+    assert f"Run {run_id} [completed] Background join" in output
+    assert "joined background result" in output
+    manager.shutdown()
+
+
+def test_wait_for_runs_reports_timeout_for_running_background_run(tmp_path):
+    release = threading.Event()
+
+    def agent_factory(run, agent_def):
+        class BlockingFakeSubagent(FakeSubagent):
+            def step(self, prompt: str) -> str:
+                release.wait(timeout=1)
+                return super().step(prompt)
+
+        return BlockingFakeSubagent(response="late background result")
+
+    manager = SubagentManager(
+        config=Config(),
+        workdir=tmp_path,
+        agent_factory=agent_factory,
+    )
+    run_id = manager.spawn(
+        description="Slow background",
+        prompt="Run in background",
+        run_in_background=True,
+    )
+
+    output = manager.wait_for_runs([run_id], timeout=0.01)
+
+    assert f"Run {run_id} [running] Slow background" in output
+    assert "Timed out waiting after 0.01s." in output
+
+    release.set()
+    manager.shutdown()
+
+
 def test_failed_run_records_error(tmp_path):
     def agent_factory(run, agent_def):
         class FailingSubagent:

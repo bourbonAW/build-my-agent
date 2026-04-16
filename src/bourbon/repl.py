@@ -21,6 +21,7 @@ from bourbon.agent import Agent, AgentError
 from bourbon.config import Config
 from bourbon.debug import debug_log
 from bourbon.mcp_client import MCPServerNotInstalledError
+from bourbon.observability.manager import DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
 from bourbon.permissions import PermissionChoice
 from bourbon.tasks.service import TaskService
 from bourbon.tasks.store import TaskStore
@@ -354,7 +355,7 @@ class REPL:
                     self.console.print("\n[dim]Goodbye![/dim]")
                     break
         finally:
-            self.agent.shutdown_observability()
+            self.agent.shutdown_observability(timeout=DEFAULT_SHUTDOWN_TIMEOUT_SECONDS)
             self._shutdown_mcp()
 
     def _process_input(self, user_input: str) -> None:

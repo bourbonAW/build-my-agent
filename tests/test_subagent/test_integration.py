@@ -81,14 +81,21 @@ def test_agent_tool_background_integration_can_read_output(tmp_path):
     )
     run_id = output.splitlines()[0].removeprefix("Started background run: ")
 
-    assert f"/run-show {run_id}" in output
+    assert "AgentWait" in output
+    assert "/run-show" not in output
     assert agent.subagent_manager.get_run(run_id).is_async is True
 
     release.set()
-    future = agent.subagent_manager.executor.get_future(run_id)
-    if future is not None:
-        future.result(timeout=1)
+    wait_output = get_registry().call(
+        "AgentWait",
+        {
+            "run_ids": [run_id],
+            "timeout_seconds": 1,
+        },
+        ctx,
+    )
 
+    assert "background integration result" in wait_output
     assert agent.subagent_manager.get_run_output(run_id) == "background integration result"
     agent.subagent_manager.shutdown()
 

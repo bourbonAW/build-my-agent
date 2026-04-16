@@ -9,6 +9,7 @@ from bourbon.subagent.types import AgentDefinition
 
 def test_global_disallowed_tools():
     assert "Agent" in ALL_AGENT_DISALLOWED_TOOLS
+    assert "AgentWait" in ALL_AGENT_DISALLOWED_TOOLS
     assert "TodoWrite" in ALL_AGENT_DISALLOWED_TOOLS
 
 
@@ -47,6 +48,7 @@ def test_tool_filter_blocks_agent_tool_for_all_profiles():
 
     for agent_def in AGENT_TYPE_CONFIGS.values():
         assert filter_engine.is_allowed("Agent", agent_def) is False
+        assert filter_engine.is_allowed("AgentWait", agent_def) is False
 
 
 def test_tool_filter_blocks_todowrite_for_all_profiles():

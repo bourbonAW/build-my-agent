@@ -10,10 +10,10 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_default_sections_has_four_entries():
+def test_default_sections_has_expected_entries():
     from bourbon.prompt.sections import DEFAULT_SECTIONS
 
-    assert len(DEFAULT_SECTIONS) == 4
+    assert len(DEFAULT_SECTIONS) == 5
 
 
 def test_identity_is_dynamic():
@@ -58,6 +58,17 @@ def test_task_guidelines_mentions_todo_and_workflow_tasks():
     assert "TaskGet" in TASK_GUIDELINES.content
 
 
+def test_subagent_guidelines_explain_foreground_parallel_waiting():
+    from bourbon.prompt.sections import SUBAGENT_GUIDELINES
+
+    assert "multiple foreground Agent tool calls" in SUBAGENT_GUIDELINES.content
+    assert "same tool round" in SUBAGENT_GUIDELINES.content
+    assert "waits for all of their results" in SUBAGENT_GUIDELINES.content
+    assert "run_in_background=True" in SUBAGENT_GUIDELINES.content
+    assert "AgentWait" in SUBAGENT_GUIDELINES.content
+    assert "only when the parent can proceed without the result" in SUBAGENT_GUIDELINES.content
+
+
 def test_error_handling_contains_risk_levels():
     from bourbon.prompt.sections import ERROR_HANDLING
 
@@ -72,6 +83,7 @@ def test_sections_ordered_correctly():
         DEFAULT_SECTIONS,
         ERROR_HANDLING,
         IDENTITY,
+        SUBAGENT_GUIDELINES,
         TASK_ADAPTABILITY,
         TASK_GUIDELINES,
     )
@@ -80,5 +92,6 @@ def test_sections_ordered_correctly():
     assert orders == sorted(orders)
     assert IDENTITY.order == 10
     assert TASK_GUIDELINES.order == 20
+    assert SUBAGENT_GUIDELINES.order == 25
     assert ERROR_HANDLING.order == 30
     assert TASK_ADAPTABILITY.order == 40

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +145,67 @@ class SubagentManager:
         if run.error is not None:
             return f"Error: {run.error}"
         return f"Run {run_id} is {run.status.value}."
+
+    def wait_for_runs(
+        self,
+        run_ids: list[str] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> str:
+        """Wait for background runtime jobs and return their outputs."""
+        if run_ids:
+            runs = [self.registry.get_run(run_id) for run_id in run_ids]
+        else:
+            active_statuses = {RunStatus.PENDING, RunStatus.RUNNING}
+            runs = [
+                run
+                for run in self.registry.list_runs()
+                if run.is_async and run.status in active_statuses
+            ]
+
+        if not runs:
+            return "No active background runs."
+
+        outputs: list[str] = []
+        for run in runs:
+            if run is None:
+                outputs.append("Run not found.")
+                continue
+            timed_out = self._wait_for_run(run, timeout=timeout)
+            outputs.append(self._render_wait_output(run, timed_out=timed_out, timeout=timeout))
+
+        return "\n\n".join(outputs)
+
+    def _wait_for_run(self, run: SubagentRun, *, timeout: float | None) -> bool:
+        """Wait for one run. Return True when the wait timed out."""
+        if run.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.KILLED}:
+            return False
+
+        future = self.executor.get_future(run.run_id)
+        if future is None:
+            return False
+
+        try:
+            future.result(timeout=timeout)
+        except FutureTimeoutError:
+            return True
+        except Exception:
+            # The lifecycle records failures in the registry before re-raising.
+            return False
+        return False
+
+    def _render_wait_output(
+        self,
+        run: SubagentRun,
+        *,
+        timed_out: bool,
+        timeout: float | None,
+    ) -> str:
+        header = f"Run {run.run_id} [{run.status.value}] {run.description} ({run.agent_type})"
+        output = self.get_run_output(run.run_id)
+        if timed_out and timeout is not None:
+            return f"{header}\nTimed out waiting after {timeout:g}s.\n{output}"
+        return f"{header}\n{output}"
 
     def render_run_list(self) -> str:
         """Render runtime jobs for REPL display."""

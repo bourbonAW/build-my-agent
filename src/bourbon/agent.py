@@ -16,7 +16,11 @@ from bourbon.config import Config
 from bourbon.debug import debug_log
 from bourbon.llm import LLMError, create_client
 from bourbon.mcp_client import MCPManager
-from bourbon.observability.manager import ObservabilityManager
+from bourbon.observability.manager import (
+    DEFAULT_FORCE_FLUSH_TIMEOUT_SECONDS,
+    DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+    ObservabilityManager,
+)
 from bourbon.observability.tracer import BourbonTracer
 from bourbon.permissions import (
     PermissionAction,
@@ -261,9 +265,22 @@ class Agent:
         """Disconnect MCP connections from sync code."""
         self.mcp.disconnect_all_sync(timeout=timeout)
 
-    def shutdown_observability(self) -> None:
+    def shutdown_observability(
+        self,
+        timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+    ) -> None:
         """Flush pending observability spans. Safe to call multiple times."""
-        self._obs_manager.shutdown()
+        self._obs_manager.shutdown(timeout=timeout)
+
+    def force_flush_observability(
+        self,
+        timeout: float | None = DEFAULT_FORCE_FLUSH_TIMEOUT_SECONDS,
+    ) -> bool:
+        """Flush finished observability spans after an agent invocation."""
+        manager = getattr(self, "_obs_manager", None)
+        if manager is None:
+            return True
+        return bool(manager.force_flush(timeout=timeout))
 
     def _finalize_mcp_initialization(self, results: dict) -> dict:
         """MCP init complete; next step() call will rebuild system_prompt automatically."""
@@ -272,8 +289,11 @@ class Agent:
     def step(self, user_input: str) -> str:
         """Process one user input and return assistant response."""
         tracer = self._get_tracer()
-        with tracer.agent_step(workdir=str(self.workdir), entrypoint="step"):
-            return self._step_impl(user_input)
+        try:
+            with tracer.agent_step(workdir=str(self.workdir), entrypoint="step"):
+                return self._step_impl(user_input)
+        finally:
+            self.force_flush_observability()
 
     def _step_impl(self, user_input: str) -> str:
         """Process one user input and return assistant response."""
@@ -318,8 +338,11 @@ class Agent:
             Complete response text (for history and optional markdown re-rendering)
         """
         tracer = self._get_tracer()
-        with tracer.agent_step(workdir=str(self.workdir), entrypoint="step_stream"):
-            return self._step_stream_impl(user_input, on_text_chunk)
+        try:
+            with tracer.agent_step(workdir=str(self.workdir), entrypoint="step_stream"):
+                return self._step_stream_impl(user_input, on_text_chunk)
+        finally:
+            self.force_flush_observability()
 
     def _step_stream_impl(
         self,
@@ -998,8 +1021,11 @@ class Agent:
     def resume_permission_request(self, choice: PermissionChoice) -> str:
         """Resume a suspended tool round after the user resolves a permission request."""
         tracer = self._get_tracer()
-        with tracer.agent_step(workdir=str(self.workdir), entrypoint="resume_permission"):
-            return self._resume_permission_request_impl(choice)
+        try:
+            with tracer.agent_step(workdir=str(self.workdir), entrypoint="resume_permission"):
+                return self._resume_permission_request_impl(choice)
+        finally:
+            self.force_flush_observability()
 
     def _resume_permission_request_impl(self, choice: PermissionChoice) -> str:
         """Resume a suspended tool round after the user resolves a permission request."""

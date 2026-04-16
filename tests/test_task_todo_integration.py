@@ -183,6 +183,7 @@ def test_subagent_usage_guide_covers_runtime_tool_surface():
     assert "`prompt`" in guide_text
     assert "`subagent_type`" in guide_text
     assert "`run_in_background`" in guide_text
+    assert "`AgentWait`" in guide_text
     assert "`/runs`" in guide_text
     assert "`/run-show <run_id>`" in guide_text
     assert "`/run-stop <run_id>`" in guide_text

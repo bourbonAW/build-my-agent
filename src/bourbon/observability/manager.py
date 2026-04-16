@@ -14,6 +14,8 @@ _PROVIDER_LOCK = threading.Lock()
 _PROVIDER: Any | None = None
 _ATEXIT_REGISTERED = False
 _PROVIDER_SHUTDOWN = False
+DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 2.0
+DEFAULT_FORCE_FLUSH_TIMEOUT_SECONDS = 2.0
 
 
 def _append_trace_path(endpoint: str) -> str:
@@ -45,14 +47,46 @@ def _resolve_headers(config: ObservabilityConfig) -> dict[str, str]:
     return headers
 
 
-def _shutdown_provider_once() -> None:
+def _create_tracer_provider(tracer_provider_cls: Any, resource: Any) -> Any:
+    return tracer_provider_cls(resource=resource, shutdown_on_exit=False)
+
+
+def _shutdown_provider(provider: Any, timeout: float | None) -> bool:
+    if timeout is None:
+        provider.shutdown()
+        return True
+
+    errors: list[BaseException] = []
+
+    def shutdown() -> None:
+        try:
+            provider.shutdown()
+        except BaseException as exc:  # pragma: no cover - defensive shutdown path
+            errors.append(exc)
+
+    thread = threading.Thread(
+        target=shutdown,
+        name="bourbon-observability-shutdown",
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout=timeout)
+    return not thread.is_alive() and not errors
+
+
+def _shutdown_provider_once(timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS) -> bool:
     global _PROVIDER, _PROVIDER_SHUTDOWN
     with _PROVIDER_LOCK:
         if _PROVIDER is None or _PROVIDER_SHUTDOWN:
-            return
-        _PROVIDER.shutdown()
+            return True
+        provider = _PROVIDER
         _PROVIDER_SHUTDOWN = True
         _PROVIDER = None
+    return _shutdown_provider(provider, timeout)
+
+
+def _timeout_millis(timeout: float | None) -> int | None:
+    return None if timeout is None else max(0, int(timeout * 1000))
 
 
 class ObservabilityManager:
@@ -64,12 +98,27 @@ class ObservabilityManager:
     def get_tracer(self) -> BourbonTracer:
         return self._tracer
 
-    def shutdown(self) -> None:
+    def shutdown(self, timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS) -> None:
         if self._shutdown_called:
             return
         self._shutdown_called = True
         if self._provider is not None:
-            _shutdown_provider_once()
+            _shutdown_provider_once(timeout=timeout)
+            self._provider = None
+
+    def force_flush(self, timeout: float | None = DEFAULT_FORCE_FLUSH_TIMEOUT_SECONDS) -> bool:
+        if self._provider is None:
+            return True
+        force_flush = getattr(self._provider, "force_flush", None)
+        if not callable(force_flush):
+            return True
+        try:
+            timeout_millis = _timeout_millis(timeout)
+            if timeout_millis is None:
+                return bool(force_flush())
+            return bool(force_flush(timeout_millis=timeout_millis))
+        except Exception:
+            return False
 
     def _build(self, config: ObservabilityConfig) -> BourbonTracer:
         if not config.enabled:
@@ -102,7 +151,7 @@ class ObservabilityManager:
         with _PROVIDER_LOCK:
             if _PROVIDER is None:
                 resource = Resource.create({SERVICE_NAME: service_name})
-                provider = TracerProvider(resource=resource)
+                provider = _create_tracer_provider(TracerProvider, resource)
                 exporter = OTLPSpanExporter(endpoint=endpoint, headers=_resolve_headers(config))
                 provider.add_span_processor(BatchSpanProcessor(exporter, max_queue_size=2048))
                 trace.set_tracer_provider(provider)
