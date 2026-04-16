@@ -657,3 +657,155 @@ def test_resume_permission_request_subagent_denial_after_approval_records_tool_s
     assert call["name"] == "Bash"
     assert call["span"].attributes["bourbon.tool.is_error"] is True
     assert call["span"].attributes["error.type"] == "subagent_tool_denial"
+
+
+def _make_test_tracer():
+    pytest.importorskip("opentelemetry.sdk", reason="opentelemetry SDK not installed")
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return BourbonTracer(provider.get_tracer("bourbon-test")), exporter
+
+
+def _span_named(exporter, name: str):
+    matches = [span for span in exporter.get_finished_spans() if span.name == name]
+    assert matches, f"span {name!r} not found"
+    return matches[0]
+
+
+def test_otel_root_span_records_agent_attributes():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.agent_step(workdir="/tmp/project", entrypoint="step_stream"):
+        pass
+
+    span = _span_named(exporter, "invoke_agent bourbon")
+    assert span.attributes["gen_ai.operation.name"] == "invoke_agent"
+    assert span.attributes["gen_ai.provider.name"] == "bourbon"
+    assert span.attributes["gen_ai.agent.name"] == "bourbon"
+    assert span.attributes["bourbon.agent.workdir"] == "/tmp/project"
+    assert span.attributes["bourbon.agent.entrypoint"] == "step_stream"
+
+
+def test_otel_llm_span_records_request_and_response_attributes():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.llm_call(model="model-x", max_tokens=123, provider="anthropic") as span:
+        span.set_attribute("gen_ai.response.finish_reasons", ["end_turn"])
+        span.set_attribute("gen_ai.usage.input_tokens", 10)
+        span.set_attribute("gen_ai.usage.output_tokens", 4)
+
+    span = _span_named(exporter, "chat model-x")
+    assert span.attributes["gen_ai.operation.name"] == "chat"
+    assert span.attributes["gen_ai.provider.name"] == "anthropic"
+    assert span.attributes["gen_ai.request.model"] == "model-x"
+    assert span.attributes["gen_ai.request.max_tokens"] == 123
+    assert span.attributes["gen_ai.response.finish_reasons"] == ("end_turn",)
+    assert span.attributes["gen_ai.usage.input_tokens"] == 10
+    assert span.attributes["gen_ai.usage.output_tokens"] == 4
+
+
+def test_otel_tool_span_records_call_attributes():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.tool_call(name="Read", call_id="tool-1", concurrent=True) as span:
+        span.set_attribute("bourbon.tool.is_error", False)
+
+    span = _span_named(exporter, "execute_tool Read")
+    assert span.attributes["gen_ai.operation.name"] == "execute_tool"
+    assert span.attributes["gen_ai.tool.name"] == "Read"
+    assert span.attributes["gen_ai.tool.call.id"] == "tool-1"
+    assert span.attributes["bourbon.tool.concurrent"] is True
+    assert span.attributes["bourbon.tool.is_error"] is False
+
+
+def test_mark_error_sets_status_without_exception_event():
+    tracer, exporter = _make_test_tracer()
+    from opentelemetry.trace import StatusCode
+
+    with tracer.tool_call(name="Read", call_id="tool-1", concurrent=False) as span:
+        tracer.mark_error(span, "tool_error", "bad output")
+
+    span = _span_named(exporter, "execute_tool Read")
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["error.type"] == "tool_error"
+    assert list(span.events) == []
+
+
+def test_record_error_sets_status_and_exception_event():
+    tracer, exporter = _make_test_tracer()
+    from opentelemetry.trace import StatusCode
+
+    with tracer.tool_call(name="Read", call_id="tool-1", concurrent=False) as span:
+        tracer.record_error(span, ValueError("boom"))
+
+    span = _span_named(exporter, "execute_tool Read")
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["error.type"] == "ValueError"
+    assert [event.name for event in span.events] == ["exception"]
+
+
+def test_otel_llm_and_tool_spans_are_children_of_agent_root():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.agent_step(workdir="/tmp", entrypoint="step"):
+        with tracer.llm_call(model="model-x", max_tokens=10):
+            pass
+        with tracer.tool_call(name="Read", call_id="tool-1", concurrent=False):
+            pass
+
+    root = _span_named(exporter, "invoke_agent bourbon")
+    llm = _span_named(exporter, "chat model-x")
+    tool = _span_named(exporter, "execute_tool Read")
+    assert llm.parent.span_id == root.context.span_id
+    assert tool.parent.span_id == root.context.span_id
+
+
+def test_otel_queue_parallel_and_serial_tools_keep_agent_root_parent():
+    from bourbon.tools.execution_queue import ToolExecutionQueue
+
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.agent_step(workdir="/tmp", entrypoint="step"):
+        q = ToolExecutionQueue(execute_fn=lambda block: "ok", tracer=tracer)
+        q.add(make_queue_block("c1", name="Read"), make_queue_tool(concurrent=True), 0)
+        q.add(make_queue_block("c2", name="Grep"), make_queue_tool(concurrent=True), 1)
+        q.add(make_queue_block("s1", name="Bash"), make_queue_tool(concurrent=False), 2)
+        q.execute_all()
+
+    root = _span_named(exporter, "invoke_agent bourbon")
+    tool_spans = [
+        span for span in exporter.get_finished_spans() if span.name.startswith("execute_tool ")
+    ]
+    assert len(tool_spans) == 3
+    assert {span.parent.span_id for span in tool_spans} == {root.context.span_id}
+
+
+def test_inline_subagent_root_span_is_child_of_agent_tool_span():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.agent_step(workdir="/tmp", entrypoint="step"):
+        with tracer.tool_call(name="Agent", call_id="tool-agent", concurrent=False):
+            with tracer.agent_step(workdir="/tmp/sub", entrypoint="step"):
+                pass
+
+    root_spans = [
+        span for span in exporter.get_finished_spans() if span.name == "invoke_agent bourbon"
+    ]
+    tool = _span_named(exporter, "execute_tool Agent")
+    subagent_root = next(
+        span
+        for span in root_spans
+        if span.attributes["bourbon.agent.workdir"] == "/tmp/sub"
+    )
+    top_root = next(
+        span
+        for span in root_spans
+        if span.attributes["bourbon.agent.workdir"] == "/tmp"
+    )
+    assert tool.parent.span_id == top_root.context.span_id
+    assert subagent_root.parent.span_id == tool.context.span_id
