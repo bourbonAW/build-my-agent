@@ -95,7 +95,13 @@ def test_execute_tools_runs_via_queue(monkeypatch):
     monkeypatch.setattr(ToolExecutionQueue, "execute_all", patched_execute_all)
     monkeypatch.setattr(agent, "_permission_decision_for_tool", fake_permission)
     monkeypatch.setattr(agent, "_subagent_tool_denial", fake_denial)
-    monkeypatch.setattr(agent, "_execute_regular_tool", lambda *args, **kwargs: "mock")
+    monkeypatch.setattr(
+        agent,
+        "_execute_regular_tool_outcome",
+        lambda *args, **kwargs: __import__(
+            "bourbon.tools.execution_queue", fromlist=["ToolExecutionOutcome"]
+        ).ToolExecutionOutcome(content="mock"),
+    )
     monkeypatch.setattr("bourbon.agent.get_tool_with_metadata", fake_get_tool)
 
     blocks = [

@@ -69,7 +69,7 @@ class ObservabilityManager:
             return
         self._shutdown_called = True
         if self._provider is not None:
-            self._provider.force_flush()
+            _shutdown_provider_once()
 
     def _build(self, config: ObservabilityConfig) -> BourbonTracer:
         if not config.enabled:
@@ -80,17 +80,19 @@ class ObservabilityManager:
             return BourbonTracer(otel_tracer=None)
 
         try:
-            from opentelemetry import trace  # type: ignore[import-untyped]
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[import-untyped]
+            from opentelemetry import trace  # type: ignore[import-untyped,unused-ignore]
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[import-untyped,unused-ignore]
                 OTLPSpanExporter,
             )
-            from opentelemetry.sdk.resources import (  # type: ignore[import-untyped]
+            from opentelemetry.sdk.resources import (  # type: ignore[import-untyped,unused-ignore]
                 SERVICE_NAME,
                 Resource,
             )
-            from opentelemetry.sdk.trace import TracerProvider  # type: ignore[import-untyped]
+            from opentelemetry.sdk.trace import (
+                TracerProvider,  # type: ignore[import-untyped,unused-ignore]
+            )
             from opentelemetry.sdk.trace.export import (
-                BatchSpanProcessor,  # type: ignore[import-untyped]
+                BatchSpanProcessor,  # type: ignore[import-untyped,unused-ignore]
             )
         except ImportError:
             return BourbonTracer(otel_tracer=None)

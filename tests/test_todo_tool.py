@@ -8,6 +8,7 @@ from uuid import uuid4
 from bourbon.access_control.policy import PolicyAction
 from bourbon.agent import Agent
 from bourbon.tools import ToolContext, definitions
+from bourbon.tools.execution_queue import ToolExecutionOutcome
 
 
 def test_todowrite_not_in_tool_definitions():
@@ -40,7 +41,11 @@ def test_execute_tools_does_not_require_todo_manager_to_list(monkeypatch):
         reason="allowed",
     )
 
-    monkeypatch.setattr(agent, "_execute_regular_tool", lambda *args, **kwargs: "ok")
+    monkeypatch.setattr(
+        agent,
+        "_execute_regular_tool_outcome",
+        lambda *args, **kwargs: ToolExecutionOutcome(content="ok"),
+    )
     monkeypatch.setattr(agent, "_record_policy_decision", lambda **kwargs: None)
 
     results = agent._execute_tools(

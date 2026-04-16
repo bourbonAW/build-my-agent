@@ -264,7 +264,7 @@ def test_non_streaming_llm_call_records_span_attributes(tmp_path):
 
     call = agent._tracer.llm_calls[0]
     assert call["model"] == "model-x"
-    assert call["max_tokens"] == 64000
+    assert call["max_tokens"] == 8000
     assert call["provider"] == "anthropic"
     assert call["span"].attributes["gen_ai.response.finish_reasons"] == ["end_turn"]
     assert call["span"].attributes["gen_ai.usage.input_tokens"] == 11
@@ -285,7 +285,7 @@ def test_streaming_llm_call_records_span_attributes(tmp_path):
 
     call = agent._tracer.llm_calls[0]
     assert call["model"] == "stream-model"
-    assert call["max_tokens"] == 64000
+    assert call["max_tokens"] == 8000
     assert call["provider"] == "anthropic"
     assert call["span"].attributes["gen_ai.response.finish_reasons"] == ["end_turn"]
     assert call["span"].attributes["gen_ai.usage.input_tokens"] == 5
@@ -787,6 +787,45 @@ def test_otel_queue_parallel_and_serial_tools_keep_agent_root_parent():
     ]
     assert len(tool_spans) == 3
     assert {span.parent.span_id for span in tool_spans} == {root.context.span_id}
+
+
+def test_manager_shutdown_calls_shutdown_provider_once(monkeypatch):
+    """shutdown() must delegate to _shutdown_provider_once() to stop BatchSpanProcessor thread."""
+    import bourbon.observability.manager as mgr_module
+
+    shutdown_once_calls = []
+    monkeypatch.setattr(
+        mgr_module, "_shutdown_provider_once", lambda: shutdown_once_calls.append(True)
+    )
+
+    manager = object.__new__(ObservabilityManager)
+    manager._shutdown_called = False
+    manager._provider = object()  # non-None triggers path
+    manager._tracer = BourbonTracer(otel_tracer=None)
+
+    manager.shutdown()
+
+    assert shutdown_once_calls, (
+        "shutdown() must call _shutdown_provider_once() to fully stop BatchSpanProcessor"
+    )
+
+
+def test_manager_shutdown_is_idempotent(monkeypatch):
+    """shutdown() must not call _shutdown_provider_once() more than once."""
+    import bourbon.observability.manager as mgr_module
+
+    calls = []
+    monkeypatch.setattr(mgr_module, "_shutdown_provider_once", lambda: calls.append(True))
+
+    manager = object.__new__(ObservabilityManager)
+    manager._shutdown_called = False
+    manager._provider = object()
+    manager._tracer = BourbonTracer(otel_tracer=None)
+
+    manager.shutdown()
+    manager.shutdown()
+
+    assert len(calls) == 1, "shutdown() must be idempotent"
 
 
 def test_inline_subagent_root_span_is_child_of_agent_tool_span():

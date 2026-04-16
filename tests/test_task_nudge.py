@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from bourbon.agent import Agent
 from bourbon.session.types import MessageRole, TextBlock, TranscriptMessage
 from bourbon.tasks.constants import TASK_V2_TOOLS
+from bourbon.tools.execution_queue import ToolExecutionOutcome
 
 
 def make_agent_for_nudge():
@@ -203,7 +204,9 @@ def test_resume_permission_request_injects_nudge(tmp_path):
 
     agent.session.add_message = fake_add_message
     agent.session.save = MagicMock()
-    agent._execute_regular_tool = MagicMock(return_value="bash output")
+    agent._execute_regular_tool_outcome = MagicMock(
+        return_value=ToolExecutionOutcome(content="bash output")
+    )
     agent._subagent_tool_denial = MagicMock(return_value=None)
 
     def fake_build_transcript(results, uuid):

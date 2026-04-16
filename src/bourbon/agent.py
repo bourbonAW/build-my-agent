@@ -206,6 +206,10 @@ class Agent:
             "total_tokens": 0,
         }
 
+    def _get_tracer(self) -> BourbonTracer:
+        """Return the agent's tracer, falling back to a no-op tracer for test stubs."""
+        return getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+
     @property
     def messages(self) -> list[dict]:
         """Get current messages for LLM (read-only view).
@@ -267,7 +271,7 @@ class Agent:
 
     def step(self, user_input: str) -> str:
         """Process one user input and return assistant response."""
-        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+        tracer = self._get_tracer()
         with tracer.agent_step(workdir=str(self.workdir), entrypoint="step"):
             return self._step_impl(user_input)
 
@@ -313,7 +317,7 @@ class Agent:
         Returns:
             Complete response text (for history and optional markdown re-rendering)
         """
-        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+        tracer = self._get_tracer()
         with tracer.agent_step(workdir=str(self.workdir), entrypoint="step_stream"):
             return self._step_stream_impl(user_input, on_text_chunk)
 
@@ -384,17 +388,17 @@ class Agent:
                     message_count=len(messages),
                     tool_definition_count=len(self._tool_definitions()),
                 )
-                tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+                tracer = self._get_tracer()
                 with tracer.llm_call(
                     model=str(getattr(self.llm, "model", "")),
-                    max_tokens=64000,
+                    max_tokens=self._llm_max_tokens(),
                     provider=self.config.llm.default_provider,
                 ) as _llm_span:
                     event_stream = self.llm.chat_stream(
                         messages=messages,
                         tools=self._tool_definitions(),
                         system=self.system_prompt,
-                        max_tokens=64000,
+                        max_tokens=self._llm_max_tokens(),
                     )
 
                     current_text = ""
@@ -597,17 +601,17 @@ class Agent:
                     tool_definition_count=len(tool_defs),
                     **self._subagent_debug_fields(),
                 )
-                tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+                tracer = self._get_tracer()
                 with tracer.llm_call(
                     model=str(getattr(self.llm, "model", "")),
-                    max_tokens=64000,
+                    max_tokens=self._llm_max_tokens(),
                     provider=self.config.llm.default_provider,
                 ) as _llm_span:
                     response = self.llm.chat(
                         messages=messages,
                         tools=tool_defs,
                         system=self.system_prompt,
-                        max_tokens=64000,
+                        max_tokens=self._llm_max_tokens(),
                     )
                     _llm_span.set_attribute(
                         "gen_ai.response.finish_reasons",
@@ -904,6 +908,12 @@ class Agent:
             ),
         )
 
+    def _llm_max_tokens(self) -> int:
+        """Return the configured max_tokens for the current LLM provider."""
+        provider = self.config.llm.default_provider
+        provider_cfg = getattr(self.config.llm, provider, None)
+        return getattr(provider_cfg, "max_tokens", 64000)
+
     @contextmanager
     def _direct_tool_span(
         self,
@@ -914,7 +924,7 @@ class Agent:
         error_type: str = "tool_error",
         message: str = "",
     ):
-        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+        tracer = self._get_tracer()
         with tracer.tool_call(name=name, call_id=call_id, concurrent=False) as span:
             if is_error:
                 tracer.mark_error(span, error_type, message)
@@ -987,7 +997,7 @@ class Agent:
 
     def resume_permission_request(self, choice: PermissionChoice) -> str:
         """Resume a suspended tool round after the user resolves a permission request."""
-        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+        tracer = self._get_tracer()
         with tracer.agent_step(workdir=str(self.workdir), entrypoint="resume_permission"):
             return self._resume_permission_request_impl(choice)
 
@@ -1046,28 +1056,16 @@ class Agent:
                     request.tool_name,
                     request.tool_use_id,
                 ) as span:
-                    if "_execute_regular_tool" in getattr(self, "__dict__", {}):
-                        output = self._execute_regular_tool(
-                            request.tool_name,
-                            request.tool_input,
-                            skip_policy_check=True,
-                        )
-                        outcome = (
-                            output
-                            if isinstance(output, ToolExecutionOutcome)
-                            else ToolExecutionOutcome(content=str(output))
-                        )
-                    else:
-                        outcome = self._execute_regular_tool_outcome(
-                            request.tool_name,
-                            request.tool_input,
-                            skip_policy_check=True,
-                        )
+                    outcome = self._execute_regular_tool_outcome(
+                        request.tool_name,
+                        request.tool_input,
+                        skip_policy_check=True,
+                    )
                     if outcome.is_error:
-                        tracer = getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+                        tracer = self._get_tracer()
                         tracer.mark_error(span, outcome.error_type, outcome.error_message)
                         span.set_attribute("bourbon.tool.is_error", True)
-                    result = {
+                    result: dict[str, Any] = {
                         "type": "tool_result",
                         "tool_use_id": request.tool_use_id,
                         "content": outcome.content,
@@ -1242,15 +1240,6 @@ class Agent:
 
         def new_queue() -> ToolExecutionQueue:
             def execute_block(block: dict) -> ToolExecutionOutcome:
-                if "_execute_regular_tool" in getattr(self, "__dict__", {}):
-                    output = self._execute_regular_tool(
-                        block.get("name", ""),
-                        block.get("input", {}),
-                        skip_policy_check=True,
-                    )
-                    if isinstance(output, ToolExecutionOutcome):
-                        return output
-                    return ToolExecutionOutcome(content=str(output), is_error=False)
                 return self._execute_regular_tool_outcome(
                     block.get("name", ""),
                     block.get("input", {}),
@@ -1261,7 +1250,7 @@ class Agent:
                 execute_fn=execute_block,
                 on_tool_start=self.on_tool_start,
                 on_tool_end=self.on_tool_end,
-                tracer=getattr(self, "_tracer", BourbonTracer(otel_tracer=None)),
+                tracer=self._get_tracer(),
             )
 
         queue: ToolExecutionQueue | None = None
