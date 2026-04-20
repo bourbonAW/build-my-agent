@@ -111,6 +111,21 @@ class TasksConfig:
 
 
 @dataclass
+class MemoryConfig:
+    """Memory system configuration."""
+
+    enabled: bool = True
+    storage_dir: str = "~/.bourbon/projects"
+    auto_flush_on_compact: bool = True
+    auto_extract: bool = False
+    recall_limit: int = 8
+    recall_transcript_session_limit: int = 10
+    memory_md_token_limit: int = 1200
+    user_md_token_limit: int = 600
+    core_block_token_limit: int = 1200
+
+
+@dataclass
 class ObservabilityConfig:
     """OpenTelemetry observability configuration."""
 
@@ -137,6 +152,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     tasks: TasksConfig = field(default_factory=TasksConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
     access_control: dict = field(
@@ -210,6 +226,7 @@ class Config:
 
         ui_data = data.get("ui", {})
         tasks_data = data.get("tasks", {})
+        memory_data = data.get("memory", {})
         observability_data = data.get("observability", {})
         mcp_data = data.get("mcp", {})
         access_control_data = data.get("access_control", {})
@@ -229,6 +246,7 @@ class Config:
             ),
             ui=UIConfig(**ui_data),
             tasks=TasksConfig(**tasks_data),
+            memory=MemoryConfig(**memory_data),
             observability=ObservabilityConfig.from_dict(observability_data),
             mcp=MCPConfig.from_dict(mcp_data),
             access_control=_deep_merge(Config().access_control, access_control_data),
@@ -284,6 +302,17 @@ class Config:
                 "enabled": self.tasks.enabled,
                 "storage_dir": self.tasks.storage_dir,
                 "default_list_id": self.tasks.default_list_id,
+            },
+            "memory": {
+                "enabled": self.memory.enabled,
+                "storage_dir": self.memory.storage_dir,
+                "auto_flush_on_compact": self.memory.auto_flush_on_compact,
+                "auto_extract": self.memory.auto_extract,
+                "recall_limit": self.memory.recall_limit,
+                "recall_transcript_session_limit": self.memory.recall_transcript_session_limit,
+                "memory_md_token_limit": self.memory.memory_md_token_limit,
+                "user_md_token_limit": self.memory.user_md_token_limit,
+                "core_block_token_limit": self.memory.core_block_token_limit,
             },
             "observability": {
                 "enabled": self.observability.enabled,
