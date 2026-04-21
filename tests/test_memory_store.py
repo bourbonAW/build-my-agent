@@ -146,3 +146,59 @@ def test_list_records_status_filter(tmp_path: Path) -> None:
 def test_list_records_empty_dir(tmp_path: Path) -> None:
     store = MemoryStore(memory_dir=tmp_path / "nonexistent")
     assert store.list_records() == []
+
+
+# --- Task 5: MEMORY.md Index Maintenance ---
+
+
+def test_update_index_adds_entry(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_idx00001", name="Index test", description="Testing index update")
+    store.write_record(record)
+    store.update_index(record)
+
+    index_path = tmp_path / "MEMORY.md"
+    assert index_path.exists()
+    text = index_path.read_text()
+    assert "Index test" in text
+    assert "project_index-test.md" in text
+
+
+def test_update_index_deduplicates(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_dedup001", name="Dedup entry", description="Should not duplicate")
+    store.write_record(record)
+    store.update_index(record)
+    store.update_index(record)  # second call
+
+    text = (tmp_path / "MEMORY.md").read_text()
+    # The filename reference should appear exactly once
+    assert text.count("project_dedup-entry.md") == 1
+
+
+def test_update_index_capacity_200_lines(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    # Write 200 records to fill index
+    for i in range(200):
+        record = _make_record(
+            id=f"mem_cap{i:05d}",
+            name=f"Cap entry {i}",
+            description=f"Entry number {i}",
+            content=f"Content {i}.",
+        )
+        store.write_record(record)
+        store.update_index(record)
+
+    # 201st should return at_capacity=True
+    extra = _make_record(
+        id="mem_cap00200",
+        name="Over capacity",
+        description="Should not be indexed",
+        content="Over cap.",
+    )
+    store.write_record(extra)
+    at_capacity = store.update_index(extra)
+    assert at_capacity is True
+
+    lines = (tmp_path / "MEMORY.md").read_text().strip().split("\n")
+    assert len(lines) <= 200
