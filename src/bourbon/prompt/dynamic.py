@@ -1,3 +1,4 @@
+from bourbon.memory.prompt import MEMORY_ANCHOR_ORDER, memory_anchors_section
 from bourbon.prompt.types import PromptContext, PromptSection
 
 
@@ -69,6 +70,11 @@ async def mcp_tools_section(ctx: PromptContext) -> str:
 
 
 DYNAMIC_SECTIONS: list[PromptSection] = [
+    PromptSection(
+        name="memory_anchors",
+        order=MEMORY_ANCHOR_ORDER,
+        content=memory_anchors_section,
+    ),
     PromptSection(name="skills", order=60, content=skills_section),
     PromptSection(name="mcp_tools", order=70, content=mcp_tools_section),
 ]

@@ -101,17 +101,20 @@ def test_mcp_tools_section_longest_prefix_match():
     assert "foo-qux" in result
 
 
-def test_dynamic_sections_has_two_entries():
+def test_dynamic_sections_include_memory_anchors():
     from bourbon.prompt.dynamic import DYNAMIC_SECTIONS
 
-    assert len(DYNAMIC_SECTIONS) == 2
+    assert len(DYNAMIC_SECTIONS) == 3
     names = [section.name for section in DYNAMIC_SECTIONS]
+    assert "memory_anchors" in names
     assert "skills" in names
     assert "mcp_tools" in names
 
 
-def test_dynamic_sections_ordered_after_defaults():
+def test_dynamic_sections_orders_match_spec():
     from bourbon.prompt.dynamic import DYNAMIC_SECTIONS
 
-    orders = [section.order for section in DYNAMIC_SECTIONS]
-    assert min(orders) > 40
+    orders = {section.name: section.order for section in DYNAMIC_SECTIONS}
+    assert orders["memory_anchors"] == 15
+    assert orders["skills"] == 60
+    assert orders["mcp_tools"] == 70

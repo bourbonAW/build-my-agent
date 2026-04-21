@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from bourbon.mcp_client import MCPManager
@@ -15,6 +15,7 @@ class PromptContext:
     workdir: Path
     skill_manager: "SkillManager | None" = None
     mcp_manager: "MCPManager | None" = None
+    memory_manager: Any | None = None
 
 
 @dataclass
