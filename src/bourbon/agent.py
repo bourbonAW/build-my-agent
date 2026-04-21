@@ -1,5 +1,6 @@
 """Core agent loop for Bourbon."""
 
+import subprocess
 import time
 import warnings
 from collections.abc import Callable
@@ -108,6 +109,7 @@ class Agent:
         # these unset and receive the full tool surface.
         self._subagent_agent_def = None
         self._subagent_tool_filter = None
+        self._memory_manager = None
 
         # Initialize LLM client
         try:
@@ -179,6 +181,21 @@ class Agent:
             enabled=audit_config.get("enabled", True),
         )
 
+        if config.memory.enabled:
+            from bourbon.memory.manager import MemoryManager
+            from bourbon.memory.store import sanitize_project_key
+
+            canonical_path = self._resolve_canonical_path()
+            project_key = sanitize_project_key(canonical_path)
+            self._memory_manager = MemoryManager(
+                config=config.memory,
+                project_key=project_key,
+                workdir=self.workdir,
+                audit=self.audit,
+            )
+        self._prompt_ctx.memory_manager = self._memory_manager
+        self.system_prompt = _get_async_runtime().run(self._prompt_builder.build(self._prompt_ctx))
+
         ac_config = config.access_control if hasattr(config, "access_control") else {}
         self.access_controller = AccessController(config=ac_config, workdir=self.workdir)
 
@@ -213,6 +230,23 @@ class Agent:
     def _get_tracer(self) -> BourbonTracer:
         """Return the agent's tracer, falling back to a no-op tracer for test stubs."""
         return getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+
+    def _resolve_canonical_path(self) -> Path:
+        """Resolve the canonical project path for memory key derivation."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                cwd=self.workdir,
+                timeout=2,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return self.workdir.resolve()
+
+        if result.returncode == 0 and result.stdout.strip():
+            return Path(result.stdout.strip())
+        return self.workdir.resolve()
 
     @property
     def messages(self) -> list[dict]:
@@ -316,6 +350,8 @@ class Agent:
         # Pre-process: micro-compact
         self.session.context_manager.microcompact()
 
+        self._maybe_flush_memory_before_compact()
+
         # Check if we need full compression
         self.session.maybe_compact()
 
@@ -376,6 +412,8 @@ class Agent:
 
         # Pre-process: micro-compact
         self.session.context_manager.microcompact()
+
+        self._maybe_flush_memory_before_compact()
 
         # Check if we need full compression
         self.session.maybe_compact()
@@ -864,11 +902,80 @@ class Agent:
 
     def _make_tool_context(self) -> ToolContext:
         """Construct the shared tool execution context."""
+        memory_manager = getattr(self, "_memory_manager", None)
+        memory_actor = None
+        if memory_manager is not None:
+            if self._subagent_agent_def is not None:
+                from bourbon.memory.models import MemoryActor
+
+                memory_actor = MemoryActor(
+                    kind="subagent",
+                    session_id=str(self.session.session_id),
+                    run_id=getattr(self._subagent_agent_def, "run_id", None),
+                    agent_type=getattr(self._subagent_agent_def, "agent_type", None),
+                )
+            else:
+                from bourbon.memory.models import MemoryActor
+
+                memory_actor = MemoryActor(
+                    kind="agent",
+                    session_id=str(self.session.session_id),
+                )
+
         return ToolContext(
             workdir=self.workdir,
             agent=self,
             skill_manager=self.skills,
             on_tools_discovered=self._get_discovered_tools().update,
+            memory_manager=memory_manager,
+            memory_actor=memory_actor,
+        )
+
+    def _serialize_message_for_memory_flush(self, msg: TranscriptMessage) -> dict:
+        """Convert a transcript message to the flush input format."""
+        text_parts: list[str] = []
+        tool_results: list[dict[str, object]] = []
+        for block in msg.content:
+            if isinstance(block, TextBlock):
+                text_parts.append(block.text)
+            elif isinstance(block, ToolResultBlock):
+                tool_results.append(
+                    {
+                        "tool_name": "unknown",
+                        "output": block.content,
+                        "is_error": block.is_error,
+                    }
+                )
+
+        return {
+            "role": msg.role.value,
+            "content": "\n".join(part for part in text_parts if part),
+            "uuid": str(msg.uuid),
+            "tool_results": tool_results,
+        }
+
+    def _compactable_messages_for_flush(self) -> list[dict]:
+        """Return the messages that would be archived by the next compact."""
+        chain = self.session.chain.build_active_chain()
+        preserve_count = getattr(self.session, "_compact_preserve_count", 3)
+        if len(chain) <= preserve_count:
+            return []
+        return [self._serialize_message_for_memory_flush(msg) for msg in chain[:-preserve_count]]
+
+    def _maybe_flush_memory_before_compact(self) -> None:
+        """Flush memory candidates before a full compact when enabled."""
+        memory_manager = getattr(self, "_memory_manager", None)
+        if memory_manager is None:
+            return
+        if not self.config.memory.auto_flush_on_compact:
+            return
+        if not self.session.context_manager.should_compact():
+            return
+
+        flush_msgs = self._compactable_messages_for_flush()
+        memory_manager.flush_before_compact(
+            flush_msgs,
+            session_id=str(self.session.session_id),
         )
 
     def _permission_decision_for_tool(

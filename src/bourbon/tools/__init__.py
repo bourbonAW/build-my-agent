@@ -49,6 +49,8 @@ class ToolContext:
     execution_markers: set[str] = field(default_factory=set)
     skill_manager: Any | None = None
     on_tools_discovered: Callable[[set[str]], None] | None = None
+    memory_manager: Any | None = None
+    memory_actor: Any | None = None
 
 
 @dataclass
@@ -312,6 +314,7 @@ def _ensure_imports() -> None:
     from bourbon.tools import (  # noqa: F401
         agent_tool,
         base,
+        memory,
         search,
         skill_tool,
         task_tools,

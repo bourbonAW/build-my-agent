@@ -294,6 +294,8 @@ class MemoryStore:
             return []
 
         matching_files = self._grep_files(query)
+        if not matching_files and len(query.split()) > 1:
+            matching_files = self._token_grep(query)
 
         results: list[MemorySearchResult] = []
         for filepath, matched_lines in matching_files:
@@ -367,6 +369,34 @@ class MemoryStore:
         except (FileNotFoundError, subprocess.TimeoutExpired):
             # Fallback to Python grep if rg not available
             return self._python_grep(query)
+
+    def _token_grep(self, query: str) -> list[tuple[Path, list[str]]]:
+        """Fallback multi-word search requiring all query tokens to appear."""
+        tokens = [token.lower() for token in query.split() if token.strip()]
+        if not tokens or not self.memory_dir.exists():
+            return []
+
+        results: list[tuple[Path, list[str]]] = []
+        for f in sorted(self.memory_dir.glob("*.md")):
+            if f.name == "MEMORY.md":
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except Exception:
+                continue
+
+            text_lower = text.lower()
+            if not all(token in text_lower for token in tokens):
+                continue
+
+            lines = [
+                line
+                for line in text.split("\n")
+                if any(token in line.lower() for token in tokens)
+            ]
+            results.append((f, lines[:5]))
+
+        return results
 
     def _python_grep(self, query: str) -> list[tuple[Path, list[str]]]:
         """Fallback grep using Python when ripgrep is not available."""

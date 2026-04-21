@@ -15,7 +15,7 @@ MEMORY_ANCHOR_ORDER = 15
 _AGENTS_MD_TOKEN_LIMIT = 8000
 
 
-async def memory_anchors_section(ctx: "PromptContext") -> str:
+async def memory_anchors_section(ctx: PromptContext) -> str:
     """Render AGENTS.md, USER.md, and MEMORY.md anchors into the prompt."""
     if ctx.memory_manager is None:
         return ""

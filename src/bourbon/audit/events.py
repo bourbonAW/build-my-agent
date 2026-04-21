@@ -14,6 +14,11 @@ class EventType(StrEnum):
     SANDBOX_EXEC = "sandbox_exec"
     SANDBOX_VIOLATION = "sandbox_violation"
     TOOL_CALL = "tool_call"
+    MEMORY_WRITE = "memory_write"
+    MEMORY_SEARCH = "memory_search"
+    MEMORY_FLUSH = "memory_flush"
+    MEMORY_PROMOTE = "memory_promote"
+    MEMORY_REJECT = "memory_reject"
 
 
 @dataclass(slots=True)

@@ -136,6 +136,8 @@ class TestToolContext:
         assert ctx.agent is None
         assert ctx.skill_manager is None
         assert ctx.on_tools_discovered is None
+        assert ctx.memory_manager is None
+        assert ctx.memory_actor is None
 
     def test_tool_context_with_callbacks(self):
         discovered = set()

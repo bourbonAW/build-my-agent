@@ -241,6 +241,22 @@ def test_grep_search_filters_by_kind(tmp_path: Path) -> None:
     assert results[0].kind == MemoryKind.PROJECT
 
 
+def test_grep_search_matches_multi_word_queries_by_token(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    store.write_record(
+        _make_record(
+            id="mem_terms0001",
+            name="DB mocking rule",
+            description="Avoid DB mocks",
+            content="Never mock the database in integration tests.",
+        )
+    )
+
+    results = store.search("mock database")
+    assert len(results) == 1
+    assert results[0].id == "mem_terms0001"
+
+
 def test_grep_search_empty_dir_returns_empty(tmp_path: Path) -> None:
     store = MemoryStore(memory_dir=tmp_path / "nonexistent")
     results = store.search("anything")

@@ -14,13 +14,14 @@ from bourbon.memory.models import (
     MemoryScope,
     MemorySearchResult,
     MemorySource,
-    MemoryStatus as MemStatus,
     MemoryStatusInfo,
     RecentWriteSummary,
     SourceRef,
     actor_to_created_by,
 )
-
+from bourbon.memory.models import (
+    MemoryStatus as MemStatus,
+)
 
 # --- Enums ---
 
