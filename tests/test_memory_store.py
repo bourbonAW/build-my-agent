@@ -1,10 +1,21 @@
-"""Tests for bourbon.memory.store — sanitize_project_key."""
+"""Tests for bourbon.memory.store — sanitize_project_key, file CRUD, index, search."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
-from bourbon.memory.store import sanitize_project_key
+from bourbon.memory.models import (
+    MemoryKind,
+    MemoryRecord,
+    MemoryScope,
+    MemorySource,
+    SourceRef,
+)
+from bourbon.memory.models import (
+    MemoryStatus as MemStatus,
+)
+from bourbon.memory.store import MemoryStore, sanitize_project_key
 
 
 def test_sanitize_simple_path():
@@ -37,3 +48,101 @@ def test_sanitize_different_paths_different_keys():
     k1 = sanitize_project_key(Path("/home/user/repo1"))
     k2 = sanitize_project_key(Path("/home/user/repo2"))
     assert k1 != k2
+
+
+# --- Task 4: File CRUD ---
+
+
+def _make_record(
+    *,
+    id: str = "mem_test1234",
+    name: str = "Test rule",
+    description: str = "A test memory record",
+    kind: MemoryKind = MemoryKind.PROJECT,
+    scope: MemoryScope = MemoryScope.PROJECT,
+    confidence: float = 1.0,
+    source: MemorySource = MemorySource.USER,
+    status: MemStatus = MemStatus.ACTIVE,
+    content: str = "Always use WAL mode.",
+    source_ref: SourceRef | None = None,
+) -> MemoryRecord:
+    if source_ref is None:
+        source_ref = SourceRef(kind="manual")
+    return MemoryRecord(
+        id=id,
+        name=name,
+        description=description,
+        kind=kind,
+        scope=scope,
+        confidence=confidence,
+        source=source,
+        status=status,
+        created_at=datetime(2026, 4, 20, tzinfo=UTC),
+        updated_at=datetime(2026, 4, 20, tzinfo=UTC),
+        created_by="user",
+        content=content,
+        source_ref=source_ref,
+    )
+
+
+def test_write_and_read_memory_file(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record()
+    store.write_record(record)
+
+    # File should exist with expected name
+    expected_file = tmp_path / "project_test-rule.md"
+    assert expected_file.exists()
+
+    # Read it back
+    loaded = store.read_record("mem_test1234")
+    assert loaded is not None
+    assert loaded.id == "mem_test1234"
+    assert loaded.content == "Always use WAL mode."
+    assert loaded.kind == MemoryKind.PROJECT
+
+
+def test_write_atomic_does_not_corrupt_on_existing(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_dup00001", name="Dup test", content="Original content.")
+    store.write_record(record)
+
+    # Update content
+    record2 = _make_record(
+        id="mem_dup00001",
+        name="Dup test",
+        description="Duplicate updated",
+        confidence=0.9,
+        content="Updated content.",
+    )
+    store.write_record(record2)
+    loaded = store.read_record("mem_dup00001")
+    assert loaded is not None
+    assert loaded.content == "Updated content."
+
+
+def test_read_nonexistent_returns_none(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    assert store.read_record("mem_notexist") is None
+
+
+def test_list_records_all(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    store.write_record(_make_record(id="mem_a", name="Rec A"))
+    store.write_record(_make_record(id="mem_b", name="Rec B"))
+    records = store.list_records()
+    assert len(records) == 2
+
+
+def test_list_records_status_filter(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    store.write_record(_make_record(id="mem_act", name="Active", status=MemStatus.ACTIVE))
+    store.write_record(_make_record(id="mem_stl", name="Stale", status=MemStatus.STALE))
+    active = store.list_records(status=["active"])
+    assert len(active) == 1
+    assert active[0].id == "mem_act"
+
+
+def test_list_records_empty_dir(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path / "nonexistent")
+    assert store.list_records() == []
