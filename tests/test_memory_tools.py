@@ -7,10 +7,15 @@ from bourbon.tools import ToolContext, _ensure_imports, get_registry
 def test_memory_tools_registered() -> None:
     _ensure_imports()
     registry = get_registry()
-    tool_names = [tool.name for tool in registry._tools.values()]
-    assert "MemorySearch" in tool_names
-    assert "MemoryWrite" in tool_names
-    assert "MemoryStatus" in tool_names
+    # Primary names (tool.name) must be snake_case to match plan spec and LLM tool definitions
+    tool_primary_names = [tool.name for tool in registry.list_tools()]
+    assert "memory_search" in tool_primary_names
+    assert "memory_write" in tool_primary_names
+    assert "memory_status" in tool_primary_names
+    # PascalCase aliases still resolve for backward compatibility
+    assert registry.get_tool("MemorySearch") is not None
+    assert registry.get_tool("MemoryWrite") is not None
+    assert registry.get_tool("MemoryStatus") is not None
 
 
 def test_memory_write_tool_schema() -> None:

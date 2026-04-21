@@ -15,7 +15,7 @@ from bourbon.memory.models import (
 from bourbon.memory.models import (
     MemoryStatus as MemStatus,
 )
-from bourbon.memory.store import MemoryStore, sanitize_project_key
+from bourbon.memory.store import MemoryStore, _record_to_filename, sanitize_project_key
 
 
 def test_sanitize_simple_path():
@@ -90,8 +90,8 @@ def test_write_and_read_memory_file(tmp_path: Path) -> None:
     record = _make_record()
     store.write_record(record)
 
-    # File should exist with expected name
-    expected_file = tmp_path / "project_test-rule.md"
+    # File should exist with expected name (kind_slug_id8.md)
+    expected_file = tmp_path / _record_to_filename(record)
     assert expected_file.exists()
 
     # Read it back
@@ -161,7 +161,7 @@ def test_update_index_adds_entry(tmp_path: Path) -> None:
     assert index_path.exists()
     text = index_path.read_text()
     assert "Index test" in text
-    assert "project_index-test.md" in text
+    assert _record_to_filename(record) in text
 
 
 def test_update_index_deduplicates(tmp_path: Path) -> None:
@@ -173,7 +173,7 @@ def test_update_index_deduplicates(tmp_path: Path) -> None:
 
     text = (tmp_path / "MEMORY.md").read_text()
     # The filename reference should appear exactly once
-    assert text.count("project_dedup-entry.md") == 1
+    assert text.count(_record_to_filename(record)) == 1
 
 
 def test_update_index_capacity_200_lines(tmp_path: Path) -> None:
@@ -307,3 +307,18 @@ def test_python_grep_fallback(tmp_path: Path) -> None:
     matches = store._python_grep("Fallback grep")
     assert len(matches) == 1
     assert any("Fallback grep" in line for line in matches[0][1])
+
+
+def test_two_records_same_name_and_kind_do_not_collide(tmp_path: Path) -> None:
+    """Two records with identical kind+name must not overwrite each other."""
+    store = MemoryStore(memory_dir=tmp_path)
+    record1 = _make_record(id="mem_aaa11111", name="WAL rule", kind=MemoryKind.PROJECT)
+    record2 = _make_record(id="mem_bbb22222", name="WAL rule", kind=MemoryKind.PROJECT)
+    store.write_record(record1)
+    store.write_record(record2)
+    retrieved1 = store.read_record("mem_aaa11111")
+    retrieved2 = store.read_record("mem_bbb22222")
+    assert retrieved1 is not None, "first record was lost"
+    assert retrieved2 is not None, "second record was lost"
+    assert retrieved1.id == "mem_aaa11111", "first record was silently overwritten by second"
+    assert retrieved2.id == "mem_bbb22222", "second record id mismatch"

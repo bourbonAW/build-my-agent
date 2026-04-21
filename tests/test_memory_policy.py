@@ -15,6 +15,14 @@ def test_user_can_write_all() -> None:
     )
 
 
+def test_explore_subagent_cannot_write_feedback_kind() -> None:
+    actor = MemoryActor(kind="subagent", run_id="run_1", agent_type="explore")
+    assert (
+        check_write_permission(actor, kind=MemoryKind.FEEDBACK, scope=MemoryScope.PROJECT)
+        is False
+    )
+
+
 def test_coder_subagent_limited() -> None:
     actor = MemoryActor(kind="subagent", run_id="run_2", agent_type="coder")
     assert (

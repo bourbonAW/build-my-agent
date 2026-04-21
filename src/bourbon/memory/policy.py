@@ -18,7 +18,8 @@ def check_write_permission(
     scope: MemoryScope,
 ) -> bool:
     """Return whether the actor can write a memory of the given kind and scope."""
-    del scope
+    # scope-based restrictions are reserved for Phase 2
+    _ = scope
 
     if actor.kind in {"user", "system"}:
         return True

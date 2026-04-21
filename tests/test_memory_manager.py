@@ -11,6 +11,7 @@ from bourbon.memory.models import (
     MemoryScope,
     MemorySource,
 )
+from bourbon.memory.store import _record_to_filename
 
 
 @pytest.fixture
@@ -43,7 +44,7 @@ def test_write_creates_file(manager: MemoryManager, tmp_path: Path) -> None:
     assert record.status == "active"
 
     mem_dir = tmp_path / "test-project-abc12345" / "memory"
-    assert (mem_dir / "project_wal-rule.md").exists()
+    assert (mem_dir / _record_to_filename(record)).exists()
 
 
 def test_write_updates_index(manager: MemoryManager, tmp_path: Path) -> None:

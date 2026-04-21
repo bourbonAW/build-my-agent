@@ -17,16 +17,16 @@ def _disabled() -> str:
     return _json_output({"error": "Memory system is not enabled"})
 
 
-def _filename(kind: str, name: str) -> str:
+def _filename(kind: str, name: str, record_id: str) -> str:
     slug = name.lower().replace(" ", "-")
     slug = re.sub(r"[^a-z0-9\-]", "", slug)
     slug = re.sub(r"-+", "-", slug).strip("-")
-    return f"{kind}_{slug[:50]}.md"
+    return f"{kind}_{slug[:50]}_{record_id[:8]}.md"
 
 
 @register_tool(
-    name="MemorySearch",
-    aliases=["memory_search"],
+    name="memory_search",
+    aliases=["MemorySearch"],
     description="Search stored memory records by keyword.",
     input_schema={
         "type": "object",
@@ -43,6 +43,7 @@ def _filename(kind: str, name: str) -> str:
                 "description": "Optional memory kind filter",
             },
             "limit": {"type": "integer", "default": 8, "description": "Maximum results"},
+            # from_date / to_date date filtering reserved for Phase 2
         },
         "required": ["query"],
     },
@@ -80,8 +81,8 @@ def memory_search(query: str, *, ctx: ToolContext, **kwargs: Any) -> str:
 
 
 @register_tool(
-    name="MemoryWrite",
-    aliases=["memory_write"],
+    name="memory_write",
+    aliases=["MemoryWrite"],
     description="Write a governed memory record for future recall.",
     input_schema={
         "type": "object",
@@ -171,14 +172,14 @@ def memory_write(
             "id": record.id,
             "name": record.name,
             "status": "written",
-            "file": _filename(str(record.kind), record.name),
+            "file": _filename(str(record.kind), record.name, record.id),
         }
     )
 
 
 @register_tool(
-    name="MemoryStatus",
-    aliases=["memory_status"],
+    name="memory_status",
+    aliases=["MemoryStatus"],
     description="Return current memory system status and recent writes.",
     input_schema={"type": "object", "properties": {}},
     risk_level=RiskLevel.LOW,

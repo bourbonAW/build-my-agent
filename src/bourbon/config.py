@@ -117,12 +117,12 @@ class MemoryConfig:
     enabled: bool = True
     storage_dir: str = "~/.bourbon/projects"
     auto_flush_on_compact: bool = True
-    auto_extract: bool = False
+    auto_extract: bool = False  # reserved for Phase 2 (automatic memory extraction)
     recall_limit: int = 8
-    recall_transcript_session_limit: int = 10
+    recall_transcript_session_limit: int = 10  # reserved for Phase 2 (transcript recall)
     memory_md_token_limit: int = 1200
     user_md_token_limit: int = 600
-    core_block_token_limit: int = 1200
+    core_block_token_limit: int = 1200  # reserved for Phase 2 (core memory block)
 
 
 @dataclass

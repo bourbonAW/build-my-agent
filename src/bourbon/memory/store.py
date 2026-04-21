@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,9 +57,9 @@ def _slugify_name(name: str) -> str:
 
 
 def _record_to_filename(record: MemoryRecord) -> str:
-    """Derive filename from kind and name."""
+    """Derive filename from kind, name and id (id suffix guarantees uniqueness)."""
     slug = _slugify_name(record.name)
-    return f"{record.kind}_{slug}.md"
+    return f"{record.kind}_{slug}_{record.id[:8]}.md"
 
 
 def _record_to_frontmatter(record: MemoryRecord) -> dict[str, Any]:
@@ -112,10 +113,10 @@ def _frontmatter_to_record(fm: dict[str, Any], body: str) -> MemoryRecord:
 
     created_at = fm["created_at"]
     if isinstance(created_at, str):
-        created_at = __import__("datetime").datetime.fromisoformat(created_at)
+        created_at = datetime.fromisoformat(created_at)
     updated_at = fm["updated_at"]
     if isinstance(updated_at, str):
-        updated_at = __import__("datetime").datetime.fromisoformat(updated_at)
+        updated_at = datetime.fromisoformat(updated_at)
 
     return MemoryRecord(
         id=fm["id"],
