@@ -6,26 +6,32 @@ Development guide for AI agents working on Bourbon.
 
 **Bourbon is a general-purpose agent platform** with a code-first evolution:
 - **Stage A (Completed)**: Perfect code capabilities - search, refactoring, analysis
-- **Stage B (Current)**: General-purpose knowledge work - documents, web, data, domain skills, sandbox isolation
+- **Stage B (Current)**: General-purpose knowledge work - documents, web, data, domain skills, sandbox isolation, subagents, persistent tasks, observability
 - **Stage C**: Autonomous workflows across all domains
 
-## Stage B Focus: General-Purpose Agent
+## Current Focus
 
-Bourbon has evolved from a code specialist to a general-purpose agent with:
+Bourbon has evolved from a code specialist to a multi-agent platform with:
 - **Software Engineering**: Code search, refactoring, analysis (Stage A capabilities)
 - **Domain Expertise via Skills**: Investment analysis, note management, data analysis, and more
 - **External Integrations**: MCP Client for databases, APIs, and external tools
 - **Knowledge Work**: Documents, web, data analysis
-- **Security**: Multi-layer sandbox isolation, access control, credential management, audit logging
+- **Multi-Agent**: Subagent system with parallel execution, tool filtering, and cancellation
+- **Persistent Tasks**: File-backed workflow tasks with ownership and dependencies (Task V2)
+- **Session Management**: Structured session layer with MessageChain, ContextManager, and transcript storage
+- **Memory (In Design)**: File-first memory stack with prompt anchors, recall, and governed writes
+- **Security**: Multi-layer sandbox isolation, permissions, access control, credential management, audit logging
+- **Observability**: OpenTelemetry tracing integration
 - **Context Management**: Long session support with compression and streaming markdown rendering
 
 ### Key Capabilities
 
-1. **Core Tools**: File operations, code search, bash execution, todo management
-2. **Skill System**: Agent Skills compatible - progressive disclosure, multi-scope discovery
-3. **MCP Integration**: External tool servers for extended capabilities
-4. **Sandbox Isolation**: Bubblewrap, Docker, seatbelt providers for safe tool execution
-5. **Eval Framework**: Promptfoo-based evaluation for skills, safety, and performance
+1. **Core Tools**: File operations, code search, bash execution, todo/task management
+2. **Subagent System**: Parallel task execution, code exploration, focused work via specialized sub-agents
+3. **Skill System**: Agent Skills compatible - progressive disclosure, multi-scope discovery
+4. **MCP Integration**: External tool servers for extended capabilities
+5. **Sandbox Isolation**: Bubblewrap, Docker, seatbelt providers for safe tool execution
+6. **Eval Framework**: Promptfoo-based evaluation + community benchmarks
 
 ## Project Structure
 
@@ -39,12 +45,48 @@ Bourbon has evolved from a code specialist to a general-purpose agent with:
 │   ├── llm.py               # Multi-provider LLM client
 │   ├── skills.py            # Agent Skills compatible skill system
 │   ├── compression.py       # Context compression
-│   ├── todos.py             # Todo management
+│   ├── todos.py             # In-memory todo management (V1)
 │   ├── debug.py             # Debug logging
+│   ├── prompt/              # Prompt management system
+│   │   ├── builder.py       # PromptBuilder with ordered sections
+│   │   ├── context.py       # PromptContext for section rendering
+│   │   ├── dynamic.py       # Dynamic prompt sections
+│   │   ├── sections.py      # Static prompt section definitions
+│   │   └── types.py         # PromptSection types
+│   ├── session/             # Session management layer
+│   │   ├── chain.py         # MessageChain (in-memory message list)
+│   │   ├── context.py       # ContextManager (token tracking, compact)
+│   │   ├── manager.py       # SessionManager orchestration
+│   │   ├── storage.py       # TranscriptStore (append-only JSONL)
+│   │   └── types.py         # Session types (metadata, summaries, triggers)
+│   ├── subagent/            # Subagent runtime system
+│   │   ├── manager.py       # SubagentManager (lifecycle orchestration)
+│   │   ├── types.py         # AgentDefinition, SubagentRun, RunStatus
+│   │   ├── cancel.py        # AbortController hierarchy
+│   │   ├── registry.py      # RunRegistry (in-memory runtime-job storage)
+│   │   ├── executor.py      # AsyncExecutor (ThreadPoolExecutor)
+│   │   ├── tools.py         # Tool filtering by agent type
+│   │   ├── errors.py        # SubagentErrorCode, RunError
+│   │   ├── result.py        # Result finalization
+│   │   ├── partial_result.py # Partial result extraction
+│   │   ├── cleanup.py       # Resource cleanup
+│   │   └── session_adapter.py # Subagent session isolation
+│   ├── tasks/               # Persistent workflow tasks (V2)
+│   │   ├── types.py         # TaskRecord (id, subject, status, owner, blocks)
+│   │   ├── store.py         # JSON file persistence + highwatermark
+│   │   ├── service.py       # Business rules (dependencies, owner, cleanup)
+│   │   ├── list_id.py       # Task list scope resolution
+│   │   ├── locking.py       # POSIX file locking
+│   │   └── constants.py     # Task constants
 │   ├── tools/               # Built-in tools
 │   │   ├── base.py          # File ops, bash, todos
 │   │   ├── search.py        # Code search (ripgrep)
 │   │   ├── skill_tool.py    # Skill activation tool
+│   │   ├── agent_tool.py    # Subagent spawn tool
+│   │   ├── task_tools.py    # TaskCreate/TaskUpdate/TaskList/TaskGet
+│   │   ├── todo_tool.py     # TodoWrite tool
+│   │   ├── tool_search.py   # Tool discovery
+│   │   ├── execution_queue.py # Tool execution queue
 │   │   ├── web.py           # Web fetch (Stage B)
 │   │   ├── data.py          # CSV/JSON analysis (Stage B)
 │   │   └── documents.py     # PDF/DOCX extraction (Stage B)
@@ -54,12 +96,24 @@ Bourbon has evolved from a code specialist to a general-purpose agent with:
 │   │   ├── credential.py    # Credential isolation
 │   │   ├── credential_proxy.py
 │   │   └── providers/       # bubblewrap, docker, seatbelt, local
+│   ├── permissions/         # Permission system
+│   │   ├── matching.py      # Permission matching logic
+│   │   ├── runtime.py       # Permission runtime enforcement
+│   │   └── presentation.py  # Permission UI presentation
 │   ├── access_control/      # Capability-based access control
 │   │   ├── capabilities.py
 │   │   └── policy.py
+│   ├── observability/       # OpenTelemetry integration
+│   │   ├── manager.py       # Observability manager
+│   │   └── tracer.py        # Tracer wrapper
 │   ├── audit/               # Security event logging
 │   │   └── events.py
 │   └── mcp_client/          # MCP Client implementation
+│       ├── config.py        # MCP server configuration
+│       ├── connector.py     # Server connection management
+│       ├── manager.py       # MCPManager orchestration
+│       ├── runtime.py       # MCP runtime
+│       └── utils.py         # MCP utilities
 ├── .kimi/skills/             # Project-level skills
 │   ├── investment-skill/    # Investment analysis
 │   ├── note-vault/          # Note management
@@ -71,19 +125,24 @@ Bourbon has evolved from a code specialist to a general-purpose agent with:
 │   ├── promptfoo_provider.py       # Agent provider for promptfoo
 │   ├── promptfoo_artifact_provider.py  # Calibration artifact provider
 │   ├── cases/               # Test case YAML files
-│   │   ├── calibration.yaml # Multi-dimensional scoring
-│   │   ├── safety.yaml      # Safety red team tests
-│   │   ├── security.yaml    # Security behavior tests
-│   │   ├── sandbox.yaml     # Sandbox isolation tests
-│   │   ├── skills.yaml      # Skill functionality tests
-│   │   ├── code-search.yaml # Code search tests
-│   │   ├── file-operations.yaml
-│   │   ├── general.yaml
-│   │   └── validator-smoke.yaml
-│   └── fixtures/            # Pre-built test fixtures
+│   ├── benchmarks/          # Community benchmarks (BigBench, GAIA, GSM8K, HumanEval, MT-Bench)
+│   ├── loaders/             # Benchmark dataset loaders (HuggingFace, etc.)
+│   ├── fixtures/            # Pre-built test fixtures
+│   └── results/             # Eval run results
+├── tests/                    # Unit tests (organized by module)
+│   ├── session/             # Session layer tests
+│   ├── test_subagent/       # Subagent system tests
+│   ├── tools/               # Tool-specific tests
+│   ├── evals/               # Eval framework tests
+│   └── stage_b/             # Stage B tool tests
+├── docs/                     # Design docs, specs, plans
+│   ├── specs/               # Core design specs
+│   └── superpowers/         # Feature design & implementation
+│       ├── specs/           # Feature design documents
+│       ├── plans/           # Implementation plans
+│       └── guides/          # Usage guides
 ├── promptfooconfig.yaml      # Promptfoo configuration (eval entrypoint)
-├── tests/                    # Unit tests
-└── docs/                     # Design docs, specs, plans
+└── pyproject.toml            # Project metadata & dependencies
 ```
 
 ## Development Commands
@@ -94,6 +153,9 @@ uv pip install -e ".[dev]"
 
 # Install Stage B dependencies
 uv pip install -e ".[stage-b]"
+
+# Install observability dependencies
+uv pip install -e ".[observability]"
 
 # Run linting
 ruff check src tests
@@ -117,13 +179,104 @@ python -m bourbon
 ## Key Design Decisions
 
 1. **Path safety**: All file operations sandboxed to workspace
-2. **Multi-layer security**: Sandbox providers (bubblewrap/docker/seatbelt) + capability-based access control + audit logging
+2. **Multi-layer security**: Sandbox providers (bubblewrap/docker/seatbelt) + permissions + capability-based access control + audit logging
 3. **Command safety**: Dangerous bash commands blacklisted, interactive confirmation for high-risk operations
-4. **Token management**: Auto-compact when context grows
+4. **Token management**: Auto-compact when context grows; session layer tracks token status
 5. **Configuration**: Global config in ~/.bourbon/
 6. **Error handling**: Risk-based policy (see below)
 7. **Streaming markdown**: Rich library with newline-split buffering for incremental rendering
-8. **Eval via promptfoo**: Standardized evaluation with caching, dashboards, and multi-dimensional scoring
+8. **Eval via promptfoo**: Standardized evaluation with caching, dashboards, multi-dimensional scoring, and community benchmarks
+9. **Subagent isolation**: Each subagent gets its own session, tool set, and abort controller
+10. **Task/Todo split**: In-memory todos (V1) for quick checklists; persistent file-backed tasks (V2) for workflow management
+11. **Memory (planned)**: File-first + grep recall; prompt anchors (AGENTS.md, MEMORY.md, USER.md); governed writes with scope isolation
+
+## Session Management
+
+The session layer (`src/bourbon/session/`) provides structured conversation management:
+
+- **MessageChain**: In-memory ordered message list with role tracking
+- **TranscriptStore**: Append-only JSONL persistence for full conversation history
+- **ContextManager**: Token estimation, microcompact, auto/manual compact triggers
+- **SessionManager**: Orchestrates chain + store + context; supports session resume
+
+## Subagent System
+
+The subagent system (`src/bourbon/subagent/`) enables parallel task execution:
+
+### Architecture
+
+```
+SubagentManager
+  ├── RunRegistry (runtime-job state)
+  ├── AsyncExecutor (ThreadPoolExecutor)
+  ├── AbortController (cancellation hierarchy)
+  ├── ToolFilter (agent-type-based tool access)
+  └── ResourceManager (cleanup)
+```
+
+### Agent Types
+
+Each subagent type gets a filtered tool set. Tool filtering is defined in `subagent/tools.py` via `AGENT_TYPE_CONFIGS`.
+
+### Execution Modes
+
+- **Synchronous**: Blocking execution, result returned inline
+- **Asynchronous**: Background execution via thread pool, result polled or awaited
+
+## Task & Todo System
+
+Bourbon has two layers of work tracking:
+
+| Layer | Storage | Scope | Tools |
+|-------|---------|-------|-------|
+| **Todo V1** | In-memory | Single session | `TodoWrite` |
+| **Task V2** | JSON files (`~/.bourbon/tasks/`) | Persistent, cross-session | `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` |
+
+Task V2 supports ownership, dependencies (`blocks`/`blockedBy`), and status lifecycle.
+
+## Prompt Management
+
+The prompt system (`src/bourbon/prompt/`) uses ordered sections:
+
+| Order | Section | Content |
+|-------|---------|---------|
+| 10 | identity | Agent identity and capabilities |
+| 15 | memory_anchors | (Planned) AGENTS.md, MEMORY.md, USER.md |
+| 20 | task_guidelines | Task execution guidelines |
+| 25 | subagent_guidelines | Subagent behavior rules |
+| 30 | error_handling | Error handling policy |
+| 40 | task_adaptability | Adaptive task behavior |
+| 60 | skills | Skill catalog (progressive disclosure) |
+| 70 | mcp_tools | MCP tool catalog |
+
+Sections can be static strings or async callables receiving `PromptContext`.
+
+## Memory System (In Design)
+
+Design spec: `docs/superpowers/specs/2026-04-19-bourbon-memory-design.md`
+
+### Architecture (Phase 1: File-first + Grep Recall)
+
+```
+Prompt Context (always injected)
+  ├─ AGENTS.md              # Project-level behavior rules
+  ├─ USER.md                # User preferences
+  └─ MEMORY.md              # Memory file index
+
+Memory Files (recalled on demand)
+  └─ ~/.bourbon/projects/{project}/memory/
+       ├─ MEMORY.md          # Index (≤200 lines)
+       ├─ {kind}_{slug}.md   # Individual memory records
+       └─ logs/YYYY/MM/DD.md # Daily logs (pre-compact flush)
+```
+
+### Design Principles
+
+- Transcript-first: append-only transcript as recoverable fact base
+- Bounded prompt memory with hard token limits
+- Local recall first (file + grep), no external services in V1
+- Scope-aware sharing between main agent and subagents
+- Governed writes with confidence, source tracking, and audit
 
 ## Skill System (Agent Skills Compatible)
 
@@ -161,8 +314,6 @@ Instructions for the agent...
 ```
 
 ### Progressive Disclosure
-
-Following the Agent Skills specification, Bourbon uses three-tier disclosure:
 
 | Tier | Content | When | Tokens |
 |------|---------|------|--------|
@@ -227,6 +378,23 @@ Isolated tool execution
 - `credential.py` - Credential isolation from sandboxed processes
 - `credential_proxy.py` - Proxied access to credentials without direct exposure
 
+## Permissions System
+
+The permissions layer (`src/bourbon/permissions/`) provides runtime permission enforcement:
+
+- **matching.py** - Pattern-based permission matching
+- **runtime.py** - Runtime permission checks and enforcement
+- **presentation.py** - User-facing permission request UI
+
+## Observability
+
+OpenTelemetry integration (`src/bourbon/observability/`) for tracing agent operations:
+
+- **manager.py** - Observability lifecycle management
+- **tracer.py** - Span creation and context propagation
+
+Install: `uv pip install -e ".[observability]"`
+
 ## MCP Client Integration
 
 Connect to external tool servers via [Model Context Protocol](https://modelcontextprotocol.io/):
@@ -259,7 +427,7 @@ MCP tools are registered as `{server_name}:{tool_name}` (e.g. `fetch:fetch_url`)
 
 ## Evaluation Framework
 
-Evaluations run through [promptfoo](https://www.promptfoo.dev/), replacing the previous custom eval runner.
+Evaluations run through [promptfoo](https://www.promptfoo.dev/).
 
 ### Running Evaluations
 
@@ -282,6 +450,8 @@ npx promptfoo@latest view
 - **Provider**: `evals/promptfoo_provider.py` wraps `Agent.step()` and returns JSON `{text, workdir, duration}`
 - **Artifact Provider**: `evals/promptfoo_artifact_provider.py` serves pre-built calibration artifacts
 - **Cases**: YAML files in `evals/cases/` organized by category
+- **Benchmarks**: Community benchmarks in `evals/benchmarks/` (BigBench Hard, GAIA, GSM8K, HumanEval, MT-Bench)
+- **Loaders**: Dataset loaders in `evals/loaders/` for HuggingFace and other sources
 - **Fixtures**: Pre-built artifacts and project templates in `evals/fixtures/`
 - **Assertions**: Promptfoo `javascript` assertions for file checks, `llm-rubric` for subjective evaluation, `contains`/`not-contains` for text matching
 
@@ -290,6 +460,7 @@ npx promptfoo@latest view
 | Category | Description |
 |----------|-------------|
 | `calibration.yaml` | Multi-dimensional scoring with pre-built artifacts |
+| `calibration-gen-eval.yaml` | Generated calibration cases |
 | `safety.yaml` | Safety red team tests |
 | `security.yaml` | Security behavior validation |
 | `sandbox.yaml` | Sandbox isolation tests |
