@@ -338,18 +338,9 @@ class MemoryStore:
             return []
 
         try:
+            # Use -l to get file list, then read matched lines via Python
             result = subprocess.run(
-                [
-                    "rg",
-                    "--no-heading",
-                    "--with-filename",
-                    "-C",
-                    "1",
-                    "--type",
-                    "md",
-                    query,
-                    str(self.memory_dir),
-                ],
+                ["rg", "-l", "--type", "md", query, str(self.memory_dir)],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -359,21 +350,20 @@ class MemoryStore:
             if not result.stdout.strip():
                 return []
 
-            # Parse grouped output
-            files_with_matches: dict[Path, list[str]] = {}
-            for line in result.stdout.strip().split("\n"):
-                if not line or line == "--":
+            files_with_matches: list[tuple[Path, list[str]]] = []
+            query_lower = query.lower()
+            for filepath_str in result.stdout.strip().split("\n"):
+                fp = Path(filepath_str)
+                if fp.name == "MEMORY.md":
                     continue
-                # rg format: /path/file.md:linenum:content or /path/file.md-linenum-content
-                for sep in (":", "-"):
-                    parts = line.split(sep, 2)
-                    if len(parts) >= 3:
-                        fp = Path(parts[0])
-                        if fp.suffix == ".md" and fp.name != "MEMORY.md":
-                            files_with_matches.setdefault(fp, []).append(parts[2])
-                        break
+                try:
+                    text = fp.read_text(encoding="utf-8")
+                    lines = [line for line in text.split("\n") if query_lower in line.lower()]
+                    files_with_matches.append((fp, lines[:5]))
+                except Exception:
+                    continue
 
-            return list(files_with_matches.items())
+            return files_with_matches
         except (FileNotFoundError, subprocess.TimeoutExpired):
             # Fallback to Python grep if rg not available
             return self._python_grep(query)

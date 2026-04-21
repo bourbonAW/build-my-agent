@@ -202,3 +202,92 @@ def test_update_index_capacity_200_lines(tmp_path: Path) -> None:
 
     lines = (tmp_path / "MEMORY.md").read_text().strip().split("\n")
     assert len(lines) <= 200
+
+
+# --- Task 6: Grep-Based Search ---
+
+
+def test_grep_search_finds_matching_content(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(
+        id="mem_srch0001",
+        name="WAL mode rule",
+        description="Use WAL for SQLite",
+        content="Always use WAL mode for SQLite stores to allow concurrent reads.",
+    )
+    store.write_record(record)
+
+    results = store.search("WAL mode")
+    assert len(results) >= 1
+    assert results[0].id == "mem_srch0001"
+    assert "WAL" in results[0].snippet
+
+
+def test_grep_search_filters_by_kind(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    for i, kind in enumerate([MemoryKind.PROJECT, MemoryKind.USER]):
+        store.write_record(
+            _make_record(
+                id=f"mem_kind000{i}",
+                name=f"Kind test {i}",
+                description=f"Test {kind}",
+                kind=kind,
+                content="Searchable content here.",
+            )
+        )
+
+    results = store.search("Searchable", kind=["project"])
+    assert len(results) == 1
+    assert results[0].kind == MemoryKind.PROJECT
+
+
+def test_grep_search_empty_dir_returns_empty(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path / "nonexistent")
+    results = store.search("anything")
+    assert results == []
+
+
+def test_grep_search_respects_status_filter(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    store.write_record(
+        _make_record(
+            id="mem_stat0001",
+            name="Rejected item",
+            description="Was rejected",
+            status=MemStatus.REJECTED,
+            content="Rejected searchable content.",
+        )
+    )
+
+    # Default: only active
+    results = store.search("Rejected searchable", status=["active"])
+    assert len(results) == 0
+
+    # Explicit rejected
+    results = store.search("Rejected searchable", status=["rejected"])
+    assert len(results) == 1
+
+
+def test_grep_search_no_matches(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    store.write_record(_make_record(id="mem_nomatch", name="No match", content="Something else."))
+    results = store.search("xyznonexistent")
+    assert results == []
+
+
+def test_python_grep_fallback(tmp_path: Path) -> None:
+    """Test the Python fallback grep directly."""
+    store = MemoryStore(memory_dir=tmp_path)
+    store.write_record(
+        _make_record(
+            id="mem_pygr0001",
+            name="Python grep test",
+            description="Fallback test",
+            content="Fallback grep content here.",
+        )
+    )
+
+    # Call _python_grep directly
+    matches = store._python_grep("Fallback grep")
+    assert len(matches) == 1
+    assert any("Fallback grep" in line for line in matches[0][1])
