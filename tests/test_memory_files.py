@@ -113,6 +113,30 @@ def test_update_managed_block_status_marks_stale_without_deleting_block(tmp_path
     assert 'bourbon-memory:end id="mem_user0002"' in text
 
 
+def test_update_managed_block_status_is_noop_when_file_missing(tmp_path: Path) -> None:
+    user_md = tmp_path / "USER.md"
+
+    update_managed_block_status(user_md, "mem_missing0001", "stale")
+
+    assert not user_md.exists()
+
+
+def test_update_managed_block_status_is_noop_when_memory_id_missing(tmp_path: Path) -> None:
+    user_md = tmp_path / "USER.md"
+    record = _make_record(
+        id="mem_user0005",
+        kind=MemoryKind.USER,
+        scope=MemoryScope.USER,
+        status=MemStatus.PROMOTED,
+    )
+    upsert_managed_block(user_md, record)
+    original_text = user_md.read_text()
+
+    update_managed_block_status(user_md, "mem_unknown0001", "stale")
+
+    assert user_md.read_text() == original_text
+
+
 def test_upsert_managed_block_truncates_long_body_and_adds_source_backlink(tmp_path: Path) -> None:
     user_md = tmp_path / "USER.md"
     source_file = tmp_path / "memory" / "user_preference-mem_long0001.md"
@@ -219,3 +243,51 @@ def test_render_merged_user_md_for_prompt_prefers_newer_promotions_on_budget_ove
 
     assert "Prefer uv for installs." in rendered
     assert "Prefer pip for installs." not in rendered
+
+
+def test_render_merged_user_md_for_prompt_orders_promotions_by_timestamp_with_offsets(
+    tmp_path: Path,
+) -> None:
+    global_file = tmp_path / "global.md"
+    later_utc = _make_record(
+        id="mem_offset0001",
+        name="Later UTC",
+        kind=MemoryKind.USER,
+        scope=MemoryScope.USER,
+        status=MemStatus.PROMOTED,
+        content="Later absolute time.",
+    )
+    earlier_lexical = _make_record(
+        id="mem_offset0002",
+        name="Earlier UTC",
+        kind=MemoryKind.USER,
+        scope=MemoryScope.USER,
+        status=MemStatus.PROMOTED,
+        content="Earlier absolute time.",
+    )
+    later_utc.updated_at = datetime.fromisoformat("2026-04-22T10:00:00+00:00")
+    earlier_lexical.updated_at = datetime.fromisoformat("2026-04-22T12:30:00+03:00")
+
+    upsert_managed_block(global_file, earlier_lexical)
+    upsert_managed_block(global_file, later_utc)
+
+    rendered = render_merged_user_md_for_prompt(global_file, None, token_limit=50)
+
+    assert rendered.index("Later absolute time.") < rendered.index("Earlier absolute time.")
+
+
+def test_render_merged_user_md_for_prompt_preserves_blank_lines_in_managed_body(tmp_path: Path) -> None:
+    global_file = tmp_path / "global.md"
+    record = _make_record(
+        id="mem_para00001",
+        kind=MemoryKind.USER,
+        scope=MemoryScope.USER,
+        status=MemStatus.PROMOTED,
+        content="First paragraph.\n\nSecond paragraph.",
+    )
+
+    upsert_managed_block(global_file, record)
+
+    rendered = render_merged_user_md_for_prompt(global_file, None, token_limit=100)
+
+    assert "First paragraph.\n\nSecond paragraph." in rendered

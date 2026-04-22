@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 from bourbon.memory.models import MemoryRecord
@@ -253,23 +254,46 @@ def update_managed_block_status(
     status: str,
 ) -> None:
     """Update status field inside an existing managed block."""
+    if not user_md_path.exists():
+        return
+
     text = _read_text(user_md_path)
     handwritten, managed = _extract_managed_section(text, user_md_path)
-    updated_blocks: list[str] = []
+    blocks = _extract_blocks(managed)
+    if not blocks:
+        return
 
-    for block_id, block in _extract_blocks(managed):
+    updated_blocks: list[str] = []
+    updated = False
+
+    for block_id, block in blocks:
         if block_id == memory_id:
             block = _STATUS_RE.sub(f"- status: {status}", block, count=1)
+            updated = True
         updated_blocks.append(block)
+
+    if not updated:
+        return
 
     sections = [part for part in [handwritten, _build_managed_section(updated_blocks)] if part]
     user_md_path.parent.mkdir(parents=True, exist_ok=True)
     user_md_path.write_text("\n\n".join(sections).strip() + "\n", encoding="utf-8")
 
 
-def _parse_promoted_at(block: str) -> str:
+def _parse_promoted_at(block: str) -> float:
     match = _PROMOTED_AT_RE.search(block)
-    return match.group("value") if match else ""
+    if not match:
+        return float("-inf")
+
+    value = match.group("value").strip()
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return float("-inf")
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).timestamp()
 
 
 def _is_promoted_block(block: str) -> bool:
@@ -277,31 +301,25 @@ def _is_promoted_block(block: str) -> bool:
 
 
 def _block_prompt_content(block: str) -> str:
-    lines = block.splitlines()
-    content_lines: list[str] = []
-    in_body = False
+    lines = [
+        line
+        for line in block.splitlines()
+        if not line.startswith("<!-- bourbon-memory:") and not line.startswith("### ")
+    ]
+    body_start = 0
+    metadata_prefixes = ("- status:", "- kind:", "- promoted_at:", "- note:")
 
-    for line in lines:
-        if line.startswith("<!-- bourbon-memory:"):
+    for index, line in enumerate(lines):
+        if line.startswith(metadata_prefixes):
             continue
-        if not in_body:
-            if not line.strip():
-                if any(
-                    candidate.startswith(("- status:", "- kind:", "- promoted_at:", "- note:"))
-                    for candidate in lines[max(0, len(content_lines)) :]
-                ):
-                    continue
-            if line.startswith("### "):
-                continue
-            if line.startswith(("- status:", "- kind:", "- promoted_at:", "- note:")):
-                continue
-            if not line.strip():
-                in_body = True
-                continue
-        if in_body or line.strip():
-            content_lines.append(line)
+        if not line.strip():
+            continue
+        body_start = index
+        break
+    else:
+        return ""
 
-    return "\n".join(content_lines).strip()
+    return "\n".join(lines[body_start:]).strip()
 
 
 def _render_promoted_blocks(blocks: list[str], token_limit: int) -> str:
