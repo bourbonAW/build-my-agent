@@ -192,6 +192,28 @@ def test_archive_marks_promoted_blocks_stale(
     assert "- status: promoted" not in user_md_text
 
 
+def test_archive_rejects_unsupported_status(manager: MemoryManager) -> None:
+    actor = MemoryActor(kind="user")
+    record = manager.write(
+        MemoryRecordDraft(
+            kind=MemoryKind.USER,
+            scope=MemoryScope.USER,
+            content="Always use uv.",
+            source=MemorySource.USER,
+            confidence=1.0,
+        ),
+        actor=actor,
+    )
+
+    with pytest.raises(ValueError, match="Cannot archive record as active"):
+        manager.archive(record.id, MemoryStatus.ACTIVE, actor=actor)
+
+
+def test_archive_rejects_unknown_memory_id(manager: MemoryManager) -> None:
+    with pytest.raises(KeyError, match="Unknown memory id: mem_missing"):
+        manager.archive("mem_missing", MemoryStatus.STALE, actor=MemoryActor(kind="user"))
+
+
 @pytest.mark.parametrize(
     ("draft", "starting_status", "error_message"),
     [
