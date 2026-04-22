@@ -289,6 +289,36 @@ def test_archive_rejects_missing_managed_block_for_promoted_record(
     assert persisted.status == MemoryStatus.PROMOTED
 
 
+def test_archive_rejects_promoted_block_missing_status_line(
+    manager: MemoryManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    actor = MemoryActor(kind="user")
+    record = manager.write(
+        MemoryRecordDraft(
+            kind=MemoryKind.USER,
+            scope=MemoryScope.USER,
+            content="Always use uv.",
+            source=MemorySource.USER,
+            confidence=1.0,
+        ),
+        actor=actor,
+    )
+    manager.promote(record.id, actor=actor, note="stable preference")
+    user_md = tmp_path / ".bourbon" / "USER.md"
+    malformed = user_md.read_text(encoding="utf-8").replace("- status: promoted\n", "")
+    user_md.write_text(malformed, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match=f"Managed USER.md block missing status for {record.id}"):
+        manager.archive(record.id, MemoryStatus.STALE, actor=actor)
+
+    persisted = manager._store.read_record(record.id)
+    assert persisted is not None
+    assert persisted.status == MemoryStatus.PROMOTED
+
+
 def test_archive_rejects_unsupported_status(manager: MemoryManager) -> None:
     actor = MemoryActor(kind="user")
     record = manager.write(

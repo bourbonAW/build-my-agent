@@ -57,6 +57,10 @@ def _managed_block_marker(memory_id: str) -> str:
     return f'<!-- bourbon-memory:start id="{memory_id}" -->'
 
 
+def _managed_block_end_marker(memory_id: str) -> str:
+    return f'<!-- bourbon-memory:end id="{memory_id}" -->'
+
+
 class MemoryManager:
     """High-level facade for memory writes, search, and status."""
 
@@ -88,8 +92,18 @@ class MemoryManager:
             raise RuntimeError("Managed USER.md projection missing")
 
         text = user_md_path.read_text(encoding="utf-8")
-        if _managed_block_marker(memory_id) not in text:
+        start_marker = _managed_block_marker(memory_id)
+        end_marker = _managed_block_end_marker(memory_id)
+        start_index = text.find(start_marker)
+        if start_index == -1:
             raise RuntimeError(f"Managed USER.md block missing for {memory_id}")
+        end_index = text.find(end_marker, start_index)
+        if end_index == -1:
+            raise RuntimeError(f"Managed USER.md block missing for {memory_id}")
+
+        block = text[start_index : end_index + len(end_marker)]
+        if "- status:" not in block:
+            raise RuntimeError(f"Managed USER.md block missing status for {memory_id}")
 
     def promote(self, memory_id: str, actor: MemoryActor, note: str = "") -> MemoryRecord:
         """Promote an eligible record into the managed global USER.md section."""
