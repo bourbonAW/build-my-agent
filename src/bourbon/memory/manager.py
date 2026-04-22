@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from bourbon.audit.events import AuditEvent, EventType
 from bourbon.config import MemoryConfig
 from bourbon.memory.compact import extract_flush_candidates
+from bourbon.memory.files import upsert_managed_block, update_managed_block_status
 from bourbon.memory.models import (
     MemoryActor,
     MemoryRecord,
@@ -22,7 +24,11 @@ from bourbon.memory.models import (
     RecentWriteSummary,
     actor_to_created_by,
 )
-from bourbon.memory.policy import check_write_permission
+from bourbon.memory.policy import (
+    check_archive_permission,
+    check_promote_permission,
+    check_write_permission,
+)
 from bourbon.memory.store import MemoryStore
 
 if TYPE_CHECKING:
@@ -69,6 +75,66 @@ class MemoryManager:
     def get_memory_dir(self) -> Path:
         """Return the backing memory directory."""
         return self._memory_dir
+
+    def promote(self, memory_id: str, actor: MemoryActor, note: str = "") -> MemoryRecord:
+        """Promote an eligible record into the managed global USER.md section."""
+        record = self._store.read_record(memory_id)
+        if record is None:
+            raise KeyError(f"Unknown memory id: {memory_id}")
+        if record.status not in {MemoryStatus.ACTIVE, MemoryStatus.STALE}:
+            raise ValueError(f"Cannot promote record with status {record.status}")
+        check_promote_permission(actor, record)
+
+        global_user_md = Path("~/.bourbon/USER.md").expanduser()
+        source_filename = self._store._id_to_filename.get(record.id)
+        source_path = self._memory_dir / source_filename if source_filename else None
+        upsert_managed_block(
+            global_user_md,
+            replace(record, status=MemoryStatus.PROMOTED),
+            note=note,
+            source_path=source_path,
+        )
+        updated = self._store.update_status(memory_id, MemoryStatus.PROMOTED)
+        self._record_audit(
+            EventType.MEMORY_PROMOTE,
+            tool_input_summary=record.name,
+            memory_id=record.id,
+            actor=actor_to_created_by(actor),
+        )
+        return updated
+
+    def archive(
+        self,
+        memory_id: str,
+        status: MemoryStatus,
+        actor: MemoryActor,
+        reason: str = "",
+    ) -> MemoryRecord:
+        """Archive a record as stale or rejected, updating USER.md when needed."""
+        record = self._store.read_record(memory_id)
+        if record is None:
+            raise KeyError(f"Unknown memory id: {memory_id}")
+        if status not in {MemoryStatus.STALE, MemoryStatus.REJECTED}:
+            raise ValueError(f"Cannot archive record as {status}")
+        check_archive_permission(actor, record)
+
+        if record.status == MemoryStatus.PROMOTED:
+            update_managed_block_status(
+                Path("~/.bourbon/USER.md").expanduser(),
+                memory_id,
+                str(status),
+            )
+
+        updated = self._store.update_status(memory_id, status)
+        self._record_audit(
+            EventType.MEMORY_REJECT,
+            tool_input_summary=record.name,
+            memory_id=record.id,
+            archive_status=str(status),
+            actor=actor_to_created_by(actor),
+            reason=reason,
+        )
+        return updated
 
     def write(self, draft: MemoryRecordDraft, *, actor: MemoryActor) -> MemoryRecord:
         """Persist a new memory record and update the MEMORY.md index."""

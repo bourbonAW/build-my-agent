@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bourbon.memory.models import MemoryActor, MemoryKind, MemoryScope
+from bourbon.memory.models import MemoryActor, MemoryKind, MemoryRecord, MemoryScope
 
 _SUBAGENT_ALLOWED_KINDS: dict[str, set[MemoryKind]] = {
     "explore": {MemoryKind.PROJECT, MemoryKind.REFERENCE},
@@ -35,3 +35,20 @@ def check_write_permission(
         {MemoryKind.PROJECT, MemoryKind.REFERENCE},
     )
     return kind in allowed_kinds
+
+
+def check_promote_permission(actor: MemoryActor, record: MemoryRecord) -> None:
+    """Raise when the actor cannot promote the record."""
+    if actor.kind == "subagent":
+        raise PermissionError("Subagents cannot promote memory records")
+    if record.kind not in {MemoryKind.USER, MemoryKind.FEEDBACK}:
+        raise PermissionError(f"Cannot promote memory kind {record.kind}")
+    if record.scope != MemoryScope.USER:
+        raise PermissionError("Only user-scope records can be promoted")
+
+
+def check_archive_permission(actor: MemoryActor, record: MemoryRecord) -> None:
+    """Raise when the actor cannot archive the record."""
+    _ = record
+    if actor.kind == "subagent":
+        raise PermissionError("Subagents cannot archive memory records")

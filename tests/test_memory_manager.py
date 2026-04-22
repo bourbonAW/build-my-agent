@@ -10,6 +10,7 @@ from bourbon.memory.models import (
     MemoryRecordDraft,
     MemoryScope,
     MemorySource,
+    MemoryStatus,
 )
 from bourbon.memory.store import _record_to_filename
 
@@ -119,3 +120,126 @@ def test_flush_before_compact(manager: MemoryManager) -> None:
     assert len(records) >= 1
     assert records[0].source == "compaction"
     assert records[0].confidence < 1.0
+
+
+def test_promote_updates_global_user_md_and_store_status(
+    manager: MemoryManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    actor = MemoryActor(kind="user")
+    record = manager.write(
+        MemoryRecordDraft(
+            kind=MemoryKind.USER,
+            scope=MemoryScope.USER,
+            content="Always use uv.",
+            source=MemorySource.USER,
+            confidence=1.0,
+            name="uv preference",
+            description="Prefer uv for Python tooling",
+        ),
+        actor=actor,
+    )
+
+    updated = manager.promote(record.id, actor=actor, note="stable preference")
+
+    assert updated.status == MemoryStatus.PROMOTED
+    persisted = manager._store.read_record(record.id)
+    assert persisted is not None
+    assert persisted.status == MemoryStatus.PROMOTED
+
+    user_md = tmp_path / ".bourbon" / "USER.md"
+    assert user_md.exists()
+    user_md_text = user_md.read_text(encoding="utf-8")
+    assert f'<!-- bourbon-memory:start id="{record.id}" -->' in user_md_text
+    assert "- status: promoted" in user_md_text
+    assert "- note: stable preference" in user_md_text
+
+
+def test_archive_marks_promoted_blocks_stale(
+    manager: MemoryManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    actor = MemoryActor(kind="user")
+    record = manager.write(
+        MemoryRecordDraft(
+            kind=MemoryKind.FEEDBACK,
+            scope=MemoryScope.USER,
+            content="Keep responses concise.",
+            source=MemorySource.USER,
+            confidence=1.0,
+            name="concise preference",
+            description="Prefer concise responses",
+        ),
+        actor=actor,
+    )
+    manager.promote(record.id, actor=actor, note="stable preference")
+
+    updated = manager.archive(
+        record.id,
+        MemoryStatus.STALE,
+        actor=actor,
+        reason="temporary exception",
+    )
+
+    assert updated.status == MemoryStatus.STALE
+    user_md = tmp_path / ".bourbon" / "USER.md"
+    user_md_text = user_md.read_text(encoding="utf-8")
+    assert "- status: stale" in user_md_text
+    assert "- status: promoted" not in user_md_text
+
+
+@pytest.mark.parametrize(
+    ("draft", "starting_status", "error_message"),
+    [
+        (
+            MemoryRecordDraft(
+                kind=MemoryKind.USER,
+                scope=MemoryScope.USER,
+                content="Rejected preference.",
+                source=MemorySource.USER,
+                confidence=1.0,
+            ),
+            MemoryStatus.REJECTED,
+            "Cannot promote record with status rejected",
+        ),
+        (
+            MemoryRecordDraft(
+                kind=MemoryKind.PROJECT,
+                scope=MemoryScope.USER,
+                content="Project memory.",
+                source=MemorySource.USER,
+                confidence=1.0,
+            ),
+            MemoryStatus.ACTIVE,
+            "Cannot promote memory kind project",
+        ),
+        (
+            MemoryRecordDraft(
+                kind=MemoryKind.FEEDBACK,
+                scope=MemoryScope.PROJECT,
+                content="Project-scoped feedback.",
+                source=MemorySource.USER,
+                confidence=1.0,
+            ),
+            MemoryStatus.ACTIVE,
+            "Only user-scope records can be promoted",
+        ),
+    ],
+)
+def test_promote_rejects_invalid_status_kind_and_scope_cases(
+    manager: MemoryManager,
+    draft: MemoryRecordDraft,
+    starting_status: MemoryStatus,
+    error_message: str,
+) -> None:
+    actor = MemoryActor(kind="user")
+    record = manager.write(draft, actor=actor)
+    if starting_status != MemoryStatus.ACTIVE:
+        manager._store.update_status(record.id, starting_status)
+
+    with pytest.raises((PermissionError, ValueError), match=error_message):
+        manager.promote(record.id, actor=actor)
