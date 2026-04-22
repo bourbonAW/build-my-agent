@@ -83,7 +83,25 @@ def memory_search(query: str, *, ctx: ToolContext, **kwargs: Any) -> str:
 @register_tool(
     name="memory_write",
     aliases=["MemoryWrite"],
-    description="Write a governed memory record for future recall.",
+    description=(
+        "Write a governed memory record for future recall.\n"
+        "Call this PROACTIVELY — do NOT wait for the user to say 'remember this'. "
+        "Trigger on any of the following signals:\n"
+        "  - Preferences: language/output/tone/format the user wants "
+        "(e.g. 'respond in Chinese', 'no emojis').\n"
+        "  - Constraints & corrections: 'always X', 'never Y', 'must Z', "
+        "'stop doing W', 'from now on ...'.\n"
+        "  - Role/context: what the user does, what they're working on, "
+        "domain background.\n"
+        "  - External references: where bugs/dashboards/docs live "
+        "(Linear project, Grafana URL, etc.).\n"
+        "Choose `kind` by signal type: user (role/preferences), "
+        "feedback (corrections/confirmed approaches), "
+        "project (ongoing work/decisions), reference (pointers to external systems). "
+        "Use scope='user' for cross-project personal preferences, "
+        "scope='project' for repo-specific facts. "
+        "Skip ephemeral task state — that belongs in TodoWrite, not memory."
+    ),
     input_schema={
         "type": "object",
         "properties": {
