@@ -287,7 +287,11 @@ class MemoryStore:
             return False
 
     def _rebuild_index(self) -> bool:
-        """Rebuild MEMORY.md from active records only."""
+        """Rebuild MEMORY.md from active records only.
+
+        Returns True when the rebuilt active index reaches the 200-entry cap,
+        which means additional active records were truncated from MEMORY.md.
+        """
         index_path = self.memory_dir / "MEMORY.md"
         active_records = sorted(
             self.list_records(status=["active"]),
