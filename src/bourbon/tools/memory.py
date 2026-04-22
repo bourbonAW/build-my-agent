@@ -42,6 +42,11 @@ def _filename(kind: str, name: str, record_id: str) -> str:
                 "items": {"type": "string", "enum": ["user", "feedback", "project", "reference"]},
                 "description": "Optional memory kind filter",
             },
+            "status": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["active", "promoted", "stale", "rejected"]},
+                "description": "Optional memory status filter",
+            },
             "limit": {"type": "integer", "default": 8, "description": "Maximum results"},
             # from_date / to_date date filtering reserved for Phase 2
         },
@@ -60,6 +65,7 @@ def memory_search(query: str, *, ctx: ToolContext, **kwargs: Any) -> str:
         query,
         scope=kwargs.get("scope"),
         kind=kwargs.get("kind"),
+        status=kwargs.get("status"),
         limit=kwargs.get("limit"),
     )
     return _json_output(

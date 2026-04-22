@@ -204,6 +204,39 @@ def test_update_index_capacity_200_lines(tmp_path: Path) -> None:
     assert len(lines) <= 200
 
 
+def test_update_status_rewrites_frontmatter_and_returns_updated_record(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_prom0001", name="Promote me")
+    store.write_record(record)
+
+    updated = store.update_status("mem_prom0001", MemStatus.PROMOTED)
+
+    assert updated.status == MemStatus.PROMOTED
+    assert updated.updated_at >= record.updated_at
+    text = (tmp_path / _record_to_filename(updated)).read_text()
+    assert "status: promoted" in text
+
+
+def test_rebuild_index_excludes_promoted_stale_and_rejected(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    active = _make_record(id="mem_act0001", name="Active only")
+    promoted = _make_record(id="mem_prm0001", name="Promoted", status=MemStatus.PROMOTED)
+    stale = _make_record(id="mem_stl0001", name="Stale", status=MemStatus.STALE)
+    rejected = _make_record(id="mem_rej0001", name="Rejected", status=MemStatus.REJECTED)
+
+    for record in (active, promoted, stale, rejected):
+        store.write_record(record)
+
+    rebuilt = store._rebuild_index()
+
+    assert rebuilt is False
+    text = (tmp_path / "MEMORY.md").read_text()
+    assert "Active only" in text
+    assert "Promoted" not in text
+    assert "Stale" not in text
+    assert "Rejected" not in text
+
+
 # --- Task 6: Grep-Based Search ---
 
 

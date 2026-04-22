@@ -35,6 +35,34 @@ def test_memory_search_tool_schema() -> None:
     assert tool is not None
     schema = tool.input_schema
     assert "query" in schema["properties"]
+    assert "status" in schema["properties"]
+
+
+def test_memory_search_passes_status_filter_to_manager() -> None:
+    from bourbon.tools.memory import memory_search
+
+    class _FakeMemoryManager:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def search(self, query: str, **kwargs: object) -> list[object]:
+            self.calls.append({"query": query, **kwargs})
+            return []
+
+    fake_manager = _FakeMemoryManager()
+    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=fake_manager)
+
+    memory_search(query="test", ctx=ctx, status=["promoted"])
+
+    assert fake_manager.calls == [
+        {
+            "query": "test",
+            "scope": None,
+            "kind": None,
+            "status": ["promoted"],
+            "limit": None,
+        }
+    ]
 
 
 def test_memory_tools_return_error_when_disabled() -> None:

@@ -9,7 +9,8 @@ import re
 import subprocess
 import tempfile
 import threading
-from datetime import datetime
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -202,6 +203,21 @@ class MemoryStore:
         self._id_to_filename[record.id] = filename
         return target
 
+    def update_status(self, memory_id: str, status: MemoryStatus) -> MemoryRecord:
+        """Update a record's status and rebuild the active-only index."""
+        record = self.read_record(memory_id)
+        if record is None:
+            raise KeyError(f"Unknown memory id: {memory_id}")
+
+        updated = replace(
+            record,
+            status=status,
+            updated_at=datetime.now(record.updated_at.tzinfo or UTC),
+        )
+        self.write_record(updated)
+        self._rebuild_index()
+        return updated
+
     def read_record(self, memory_id: str) -> MemoryRecord | None:
         """Read a memory record by id."""
         filename = self._id_to_filename.get(memory_id)
@@ -269,6 +285,28 @@ class MemoryStore:
             content = "\n".join(new_lines) + "\n"
             self._atomic_write(index_path, content)
             return False
+
+    def _rebuild_index(self) -> bool:
+        """Rebuild MEMORY.md from active records only."""
+        index_path = self.memory_dir / "MEMORY.md"
+        active_records = sorted(
+            self.list_records(status=["active"]),
+            key=lambda record: record.updated_at,
+            reverse=True,
+        )[:200]
+
+        lines = [
+            f"- [{record.name}]({_record_to_filename(record)}) — {record.description}"
+            for record in active_records
+        ]
+        content = "\n".join(lines)
+        if lines:
+            content += "\n"
+
+        with _index_lock:
+            self._atomic_write(index_path, content)
+
+        return len(active_records) >= 200
 
     # --- Task 6: Grep-Based Search ---
 
