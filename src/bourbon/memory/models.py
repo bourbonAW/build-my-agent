@@ -33,6 +33,7 @@ class MemoryStatus(StrEnum):
     ACTIVE = "active"
     STALE = "stale"
     REJECTED = "rejected"
+    PROMOTED = "promoted"
 
 
 @dataclass(frozen=True)

@@ -45,7 +45,7 @@ def test_memory_source_values():
 
 
 def test_memory_status_values():
-    assert {e.value for e in MemStatus} == {"active", "stale", "rejected"}
+    assert {e.value for e in MemStatus} == {"active", "stale", "rejected", "promoted"}
 
 
 # --- MemoryActor ---
