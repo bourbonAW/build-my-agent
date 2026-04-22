@@ -19,7 +19,7 @@ Bourbon has evolved from a code specialist to a multi-agent platform with:
 - **Multi-Agent**: Subagent system with parallel execution, tool filtering, and cancellation
 - **Persistent Tasks**: File-backed workflow tasks with ownership and dependencies (Task V2)
 - **Session Management**: Structured session layer with MessageChain, ContextManager, and transcript storage
-- **Memory (In Design)**: File-first memory stack with prompt anchors, recall, and governed writes
+- **Memory (Phase 2 Delivered)**: File-first memory stack with prompt anchors, recall, governed writes, and promoted preference injection into managed USER.md
 - **Security**: Multi-layer sandbox isolation, permissions, access control, credential management, audit logging
 - **Observability**: OpenTelemetry tracing integration
 - **Context Management**: Long session support with compression and streaming markdown rendering
@@ -31,7 +31,8 @@ Bourbon has evolved from a code specialist to a multi-agent platform with:
 3. **Skill System**: Agent Skills compatible - progressive disclosure, multi-scope discovery
 4. **MCP Integration**: External tool servers for extended capabilities
 5. **Sandbox Isolation**: Bubblewrap, Docker, seatbelt providers for safe tool execution
-6. **Eval Framework**: Promptfoo-based evaluation + community benchmarks
+6. **Memory System**: Governed memory records with write, search, promote, and archive lifecycle
+7. **Eval Framework**: Promptfoo-based evaluation + community benchmarks
 
 ## Project Structure
 
@@ -241,7 +242,7 @@ The prompt system (`src/bourbon/prompt/`) uses ordered sections:
 | Order | Section | Content |
 |-------|---------|---------|
 | 10 | identity | Agent identity and capabilities |
-| 15 | memory_anchors | (Planned) AGENTS.md, MEMORY.md, USER.md |
+| 15 | memory_anchors | AGENTS.md, MEMORY.md, USER.md, and promoted managed blocks |
 | 20 | task_guidelines | Task execution guidelines |
 | 25 | subagent_guidelines | Subagent behavior rules |
 | 30 | error_handling | Error handling policy |
@@ -251,21 +252,36 @@ The prompt system (`src/bourbon/prompt/`) uses ordered sections:
 
 Sections can be static strings or async callables receiving `PromptContext`.
 
-## Memory System (In Design)
+## Memory System
 
-Design spec: `docs/superpowers/specs/2026-04-19-bourbon-memory-design.md`
+Bourbon has a two-phase memory system for persisting and recalling agent-relevant context across sessions.
 
-### Architecture (Phase 1: File-first + Grep Recall)
+### Phase 1: File-First Recall (Completed)
+
+- **Tools**: `memory_write`, `memory_search`, `memory_status`
+- **Storage**: Individual `.md` records under `~/.bourbon/projects/{key}/memory/`
+- **Index**: `MEMORY.md` (≤200 active records, one-line summaries injected into prompt)
+- **Recall**: Grepped keyword search with status/kind/scope filters
+
+### Phase 2: Promoted Preference Injection (Completed)
+
+- **Tools**: `memory_promote`, `memory_archive`
+- **Mechanism**: Stable `user`/`feedback` preferences move from the weak MEMORY.md index into a managed section of `~/.bourbon/USER.md`
+- **Prompt guarantee**: Promoted blocks render before freeform USER.md content with reserved token budget, preventing truncation
+- **Lifecycle**: `active` → `promoted` (strong injection) → `stale`/`rejected` (removed from injection, preserved for audit)
+- **Content guard**: Bodies >150 tokens are truncated with a backlink to source file
+
+### Architecture
 
 ```
 Prompt Context (always injected)
   ├─ AGENTS.md              # Project-level behavior rules
-  ├─ USER.md                # User preferences
-  └─ MEMORY.md              # Memory file index
+  ├─ USER.md                # User preferences (handwritten + managed promoted blocks)
+  └─ MEMORY.md              # Memory file index (active records only)
 
-Memory Files (recalled on demand)
+Memory Files
   └─ ~/.bourbon/projects/{project}/memory/
-       ├─ MEMORY.md          # Index (≤200 lines)
+       ├─ MEMORY.md          # Index (≤200 lines, active only)
        ├─ {kind}_{slug}.md   # Individual memory records
        └─ logs/YYYY/MM/DD.md # Daily logs (pre-compact flush)
 ```
@@ -277,6 +293,10 @@ Memory Files (recalled on demand)
 - Local recall first (file + grep), no external services in V1
 - Scope-aware sharing between main agent and subagents
 - Governed writes with confidence, source tracking, and audit
+
+**Design specs:**
+- Phase 1: `docs/superpowers/specs/2026-04-19-bourbon-memory-design.md`
+- Phase 2: `docs/superpowers/specs/2026-04-22-bourbon-memory-phase2-design.md`
 
 ## Skill System (Agent Skills Compatible)
 

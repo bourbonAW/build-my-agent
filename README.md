@@ -12,6 +12,7 @@ Bourbon is a general-purpose AI agent platform with a code-first evolution, desi
 - **Domain Expertise**: Investment analysis, note management, and more via skills
 - **External Tools**: MCP Client for databases, APIs
 - **Security**: Multi-layer sandbox isolation (bubblewrap/docker/seatbelt), access control, audit logging
+- **Memory**: Governed memory records with promoted preference injection into managed USER.md
 - **Safe Operations**: Sandboxed file operations, risk-based error handling
 
 **Architecture**:
@@ -93,6 +94,10 @@ bourbon
 | `shell` | Execute bash commands | Blacklist dangerous commands |
 | `search` | Code search (ripgrep) | Read-only |
 | `todo` | Task management | - |
+| `memory_write` | Write a governed memory record | Sandboxed to workdir |
+| `memory_search` | Search memory records by keyword | Read-only |
+| `memory_promote` | Promote stable preference to USER.md | File write |
+| `memory_archive` | Archive a memory as stale/rejected | File write |
 
 ### Stage B: General Knowledge Tools
 
