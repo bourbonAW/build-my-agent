@@ -16,10 +16,40 @@ def _get_log_path() -> Path | None:
     if raw_path:
         return Path(raw_path).expanduser()
 
-    if os.environ.get("BOURBON_DEBUG", "").lower() in {"1", "true", "yes", "on"}:
+    enabled_flags = ("BOURBON_DEBUG", "BOURBON_DEBUG_PROMPTS")
+    if any(
+        os.environ.get(flag, "").lower() in {"1", "true", "yes", "on"}
+        for flag in enabled_flags
+    ):
         return (Path.home() / ".bourbon" / "logs" / "debug.jsonl").expanduser()
 
     return None
+
+
+def prompt_fields(
+    messages: list[dict] | None,
+    system: str | None = None,
+    tools: list[dict] | None = None,
+) -> dict[str, Any]:
+    """Return full prompt fields for logging, gated on BOURBON_DEBUG_PROMPTS.
+
+    When BOURBON_DEBUG_PROMPTS is set, the returned dict includes the full
+    messages list, system prompt, and tool names — suitable for per-round
+    prompt inspection. When unset, returns an empty dict so the caller can
+    unpack it with ** without changing the log record.
+    """
+    if os.environ.get("BOURBON_DEBUG_PROMPTS", "").lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return {}
+    return {
+        "messages": messages,
+        "system": system,
+        "tool_names": [t.get("name") for t in (tools or [])],
+    }
 
 
 def debug_log(event: str, **fields: Any) -> None:

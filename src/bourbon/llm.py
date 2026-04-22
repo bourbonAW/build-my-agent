@@ -5,8 +5,10 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 
+import httpx
+
 from bourbon.config import Config
-from bourbon.debug import debug_log
+from bourbon.debug import debug_log, prompt_fields
 
 # Optional imports - fail gracefully if not installed
 try:
@@ -59,6 +61,23 @@ class LLMClient(ABC):
         pass
 
 
+def _make_http_client_for_compat_api() -> httpx.Client:
+    """Return an httpx Client that strips x-stainless-* headers.
+
+    Third-party Anthropic-compatible endpoints (e.g. Kimi Code) rate-limit requests
+    that carry the Anthropic SDK's internal telemetry headers. Using event hooks
+    removes those headers while keeping system proxy settings intact.
+    """
+    def _strip_stainless(request: httpx.Request) -> None:
+        for key in [k for k in request.headers if k.lower().startswith("x-stainless-")]:
+            del request.headers[key]
+        request.headers["user-agent"] = "python-httpx/0.28.1"
+
+    client = httpx.Client()
+    client.event_hooks["request"] = [_strip_stainless]
+    return client
+
+
 class AnthropicLLMClient(LLMClient):
     """Anthropic Claude client using official SDK with streaming."""
 
@@ -66,7 +85,8 @@ class AnthropicLLMClient(LLMClient):
         if Anthropic is None:
             raise LLMError("anthropic package not installed. Run: uv pip install anthropic")
 
-        self.client = Anthropic(api_key=api_key, base_url=base_url)
+        http_client = _make_http_client_for_compat_api() if base_url else None
+        self.client = Anthropic(api_key=api_key, base_url=base_url, max_retries=0, timeout=60.0, http_client=http_client)
         self.model = model
 
     def chat(
@@ -78,6 +98,15 @@ class AnthropicLLMClient(LLMClient):
     ) -> dict:
         """Send chat request to Anthropic using streaming mode."""
         try:
+            debug_log(
+                "llm.anthropic.request",
+                model=self.model,
+                base_url=str(getattr(self.client, "base_url", "")),
+                message_count=len(messages),
+                tool_count=len(tools or []),
+                max_tokens=max_tokens,
+                **prompt_fields(messages, system, tools),
+            )
             kwargs = {
                 "model": self.model,
                 "messages": messages,
@@ -136,6 +165,7 @@ class AnthropicLLMClient(LLMClient):
                 message_count=len(messages),
                 tool_count=len(tools or []),
                 max_tokens=max_tokens,
+                **prompt_fields(messages, system, tools),
             )
             kwargs = {
                 "model": self.model,
@@ -224,7 +254,7 @@ class OpenAILLMClient(LLMClient):
         if OpenAI is None:
             raise LLMError("openai package not installed. Run: uv pip install openai")
 
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0, timeout=60.0)
         self.model = model
 
     def chat(
@@ -236,6 +266,15 @@ class OpenAILLMClient(LLMClient):
     ) -> dict:
         """Send chat request to OpenAI-compatible API."""
         try:
+            debug_log(
+                "llm.openai.request",
+                model=self.model,
+                base_url=str(getattr(self.client, "base_url", "")),
+                message_count=len(messages),
+                tool_count=len(tools or []),
+                max_tokens=max_tokens,
+                **prompt_fields(messages, system, tools),
+            )
             # Build messages (OpenAI uses system message in messages array)
             openai_messages = []
             if system:
@@ -333,6 +372,7 @@ class OpenAILLMClient(LLMClient):
                 message_count=len(messages),
                 tool_count=len(tools or []),
                 max_tokens=max_tokens,
+                **prompt_fields(messages, system, tools),
             )
             # Build messages inline (same logic as chat() — no helper exists)
             openai_messages = []
