@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from bourbon.memory.files import _truncate_to_tokens, merge_user_md, read_file_anchor
+from bourbon.memory.files import read_file_anchor, render_merged_user_md_for_prompt
 
 if TYPE_CHECKING:
     from bourbon.prompt.types import PromptContext
@@ -29,15 +29,13 @@ async def memory_anchors_section(ctx: PromptContext) -> str:
     if agents_content:
         parts.append(f"# Project Instructions (AGENTS.md)\n\n{agents_content}")
 
-    user_content = merge_user_md(
+    user_content = render_merged_user_md_for_prompt(
         global_path=Path("~/.bourbon/USER.md").expanduser(),
         project_path=ctx.workdir / "USER.md",
+        token_limit=config.user_md_token_limit,
     )
     if user_content:
-        parts.append(
-            "# User Preferences (USER.md)\n\n"
-            f"{_truncate_to_tokens(user_content, config.user_md_token_limit)}"
-        )
+        parts.append(f"# User Preferences (USER.md)\n\n{user_content}")
 
     memory_content = read_file_anchor(
         memory_dir / "MEMORY.md",
