@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from bourbon.audit.events import AuditEvent, EventType
 from bourbon.config import MemoryConfig
 from bourbon.memory.compact import extract_flush_candidates
-from bourbon.memory.files import upsert_managed_block, update_managed_block_status
+from bourbon.memory.files import update_managed_block_status, upsert_managed_block
 from bourbon.memory.models import (
     MemoryActor,
     MemoryRecord,
@@ -29,7 +29,7 @@ from bourbon.memory.policy import (
     check_promote_permission,
     check_write_permission,
 )
-from bourbon.memory.store import MemoryStore
+from bourbon.memory.store import MemoryStore, _record_to_filename
 
 if TYPE_CHECKING:
     from bourbon.audit import AuditLogger
@@ -87,7 +87,7 @@ class MemoryManager:
     def _global_user_md_path(self) -> Path:
         return Path("~/.bourbon/USER.md").expanduser()
 
-    def _require_promoted_projection(self, user_md_path: Path, memory_id: str) -> None:
+    def _require_managed_block_exists(self, user_md_path: Path, memory_id: str) -> None:
         if not user_md_path.exists():
             raise RuntimeError("Managed USER.md projection missing")
 
@@ -122,7 +122,9 @@ class MemoryManager:
         )
         global_user_md = self._global_user_md_path()
         source_filename = self._store._id_to_filename.get(record.id)
-        source_path = self._memory_dir / source_filename if source_filename else None
+        if source_filename is None:
+            source_filename = _record_to_filename(record)
+        source_path = self._memory_dir / source_filename
         upsert_managed_block(
             global_user_md,
             promoted_record,
@@ -155,13 +157,12 @@ class MemoryManager:
 
         if record.status == MemoryStatus.PROMOTED:
             user_md_path = self._global_user_md_path()
-            self._require_promoted_projection(user_md_path, memory_id)
+            self._require_managed_block_exists(user_md_path, memory_id)
             update_managed_block_status(
                 user_md_path,
                 memory_id,
                 str(status),
             )
-            self._require_promoted_projection(user_md_path, memory_id)
 
         updated = self._store.update_status(memory_id, status)
         self._record_audit(

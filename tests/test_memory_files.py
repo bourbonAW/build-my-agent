@@ -276,7 +276,9 @@ def test_render_merged_user_md_for_prompt_orders_promotions_by_timestamp_with_of
     assert rendered.index("Later absolute time.") < rendered.index("Earlier absolute time.")
 
 
-def test_render_merged_user_md_for_prompt_preserves_blank_lines_in_managed_body(tmp_path: Path) -> None:
+def test_render_merged_user_md_for_prompt_preserves_blank_lines_in_managed_body(
+    tmp_path: Path,
+) -> None:
     global_file = tmp_path / "global.md"
     record = _make_record(
         id="mem_para00001",

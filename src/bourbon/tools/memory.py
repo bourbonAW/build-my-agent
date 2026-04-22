@@ -76,6 +76,7 @@ def memory_search(query: str, *, ctx: ToolContext, **kwargs: Any) -> str:
                     "name": result.name,
                     "kind": str(result.kind),
                     "scope": str(result.scope),
+                    "status": str(result.status),
                     "confidence": result.confidence,
                     "snippet": result.snippet,
                     "why_matched": result.why_matched,
@@ -205,10 +206,14 @@ def memory_write(
     name="memory_promote",
     aliases=["MemoryPromote"],
     description=(
-        "Promote a stable user or feedback memory with scope='user' into managed USER.md. "
-        "Use this for preferences or feedback that are stable across multiple turns, such as tool choices, "
-        "format expectations, or workflow rules. Promoted memories are rendered before freeform "
-        "USER.md content in future prompts."
+        "Promote a promotable memory record to USER.md for strong behavioral enforcement. "
+        "Call this when a user/feedback memory with scope='user' has proven stable "
+        "across multiple turns — "
+        "e.g., a tool preference, output format, or workflow rule the user consistently expects. "
+        "After promotion: the record exits the MEMORY.md index; its managed block is rendered "
+        "before freeform USER.md content in future prompts. "
+        "Only promote records with kind in {'user', 'feedback'}, scope='user', "
+        "and status in {'active', 'stale'}."
     ),
     input_schema={
         "type": "object",
@@ -238,7 +243,7 @@ def memory_promote(memory_id: str, *, ctx: ToolContext, **kwargs: Any) -> str:
             actor=actor,
             note=kwargs.get("note", ""),
         )
-    except (KeyError, PermissionError, ValueError, RuntimeError) as exc:
+    except (KeyError, PermissionError, ValueError, RuntimeError, OSError) as exc:
         return _json_output({"error": str(exc)})
 
     return _json_output(
@@ -254,8 +259,11 @@ def memory_promote(memory_id: str, *, ctx: ToolContext, **kwargs: Any) -> str:
     name="memory_archive",
     aliases=["MemoryArchive"],
     description=(
-        "Archive a memory by marking it stale or rejected. Use 'rejected' for incorrect or "
-        "outdated memories, and 'stale' for temporarily suspended preferences or guidance."
+        "Archive a memory record by marking it stale or rejected. "
+        "If the record was previously promoted to USER.md, also updates the managed block "
+        "status so it is removed from prompt injection. "
+        "Use 'rejected' for incorrect or outdated facts; "
+        "'stale' for temporarily suspended preferences."
     ),
     input_schema={
         "type": "object",
@@ -291,7 +299,7 @@ def memory_archive(memory_id: str, status: str, *, ctx: ToolContext, **kwargs: A
             actor=actor,
             reason=kwargs.get("reason", ""),
         )
-    except (KeyError, PermissionError, ValueError, RuntimeError) as exc:
+    except (KeyError, PermissionError, ValueError, RuntimeError, OSError) as exc:
         return _json_output({"error": str(exc)})
 
     return _json_output(

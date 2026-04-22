@@ -34,6 +34,8 @@ def test_memory_promote_tool_schema_and_metadata() -> None:
     assert "note" in schema["properties"]
     assert "stable across multiple turns" in tool.description
     assert "before freeform USER.md content" in tool.description
+    assert "exits the MEMORY.md index" in tool.description
+    assert "kind in {'user', 'feedback'}" in tool.description
 
 
 def test_memory_archive_tool_schema_and_metadata() -> None:
@@ -48,6 +50,7 @@ def test_memory_archive_tool_schema_and_metadata() -> None:
     assert schema["properties"]["status"]["enum"] == ["rejected", "stale"]
     assert "rejected" in tool.description
     assert "stale" in tool.description
+    assert "removed from prompt injection" in tool.description
 
 
 def test_memory_write_tool_schema() -> None:

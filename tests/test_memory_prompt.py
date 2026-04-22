@@ -3,10 +3,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from bourbon.memory.prompt import MEMORY_ANCHOR_ORDER, memory_anchors_section
 from bourbon.memory.files import render_merged_user_md_for_prompt, upsert_managed_block
 from bourbon.memory.models import MemoryKind, MemoryScope
 from bourbon.memory.models import MemoryStatus as MemStatus
+from bourbon.memory.prompt import MEMORY_ANCHOR_ORDER, memory_anchors_section
 from bourbon.prompt.dynamic import DYNAMIC_SECTIONS
 from bourbon.prompt.types import PromptContext
 from tests.test_memory_store import _make_record
@@ -89,7 +89,9 @@ def test_promoted_managed_blocks_render_before_handwritten_user_md_content(
     assert result.index("Always use uv.") < result.index("Project handwritten.")
 
 
-def test_budget_overflow_prefers_newer_promotions_using_promoted_at_descending(tmp_path: Path) -> None:
+def test_budget_overflow_prefers_newer_promotions_using_promoted_at_descending(
+    tmp_path: Path,
+) -> None:
     global_file = tmp_path / "USER.md"
     older = _make_record(
         id="mem_old000001",

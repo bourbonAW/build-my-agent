@@ -17,7 +17,9 @@ _MANAGED_HEADER = "\n".join(
     [
         "## Bourbon Managed Preferences",
         "",
-        "> Managed by Bourbon. Marker lines must be preserved. Manual edits inside a block may be overwritten the next time Bourbon upserts that same memory.",
+        "> Managed by Bourbon. Marker lines must be preserved. "
+        "Manual edits inside a block may be overwritten the next time "
+        "Bourbon upserts that same memory.",
     ]
 )
 _BLOCK_RE = re.compile(
@@ -186,7 +188,10 @@ def _build_managed_section(blocks: list[str]) -> str:
 
 
 def _extract_blocks(managed_text: str) -> list[tuple[str, str]]:
-    return [(match.group("id"), match.group(0).strip()) for match in _BLOCK_RE.finditer(managed_text)]
+    return [
+        (match.group("id"), match.group(0).strip())
+        for match in _BLOCK_RE.finditer(managed_text)
+    ]
 
 
 def _render_managed_body(content: str, source_path: Path) -> str:
@@ -297,14 +302,16 @@ def _parse_promoted_at(block: str) -> float:
 
 
 def _is_promoted_block(block: str) -> bool:
-    return "- status: promoted" in block
+    match = _STATUS_RE.search(block)
+    return match is not None and match.group(0) == "- status: promoted"
 
 
 def _block_prompt_content(block: str) -> str:
     lines = [
         line
         for line in block.splitlines()
-        if not line.startswith("<!-- bourbon-memory:") and not line.startswith("### ")
+        if not line.startswith("<!-- bourbon-memory:")
+        and not line.startswith("### User Preference: ")
     ]
     body_start = 0
     metadata_prefixes = ("- status:", "- kind:", "- promoted_at:", "- note:")
@@ -334,8 +341,6 @@ def _render_promoted_blocks(blocks: list[str], token_limit: int) -> str:
         if not prompt_block:
             continue
         block_tokens = _estimate_tokens(prompt_block)
-        if not rendered_blocks and block_tokens > token_limit:
-            return _truncate_to_tokens(prompt_block, token_limit)
         if used_tokens + block_tokens > token_limit:
             break
         rendered_blocks.append(prompt_block)

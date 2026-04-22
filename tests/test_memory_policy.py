@@ -1,5 +1,6 @@
-import pytest
 from datetime import UTC, datetime
+
+import pytest
 
 from bourbon.memory.models import (
     MemoryActor,
