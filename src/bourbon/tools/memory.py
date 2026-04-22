@@ -202,6 +202,108 @@ def memory_write(
 
 
 @register_tool(
+    name="memory_promote",
+    aliases=["MemoryPromote"],
+    description=(
+        "Promote a stable user or feedback memory with scope='user' into managed USER.md. "
+        "Use this for preferences or feedback that are stable across multiple turns, such as tool choices, "
+        "format expectations, or workflow rules. Promoted memories are rendered before freeform "
+        "USER.md content in future prompts."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "memory_id": {
+                "type": "string",
+                "description": "ID of the memory record to promote",
+            },
+            "note": {"type": "string", "description": "Optional promotion note"},
+        },
+        "required": ["memory_id"],
+    },
+    risk_level=RiskLevel.MEDIUM,
+    required_capabilities=["file_write"],
+)
+def memory_promote(memory_id: str, *, ctx: ToolContext, **kwargs: Any) -> str:
+    """Promote a memory record into managed USER.md."""
+    if ctx.memory_manager is None:
+        return _disabled()
+
+    from bourbon.memory.models import MemoryActor
+
+    try:
+        actor = ctx.memory_actor or MemoryActor(kind="agent")
+        record = ctx.memory_manager.promote(
+            memory_id,
+            actor=actor,
+            note=kwargs.get("note", ""),
+        )
+    except (KeyError, PermissionError, ValueError, RuntimeError) as exc:
+        return _json_output({"error": str(exc)})
+
+    return _json_output(
+        {
+            "id": record.id,
+            "name": record.name,
+            "status": str(record.status),
+        }
+    )
+
+
+@register_tool(
+    name="memory_archive",
+    aliases=["MemoryArchive"],
+    description=(
+        "Archive a memory by marking it stale or rejected. Use 'rejected' for incorrect or "
+        "outdated memories, and 'stale' for temporarily suspended preferences or guidance."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "memory_id": {
+                "type": "string",
+                "description": "ID of the memory record to archive",
+            },
+            "status": {
+                "type": "string",
+                "enum": ["rejected", "stale"],
+                "description": "Archive status to apply",
+            },
+            "reason": {"type": "string", "description": "Optional archive reason"},
+        },
+        "required": ["memory_id", "status"],
+    },
+    risk_level=RiskLevel.MEDIUM,
+    required_capabilities=["file_write"],
+)
+def memory_archive(memory_id: str, status: str, *, ctx: ToolContext, **kwargs: Any) -> str:
+    """Archive a memory record."""
+    if ctx.memory_manager is None:
+        return _disabled()
+
+    from bourbon.memory.models import MemoryActor, MemoryStatus
+
+    try:
+        actor = ctx.memory_actor or MemoryActor(kind="agent")
+        record = ctx.memory_manager.archive(
+            memory_id,
+            MemoryStatus(status),
+            actor=actor,
+            reason=kwargs.get("reason", ""),
+        )
+    except (KeyError, PermissionError, ValueError, RuntimeError) as exc:
+        return _json_output({"error": str(exc)})
+
+    return _json_output(
+        {
+            "id": record.id,
+            "name": record.name,
+            "status": str(record.status),
+        }
+    )
+
+
+@register_tool(
     name="memory_status",
     aliases=["MemoryStatus"],
     description="Return current memory system status and recent writes.",

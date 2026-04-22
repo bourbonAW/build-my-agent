@@ -9,13 +9,45 @@ def test_memory_tools_registered() -> None:
     registry = get_registry()
     # Primary names (tool.name) must be snake_case to match plan spec and LLM tool definitions
     tool_primary_names = [tool.name for tool in registry.list_tools()]
+    assert "memory_promote" in tool_primary_names
+    assert "memory_archive" in tool_primary_names
     assert "memory_search" in tool_primary_names
     assert "memory_write" in tool_primary_names
     assert "memory_status" in tool_primary_names
     # PascalCase aliases still resolve for backward compatibility
+    assert registry.get_tool("MemoryPromote") is not None
+    assert registry.get_tool("MemoryArchive") is not None
     assert registry.get_tool("MemorySearch") is not None
     assert registry.get_tool("MemoryWrite") is not None
     assert registry.get_tool("MemoryStatus") is not None
+
+
+def test_memory_promote_tool_schema_and_metadata() -> None:
+    _ensure_imports()
+    registry = get_registry()
+    tool = registry.get_tool("MemoryPromote")
+    assert tool is not None
+    assert tool.risk_level.name == "MEDIUM"
+    assert [cap.value for cap in tool.required_capabilities or []] == ["file_write"]
+    schema = tool.input_schema
+    assert schema["required"] == ["memory_id"]
+    assert "note" in schema["properties"]
+    assert "stable across multiple turns" in tool.description
+    assert "before freeform USER.md content" in tool.description
+
+
+def test_memory_archive_tool_schema_and_metadata() -> None:
+    _ensure_imports()
+    registry = get_registry()
+    tool = registry.get_tool("MemoryArchive")
+    assert tool is not None
+    assert tool.risk_level.name == "MEDIUM"
+    assert [cap.value for cap in tool.required_capabilities or []] == ["file_write"]
+    schema = tool.input_schema
+    assert schema["required"] == ["memory_id", "status"]
+    assert schema["properties"]["status"]["enum"] == ["rejected", "stale"]
+    assert "rejected" in tool.description
+    assert "stale" in tool.description
 
 
 def test_memory_write_tool_schema() -> None:
@@ -66,7 +98,13 @@ def test_memory_search_passes_status_filter_to_manager() -> None:
 
 
 def test_memory_tools_return_error_when_disabled() -> None:
-    from bourbon.tools.memory import memory_search, memory_status, memory_write
+    from bourbon.tools.memory import (
+        memory_archive,
+        memory_promote,
+        memory_search,
+        memory_status,
+        memory_write,
+    )
 
     ctx = ToolContext(workdir=Path("/tmp"))
 
@@ -82,6 +120,12 @@ def test_memory_tools_return_error_when_disabled() -> None:
             ctx=ctx,
         )
     )
+    assert "error" in result
+
+    result = json.loads(memory_promote(memory_id="mem_test0001", ctx=ctx))
+    assert "error" in result
+
+    result = json.loads(memory_archive(memory_id="mem_test0001", status="rejected", ctx=ctx))
     assert "error" in result
 
     result = json.loads(memory_status(ctx=ctx))
