@@ -1,8 +1,10 @@
 from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
 
 from bourbon.config import MemoryConfig
+import bourbon.memory.manager as memory_manager_module
 from bourbon.memory.manager import MemoryManager
 from bourbon.memory.models import (
     MemoryActor,
@@ -157,6 +159,43 @@ def test_promote_updates_global_user_md_and_store_status(
     assert "- note: stable preference" in user_md_text
 
 
+def test_promote_uses_fresh_promotion_timestamp_for_managed_block(
+    manager: MemoryManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    actor = MemoryActor(kind="user")
+    record = manager.write(
+        MemoryRecordDraft(
+            kind=MemoryKind.USER,
+            scope=MemoryScope.USER,
+            content="Always use uv.",
+            source=MemorySource.USER,
+            confidence=1.0,
+            name="uv preference",
+            description="Prefer uv for Python tooling",
+        ),
+        actor=actor,
+    )
+    stale_record = manager._store.update_status(record.id, MemoryStatus.STALE)
+    promotion_time = datetime(2026, 4, 22, 10, 30, tzinfo=UTC)
+
+    class FakeDateTime:
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[no-untyped-def]
+            return promotion_time if tz is None else promotion_time.astimezone(tz)
+
+    monkeypatch.setattr(memory_manager_module, "datetime", FakeDateTime)
+
+    manager.promote(record.id, actor=actor, note="stable preference")
+
+    user_md = tmp_path / ".bourbon" / "USER.md"
+    user_md_text = user_md.read_text(encoding="utf-8")
+    assert f"- promoted_at: {promotion_time.isoformat()}" in user_md_text
+    assert f"- promoted_at: {stale_record.updated_at.isoformat()}" not in user_md_text
+
+
 def test_archive_marks_promoted_blocks_stale(
     manager: MemoryManager,
     tmp_path: Path,
@@ -190,6 +229,64 @@ def test_archive_marks_promoted_blocks_stale(
     user_md_text = user_md.read_text(encoding="utf-8")
     assert "- status: stale" in user_md_text
     assert "- status: promoted" not in user_md_text
+
+
+def test_archive_rejects_missing_user_md_for_promoted_record(
+    manager: MemoryManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    actor = MemoryActor(kind="user")
+    record = manager.write(
+        MemoryRecordDraft(
+            kind=MemoryKind.USER,
+            scope=MemoryScope.USER,
+            content="Always use uv.",
+            source=MemorySource.USER,
+            confidence=1.0,
+        ),
+        actor=actor,
+    )
+    manager.promote(record.id, actor=actor, note="stable preference")
+    user_md = tmp_path / ".bourbon" / "USER.md"
+    user_md.unlink()
+
+    with pytest.raises(RuntimeError, match="Managed USER.md projection missing"):
+        manager.archive(record.id, MemoryStatus.STALE, actor=actor)
+
+    persisted = manager._store.read_record(record.id)
+    assert persisted is not None
+    assert persisted.status == MemoryStatus.PROMOTED
+
+
+def test_archive_rejects_missing_managed_block_for_promoted_record(
+    manager: MemoryManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    actor = MemoryActor(kind="user")
+    record = manager.write(
+        MemoryRecordDraft(
+            kind=MemoryKind.USER,
+            scope=MemoryScope.USER,
+            content="Always use uv.",
+            source=MemorySource.USER,
+            confidence=1.0,
+        ),
+        actor=actor,
+    )
+    manager.promote(record.id, actor=actor, note="stable preference")
+    user_md = tmp_path / ".bourbon" / "USER.md"
+    user_md.write_text("## Bourbon Managed Preferences\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match=f"Managed USER.md block missing for {record.id}"):
+        manager.archive(record.id, MemoryStatus.STALE, actor=actor)
+
+    persisted = manager._store.read_record(record.id)
+    assert persisted is not None
+    assert persisted.status == MemoryStatus.PROMOTED
 
 
 def test_archive_rejects_unsupported_status(manager: MemoryManager) -> None:

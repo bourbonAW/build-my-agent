@@ -53,6 +53,10 @@ def _derive_description(draft: MemoryRecordDraft, *, name: str) -> str:
     return first_line[:120] or name
 
 
+def _managed_block_marker(memory_id: str) -> str:
+    return f'<!-- bourbon-memory:start id="{memory_id}" -->'
+
+
 class MemoryManager:
     """High-level facade for memory writes, search, and status."""
 
@@ -76,6 +80,17 @@ class MemoryManager:
         """Return the backing memory directory."""
         return self._memory_dir
 
+    def _global_user_md_path(self) -> Path:
+        return Path("~/.bourbon/USER.md").expanduser()
+
+    def _require_promoted_projection(self, user_md_path: Path, memory_id: str) -> None:
+        if not user_md_path.exists():
+            raise RuntimeError("Managed USER.md projection missing")
+
+        text = user_md_path.read_text(encoding="utf-8")
+        if _managed_block_marker(memory_id) not in text:
+            raise RuntimeError(f"Managed USER.md block missing for {memory_id}")
+
     def promote(self, memory_id: str, actor: MemoryActor, note: str = "") -> MemoryRecord:
         """Promote an eligible record into the managed global USER.md section."""
         record = self._store.read_record(memory_id)
@@ -85,12 +100,18 @@ class MemoryManager:
             raise ValueError(f"Cannot promote record with status {record.status}")
         check_promote_permission(actor, record)
 
-        global_user_md = Path("~/.bourbon/USER.md").expanduser()
+        promotion_time = datetime.now(record.updated_at.tzinfo or UTC)
+        promoted_record = replace(
+            record,
+            status=MemoryStatus.PROMOTED,
+            updated_at=promotion_time,
+        )
+        global_user_md = self._global_user_md_path()
         source_filename = self._store._id_to_filename.get(record.id)
         source_path = self._memory_dir / source_filename if source_filename else None
         upsert_managed_block(
             global_user_md,
-            replace(record, status=MemoryStatus.PROMOTED),
+            promoted_record,
             note=note,
             source_path=source_path,
         )
@@ -119,11 +140,14 @@ class MemoryManager:
         check_archive_permission(actor, record)
 
         if record.status == MemoryStatus.PROMOTED:
+            user_md_path = self._global_user_md_path()
+            self._require_promoted_projection(user_md_path, memory_id)
             update_managed_block_status(
-                Path("~/.bourbon/USER.md").expanduser(),
+                user_md_path,
                 memory_id,
                 str(status),
             )
+            self._require_promoted_projection(user_md_path, memory_id)
 
         updated = self._store.update_status(memory_id, status)
         self._record_audit(

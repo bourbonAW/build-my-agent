@@ -9,7 +9,11 @@ from bourbon.memory.models import (
     MemorySource,
     MemoryStatus,
 )
-from bourbon.memory.policy import check_promote_permission, check_write_permission
+from bourbon.memory.policy import (
+    check_archive_permission,
+    check_promote_permission,
+    check_write_permission,
+)
 
 
 def test_explore_subagent_cannot_write_user_kind() -> None:
@@ -88,3 +92,46 @@ def test_check_promote_permission_rejects_non_user_scope_records() -> None:
 
     with pytest.raises(PermissionError, match="Only user-scope records can be promoted"):
         check_promote_permission(actor, record)
+
+
+def test_check_archive_permission_denies_subagents() -> None:
+    actor = MemoryActor(kind="subagent", run_id="run_1", agent_type="explore")
+    now = datetime.now(UTC)
+    record = MemoryRecord(
+        id="mem_1234",
+        name="Preference",
+        description="desc",
+        kind=MemoryKind.USER,
+        scope=MemoryScope.USER,
+        confidence=1.0,
+        source=MemorySource.USER,
+        status=MemoryStatus.PROMOTED,
+        created_at=now,
+        updated_at=now,
+        created_by="user",
+        content="Always do X.",
+    )
+
+    with pytest.raises(PermissionError, match="Subagents cannot archive"):
+        check_archive_permission(actor, record)
+
+
+def test_check_archive_permission_allows_user_actor() -> None:
+    actor = MemoryActor(kind="user")
+    now = datetime.now(UTC)
+    record = MemoryRecord(
+        id="mem_1234",
+        name="Preference",
+        description="desc",
+        kind=MemoryKind.USER,
+        scope=MemoryScope.USER,
+        confidence=1.0,
+        source=MemorySource.USER,
+        status=MemoryStatus.PROMOTED,
+        created_at=now,
+        updated_at=now,
+        created_by="user",
+        content="Always do X.",
+    )
+
+    check_archive_permission(actor, record)
