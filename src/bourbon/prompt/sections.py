@@ -62,9 +62,14 @@ ERROR_HANDLING = PromptSection(
         "nonexistent-package, rm important-files\n"
         "\n"
         "2. LOW RISK operations (Read, Grep, AstGrep, Glob, exploration):\n"
-        "   - If a file is not found, you MAY search for similar files and "
-        "attempt to read the correct one\n"
-        "   - If search returns no results, you MAY adjust patterns and retry\n"
+        "   - If a file is not found or a search returns no results, TRUST the "
+        "empty result. Do NOT retry the same tool with slightly different "
+        "parameters (e.g., find -maxdepth 3, then 4, then 5 — that's a loop, "
+        "not progress).\n"
+        "   - You may try at most ONE genuinely different follow-up (a "
+        "different tool, or a pattern testing a different assumption). If that "
+        "also returns nothing, stop and report the finding to the user instead "
+        "of escalating further.\n"
         "   - Always report what you found and what action you took\n"
         "\n"
         "3. MEDIUM RISK operations (file modifications):\n"
@@ -84,10 +89,30 @@ TASK_ADAPTABILITY = PromptSection(
     ),
 )
 
+TOOL_RESULT_TRUST = PromptSection(
+    name="tool_result_trust",
+    order=35,
+    content=(
+        "TRUSTING TOOL RESULTS:\n"
+        "- Internal tools (memory_search, memory_status, memory_read, TaskList, "
+        "TodoRead) are AUTHORITATIVE for their domain. If memory_search returns "
+        "an empty result, memory IS empty — do NOT fall back to Bash/Glob to "
+        "search the filesystem for 'memory files' to verify.\n"
+        "- If an authoritative tool's empty or negative result is surprising, "
+        "state that to the user and ask for clarification. Do not run ad-hoc "
+        "filesystem searches to double-check.\n"
+        "- Do not call the same tool more than twice in a row with only "
+        "parameter variations (e.g., broader glob, deeper find, different "
+        "--maxdepth). If two attempts have not yielded the answer, switch "
+        "approach or ask the user — continued retrying is almost never useful."
+    ),
+)
+
 DEFAULT_SECTIONS: list[PromptSection] = [
     IDENTITY,
     TASK_GUIDELINES,
     SUBAGENT_GUIDELINES,
     ERROR_HANDLING,
+    TOOL_RESULT_TRUST,
     TASK_ADAPTABILITY,
 ]

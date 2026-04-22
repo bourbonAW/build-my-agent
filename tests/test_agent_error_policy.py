@@ -84,9 +84,11 @@ class TestErrorHandlingPolicy:
         assert "NEVER automatically switch" in mock_agent.system_prompt
 
     def test_low_risk_policy_exists(self, mock_agent):
-        """Low risk operations policy must allow intelligent recovery."""
+        """Low risk policy must exist but must not license blind retry loops."""
         assert "LOW RISK" in mock_agent.system_prompt
-        assert "MAY search for similar files" in mock_agent.system_prompt
+        # Agent must trust empty results, not silently retry with tweaked params.
+        assert "TRUST the empty result" in mock_agent.system_prompt
+        assert "slightly different parameters" in mock_agent.system_prompt
 
     def test_medium_risk_policy_exists(self, mock_agent):
         """Medium risk operations policy must be defined."""

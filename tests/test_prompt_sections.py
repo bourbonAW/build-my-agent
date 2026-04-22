@@ -13,7 +13,7 @@ def run(coro):
 def test_default_sections_has_expected_entries():
     from bourbon.prompt.sections import DEFAULT_SECTIONS
 
-    assert len(DEFAULT_SECTIONS) == 5
+    assert len(DEFAULT_SECTIONS) == 6
 
 
 def test_identity_is_dynamic():
@@ -38,6 +38,20 @@ def test_task_adaptability_is_static():
     from bourbon.prompt.sections import TASK_ADAPTABILITY
 
     assert TASK_ADAPTABILITY.is_static
+
+
+def test_tool_result_trust_is_static():
+    from bourbon.prompt.sections import TOOL_RESULT_TRUST
+
+    assert TOOL_RESULT_TRUST.is_static
+
+
+def test_tool_result_trust_warns_against_param_looping():
+    from bourbon.prompt.sections import TOOL_RESULT_TRUST
+
+    assert "memory_search" in TOOL_RESULT_TRUST.content
+    assert "AUTHORITATIVE" in TOOL_RESULT_TRUST.content
+    assert "parameter variations" in TOOL_RESULT_TRUST.content
 
 
 def test_identity_contains_workdir():
