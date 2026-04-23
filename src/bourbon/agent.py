@@ -643,10 +643,8 @@ class Agent:
             tool_round=tool_round,
             response_len=len(accumulated_text),
         )
-        return (
-            accumulated_text + "\n[Reached maximum tool execution rounds. "
-            "Providing final response based on what was learned.]"
-        )
+        summary = self._force_final_summary(on_text_chunk=on_text_chunk)
+        return accumulated_text + summary
 
     def _run_conversation_loop(self) -> str:
         """Run conversation loop until we get a final response."""
@@ -805,10 +803,127 @@ class Agent:
             max_tool_rounds=self._max_tool_rounds,
             **self._subagent_debug_fields(),
         )
-        return (
-            "[Reached maximum tool execution rounds. "
-            "Providing final response based on what was learned.]"
+        return self._force_final_summary()
+
+    def _force_final_summary(
+        self,
+        on_text_chunk: Callable[[str], None] | None = None,
+    ) -> str:
+        """Produce a final text summary after max_tool_rounds is reached.
+
+        Makes one additional LLM call with tools=None so the model cannot
+        emit another tool call and must respond in text. A transient nudge
+        user message is appended to the local message list only (never
+        persisted to the session). Only the assistant summary is persisted.
+
+        When on_text_chunk is provided, chat_stream() is used and each text
+        chunk is forwarded to the callback for live display.
+        """
+        nudge_text = (
+            "[System] You have reached the maximum tool execution rounds "
+            f"({self._max_tool_rounds}). You cannot make any more tool calls. "
+            "Based on what you have already learned, provide a final answer "
+            "to the user now."
         )
+        messages = self.session.get_messages_for_llm()
+        messages.append({"role": "user", "content": nudge_text})
+
+        summary_text = ""
+        input_tokens = 0
+        output_tokens = 0
+        stop_reason = ""
+        tracer = self._get_tracer()
+
+        try:
+            with tracer.llm_call(
+                model=str(getattr(self.llm, "model", "")),
+                max_tokens=self._llm_max_tokens(),
+                provider=self.config.llm.default_provider,
+            ) as _llm_span:
+                if on_text_chunk is not None:
+                    for event in self.llm.chat_stream(
+                        messages=messages,
+                        tools=None,
+                        system=self.system_prompt,
+                        max_tokens=self._llm_max_tokens(),
+                    ):
+                        if event["type"] == "text":
+                            chunk = event["text"]
+                            summary_text += chunk
+                            with suppress(Exception):
+                                on_text_chunk(chunk)
+                        elif event["type"] == "usage":
+                            input_tokens += event.get("input_tokens", 0)
+                            output_tokens += event.get("output_tokens", 0)
+                        elif event["type"] == "stop":
+                            stop_reason = event.get("stop_reason", "") or ""
+                else:
+                    response = self.llm.chat(
+                        messages=messages,
+                        tools=None,
+                        system=self.system_prompt,
+                        max_tokens=self._llm_max_tokens(),
+                    )
+                    summary_text = "".join(
+                        b.get("text", "")
+                        for b in response.get("content", [])
+                        if b.get("type") == "text"
+                    )
+                    usage = response.get("usage") or {}
+                    input_tokens = usage.get("input_tokens", 0)
+                    output_tokens = usage.get("output_tokens", 0)
+                    stop_reason = response.get("stop_reason", "") or ""
+
+                tracer.record_llm_response(
+                    _llm_span,
+                    finish_reason=stop_reason,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+        except Exception as e:
+            error_msg = f"[LLM Error during max-rounds summary: {e}]"
+            self.session.add_message(
+                TranscriptMessage(
+                    role=MessageRole.ASSISTANT,
+                    content=[TextBlock(text=error_msg)],
+                )
+            )
+            self.session.save()
+            if on_text_chunk is not None:
+                with suppress(Exception):
+                    on_text_chunk(error_msg)
+            debug_log(
+                "agent.force_summary.error",
+                error=str(e),
+                **self._subagent_debug_fields(),
+            )
+            return error_msg
+
+        assistant_msg = TranscriptMessage(
+            role=MessageRole.ASSISTANT,
+            content=[TextBlock(text=summary_text)],
+        )
+        if input_tokens or output_tokens:
+            assistant_msg.usage = TokenUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=input_tokens + output_tokens,
+            )
+            self.token_usage["input_tokens"] += input_tokens
+            self.token_usage["output_tokens"] += output_tokens
+            self.token_usage["total_tokens"] = (
+                self.token_usage["input_tokens"] + self.token_usage["output_tokens"]
+            )
+        self.session.add_message(assistant_msg)
+        self.session.save()
+        debug_log(
+            "agent.force_summary.done",
+            summary_len=len(summary_text),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            **self._subagent_debug_fields(),
+        )
+        return summary_text
 
     def _record_policy_decision(
         self,

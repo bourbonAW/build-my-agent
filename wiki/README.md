@@ -21,6 +21,12 @@
 | [subagent-implementation-guide.md](./subagent-implementation-guide.md) | 完整实现指南与代码示例 |
 | [claude-code-subagent-code-reference.md](./claude-code-subagent-code-reference.md) | Claude Code 源码关键位置索引 |
 
+### 外部 Agent 研究参考
+
+| 文档 | 描述 |
+|-----|------|
+| [hermes-agent-memory-architecture.md](./hermes-agent-memory-architecture.md) | Hermes Agent 四层记忆架构深度分析：Frozen Snapshot、SQLite+FTS5 跨会话召回、Agent 自主写 Skill、Honcho 辩证用户建模、HRR 代数记忆及对 Bourbon 的可吸收 Ideas |
+
 ---
 
 ## 🏗️ 架构概览
@@ -179,6 +185,7 @@ Parent (abort) ──► Child 1 (abort) ──► Grandchild (abort)
 | 日期 | 版本 | 变更 |
 |-----|------|------|
 | 2026-04-09 | v1.0 | 初始版本，包含完整的架构分析和实现指南 |
+| 2026-04-23 | v1.1 | 新增 Hermes Agent 记忆系统架构分析（外部参考研究） |
 
 ---
 
