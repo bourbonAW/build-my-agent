@@ -6,7 +6,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
-from opentelemetry.trace import Status, StatusCode, Tracer
+from opentelemetry.trace import SpanKind, Status, StatusCode, Tracer
 
 from bourbon.observability.semconv import (
     AGENT_SPAN_KIND,
@@ -61,12 +61,20 @@ class BourbonTracer:
         for key, value in attributes.items():
             span.set_attribute(key, value)
 
+    def _set_error_status(self, span: Any, error_type: str, message: str) -> None:
+        span.set_attribute(TOOL_ERROR_ATTR, error_type)
+        span.set_status(Status(StatusCode.ERROR, message))
+
+    def _record_span_error(self, span: Any, exc: Exception) -> None:
+        span.record_exception(exc)
+        self._set_error_status(span, type(exc).__name__, str(exc))
+
     @contextmanager
     def _span(
         self,
         name: str,
         *,
-        kind: Any,
+        kind: SpanKind,
         attributes: dict[str, object],
     ) -> Generator[Any, None, None]:
         if self._tracer is None:
@@ -77,7 +85,7 @@ class BourbonTracer:
             try:
                 yield span
             except Exception as exc:
-                self.record_error(span, exc)
+                self._record_span_error(span, exc)
                 raise
 
     @contextmanager
@@ -135,12 +143,15 @@ class BourbonTracer:
     ) -> None:
         span.set_attribute(TOOL_IS_ERROR_ATTR, is_error)
         if is_error:
-            span.set_attribute(TOOL_ERROR_ATTR, error_type)
-            span.set_status(Status(StatusCode.ERROR, message))
+            self._set_error_status(span, error_type, message)
 
     def mark_error(self, span: Any, error_type: str = "tool_error", message: str = "") -> None:
-        span.set_attribute(TOOL_ERROR_ATTR, error_type)
-        span.set_status(Status(StatusCode.ERROR, message))
+        self.mark_tool_result(
+            span,
+            is_error=True,
+            error_type=error_type,
+            message=message,
+        )
 
     def record_error(self, span: Any, exc: Exception) -> None:
         span.record_exception(exc)

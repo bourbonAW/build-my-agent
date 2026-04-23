@@ -115,6 +115,24 @@ def test_noop_tracer_contexts_do_not_error():
         span.set_attribute("x", "y")
 
 
+def test_noop_tracer_helper_methods_do_not_error():
+    tracer = BourbonTracer(otel_tracer=None)
+    with tracer.llm_call(model="m", max_tokens=100, provider="anthropic") as span:
+        tracer.record_llm_response(
+            span,
+            finish_reason="end_turn",
+            input_tokens=3,
+            output_tokens=2,
+        )
+    with tracer.tool_call(name="Read", call_id="id1", concurrent=True) as span:
+        tracer.mark_tool_result(
+            span,
+            is_error=True,
+            error_type="tool_error",
+            message="bad output",
+        )
+
+
 def test_noop_tracer_exceptions_propagate():
     tracer = BourbonTracer(otel_tracer=None)
     with pytest.raises(ValueError), tracer.agent_step(workdir="/tmp", entrypoint="step"):
@@ -868,6 +886,7 @@ def test_mark_error_sets_status_without_exception_event():
         tracer.mark_error(span, "tool_error", "bad output")
 
     span = _span_named(exporter, "execute_tool Read")
+    assert span.attributes["bourbon.tool.is_error"] is True
     assert span.status.status_code == StatusCode.ERROR
     assert span.attributes["error.type"] == "tool_error"
     assert list(span.events) == []
