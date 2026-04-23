@@ -361,7 +361,7 @@ def test_sync_llm_path_uses_record_llm_response_helper(tmp_path):
         chat=lambda **kwargs: {
             "content": [{"type": "text", "text": "done"}],
             "stop_reason": "end_turn",
-            "usage": {"input_tokens": 11, "output_tokens": 7},
+            "usage": {"input_tokens": 2, "output_tokens": 1},
         },
     )
     agent = make_llm_loop_agent(tmp_path, llm)
@@ -383,7 +383,7 @@ def test_sync_llm_path_uses_record_llm_response_helper(tmp_path):
     assert call["model"] == "model-x"
     assert call["max_tokens"] == 8000
     assert call["provider"] == "anthropic"
-    assert agent._tracer.recorded_llm_responses == [("end_turn", 11, 7)]
+    assert agent._tracer.recorded_llm_responses == [("end_turn", 2, 1)]
 
 
 def test_streaming_llm_path_uses_record_llm_response_helper_once(tmp_path):
