@@ -8,12 +8,25 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from opentelemetry.trace import SpanKind
 
 from bourbon.access_control.capabilities import CapabilityType
 from bourbon.access_control.policy import CapabilityDecision, PolicyAction, PolicyDecision
 from bourbon.agent import Agent
 from bourbon.config import Config, ObservabilityConfig
 from bourbon.observability.manager import ObservabilityManager, _resolve_trace_endpoint
+from bourbon.observability.semconv import (
+    AGENT_ENTRYPOINT_ATTR,
+    AGENT_SPAN_KIND,
+    AGENT_SPAN_NAME,
+    TOOL_ERROR_ATTR,
+    TOOL_IS_ERROR_ATTR,
+    TOOL_SPAN_KIND,
+    agent_span_attributes,
+    llm_request_attributes,
+    llm_response_attributes,
+    tool_span_attributes,
+)
 from bourbon.observability.tracer import BourbonTracer
 from bourbon.permissions import (
     PermissionAction,
@@ -54,6 +67,42 @@ def test_config_to_dict_includes_observability():
     data = cfg.to_dict()
     assert data["observability"]["enabled"] is False
     assert data["observability"]["service_name"] == "bourbon"
+
+
+def test_semconv_agent_span_metadata_is_centralized():
+    assert AGENT_SPAN_NAME == "invoke_agent bourbon"
+    assert AGENT_SPAN_KIND is SpanKind.INTERNAL
+    assert agent_span_attributes("/tmp/project", "step_stream") == {
+        "gen_ai.operation.name": "invoke_agent",
+        "gen_ai.provider.name": "bourbon",
+        "gen_ai.agent.name": "bourbon",
+        "bourbon.agent.workdir": "/tmp/project",
+        "bourbon.agent.entrypoint": "step_stream",
+    }
+
+
+def test_semconv_llm_and_tool_helpers_build_expected_attributes():
+    assert llm_request_attributes("claude-test", 2048, "anthropic") == {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": "anthropic",
+        "gen_ai.request.model": "claude-test",
+        "gen_ai.request.max_tokens": 2048,
+    }
+    assert llm_response_attributes("tool_use", 12, 8) == {
+        "gen_ai.response.finish_reasons": ["tool_use"],
+        "gen_ai.usage.input_tokens": 12,
+        "gen_ai.usage.output_tokens": 8,
+    }
+    assert tool_span_attributes("Read", "tool-1", True) == {
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": "Read",
+        "gen_ai.tool.call.id": "tool-1",
+        "bourbon.tool.concurrent": True,
+    }
+    assert AGENT_ENTRYPOINT_ATTR == "bourbon.agent.entrypoint"
+    assert TOOL_IS_ERROR_ATTR == "bourbon.tool.is_error"
+    assert TOOL_ERROR_ATTR == "error.type"
+    assert TOOL_SPAN_KIND is SpanKind.INTERNAL
 
 
 def test_noop_tracer_contexts_do_not_error():
