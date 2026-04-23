@@ -539,9 +539,12 @@ class Agent:
                                 elapsed_ms=int((time.monotonic() - stream_started_at) * 1000),
                             )
 
-                    _llm_span.set_attribute("gen_ai.response.finish_reasons", [span_stop_reason])
-                    _llm_span.set_attribute("gen_ai.usage.input_tokens", span_input_tokens)
-                    _llm_span.set_attribute("gen_ai.usage.output_tokens", span_output_tokens)
+                    tracer.record_llm_response(
+                        _llm_span,
+                        finish_reason=span_stop_reason,
+                        input_tokens=span_input_tokens,
+                        output_tokens=span_output_tokens,
+                    )
 
                 # Build assistant response content
                 content = []
@@ -674,18 +677,13 @@ class Agent:
                         system=self.system_prompt,
                         max_tokens=self._llm_max_tokens(),
                     )
-                    _llm_span.set_attribute(
-                        "gen_ai.response.finish_reasons",
-                        [response.get("stop_reason", "")],
+                    usage = response.get("usage", {})
+                    tracer.record_llm_response(
+                        _llm_span,
+                        finish_reason=response.get("stop_reason", ""),
+                        input_tokens=usage.get("input_tokens", 0),
+                        output_tokens=usage.get("output_tokens", 0),
                     )
-                    if "usage" in response:
-                        usage = response["usage"]
-                        _llm_span.set_attribute(
-                            "gen_ai.usage.input_tokens", usage.get("input_tokens", 0)
-                        )
-                        _llm_span.set_attribute(
-                            "gen_ai.usage.output_tokens", usage.get("output_tokens", 0)
-                        )
                 response_content = response.get("content", [])
                 response_tool_uses = [
                     block for block in response_content if block.get("type") == "tool_use"

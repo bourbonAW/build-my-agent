@@ -355,7 +355,7 @@ def make_llm_loop_agent(tmp_path, llm):
     return agent
 
 
-def test_non_streaming_llm_call_records_span_attributes(tmp_path):
+def test_sync_llm_path_uses_record_llm_response_helper(tmp_path):
     llm = SimpleNamespace(
         model="model-x",
         chat=lambda **kwargs: {
@@ -365,6 +365,17 @@ def test_non_streaming_llm_call_records_span_attributes(tmp_path):
         },
     )
     agent = make_llm_loop_agent(tmp_path, llm)
+    agent._build_assistant_transcript_message = lambda content: SimpleNamespace(
+        uuid="assistant-1", content=content, usage=None
+    )
+    agent._tracer.recorded_llm_responses = []
+
+    def record_llm_response(span, *, finish_reason, input_tokens, output_tokens):
+        agent._tracer.recorded_llm_responses.append(
+            (finish_reason, input_tokens, output_tokens)
+        )
+
+    agent._tracer.record_llm_response = record_llm_response
 
     assert agent._run_conversation_loop() == "done"
 
@@ -372,19 +383,29 @@ def test_non_streaming_llm_call_records_span_attributes(tmp_path):
     assert call["model"] == "model-x"
     assert call["max_tokens"] == 8000
     assert call["provider"] == "anthropic"
-    assert call["span"].attributes["gen_ai.response.finish_reasons"] == ["end_turn"]
-    assert call["span"].attributes["gen_ai.usage.input_tokens"] == 11
-    assert call["span"].attributes["gen_ai.usage.output_tokens"] == 7
+    assert agent._tracer.recorded_llm_responses == [("end_turn", 11, 7)]
 
 
-def test_streaming_llm_call_records_span_attributes(tmp_path):
+def test_streaming_llm_path_uses_record_llm_response_helper_once(tmp_path):
     def chat_stream(**kwargs):
         yield {"type": "text", "text": "hi"}
+        yield {"type": "usage", "input_tokens": 2, "output_tokens": 1}
         yield {"type": "usage", "input_tokens": 5, "output_tokens": 3}
         yield {"type": "stop", "stop_reason": "end_turn"}
 
     llm = SimpleNamespace(model="stream-model", chat_stream=chat_stream)
     agent = make_llm_loop_agent(tmp_path, llm)
+    agent._build_assistant_transcript_message = lambda content: SimpleNamespace(
+        uuid="assistant-1", content=content, usage=None
+    )
+    agent._tracer.recorded_llm_responses = []
+
+    def record_llm_response(span, *, finish_reason, input_tokens, output_tokens):
+        agent._tracer.recorded_llm_responses.append(
+            (finish_reason, input_tokens, output_tokens)
+        )
+
+    agent._tracer.record_llm_response = record_llm_response
     chunks = []
 
     assert agent._run_conversation_loop_stream(chunks.append) == "hi"
@@ -393,9 +414,7 @@ def test_streaming_llm_call_records_span_attributes(tmp_path):
     assert call["model"] == "stream-model"
     assert call["max_tokens"] == 8000
     assert call["provider"] == "anthropic"
-    assert call["span"].attributes["gen_ai.response.finish_reasons"] == ["end_turn"]
-    assert call["span"].attributes["gen_ai.usage.input_tokens"] == 5
-    assert call["span"].attributes["gen_ai.usage.output_tokens"] == 3
+    assert agent._tracer.recorded_llm_responses == [("end_turn", 7, 4)]
 
 
 CURRENT_ROOT = ContextVar("CURRENT_ROOT", default=None)
