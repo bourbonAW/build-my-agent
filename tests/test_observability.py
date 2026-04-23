@@ -148,6 +148,26 @@ def test_manager_disabled_returns_noop_even_with_env(monkeypatch):
     assert manager.get_tracer().enabled is False
 
 
+def test_manager_returns_noop_when_sdk_and_exporter_are_unavailable(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.startswith("opentelemetry.sdk"):
+            raise ImportError(name)
+        if name.startswith("opentelemetry.exporter.otlp"):
+            raise ImportError(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    manager = ObservabilityManager(
+        ObservabilityConfig(enabled=True, otlp_endpoint="http://otel:4318")
+    )
+    assert manager.get_tracer().enabled is False
+
+
 def test_resolve_trace_endpoint_prefers_trace_specific_env(monkeypatch):
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4318")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://trace:4318/v1/traces")
@@ -908,7 +928,9 @@ def test_resume_permission_request_uses_mark_tool_result_helper(tmp_path):
         error_message="bad output",
     )
     agent._execute_tools = lambda *args, **kwargs: []
-    agent._build_tool_results_transcript_message = lambda *args, **kwargs: SimpleNamespace(content=[])
+    agent._build_tool_results_transcript_message = lambda *args, **kwargs: SimpleNamespace(
+        content=[]
+    )
     agent._append_task_nudge_if_due = lambda *args, **kwargs: None
     agent._run_conversation_loop = lambda: "continued"
     agent.session = SimpleNamespace(add_message=lambda msg: None, save=lambda: None)

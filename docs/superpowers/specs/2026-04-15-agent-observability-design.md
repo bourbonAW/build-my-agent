@@ -181,6 +181,12 @@ src/bourbon/observability/
 
 `ToolExecutionOutcome` 放在 `src/bourbon/tools/execution_queue.py`，因为它是 queue 和 Agent tool execution contract 的一部分。
 
+### Dependency Boundary
+
+- `opentelemetry-api` 是 Bourbon 的基础运行时依赖，因为运行时 tracing helper 会直接导入 API 类型。
+- `opentelemetry-sdk` 和 `opentelemetry-exporter-otlp-proto-http` 继续保持在 `[observability]` extra，仅在启用 OTLP 导出时需要。
+- `agent.py`、`execution_queue.py` 等运行时模块只能依赖 `BourbonTracer` 这个稳定插桩 facade，不能直接依赖 SDK 类或 exporter 初始化逻辑。
+
 ### `BourbonTracer` 接口
 
 ```python
