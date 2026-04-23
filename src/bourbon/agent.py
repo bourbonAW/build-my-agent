@@ -1054,9 +1054,12 @@ class Agent:
     ):
         tracer = self._get_tracer()
         with tracer.tool_call(name=name, call_id=call_id, concurrent=False) as span:
-            if is_error:
-                tracer.mark_error(span, error_type, message)
-            span.set_attribute("bourbon.tool.is_error", is_error)
+            tracer.mark_tool_result(
+                span,
+                is_error=is_error,
+                error_type=error_type,
+                message=message,
+            )
             yield span
 
     def _append_task_nudge_if_due(
@@ -1194,8 +1197,12 @@ class Agent:
                     )
                     if outcome.is_error:
                         tracer = self._get_tracer()
-                        tracer.mark_error(span, outcome.error_type, outcome.error_message)
-                        span.set_attribute("bourbon.tool.is_error", True)
+                        tracer.mark_tool_result(
+                            span,
+                            is_error=True,
+                            error_type=outcome.error_type,
+                            message=outcome.error_message,
+                        )
                     result: dict[str, Any] = {
                         "type": "tool_result",
                         "tool_use_id": request.tool_use_id,

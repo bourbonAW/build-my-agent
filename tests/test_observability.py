@@ -458,6 +458,8 @@ CURRENT_ROOT = ContextVar("CURRENT_ROOT", default=None)
 class ToolRecordingTracer:
     def __init__(self):
         self.tool_calls = []
+        self.tool_results = []
+        self.recorded_errors = []
 
     @contextmanager
     def agent_step(self, workdir: str, entrypoint: str = "step"):
@@ -481,7 +483,21 @@ class ToolRecordingTracer:
         span.set_attribute("error.type", error_type)
         span.set_attribute("error.message", message)
 
+    def mark_tool_result(
+        self,
+        span,
+        *,
+        is_error: bool,
+        error_type: str = "tool_error",
+        message: str = "",
+    ):
+        self.tool_results.append((span, is_error, error_type, message))
+        span.set_attribute("bourbon.tool.is_error", is_error)
+        if is_error:
+            self.mark_error(span, error_type, message)
+
     def record_error(self, span, exc: Exception):
+        self.recorded_errors.append((span, exc))
         span.set_attribute("exception.type", type(exc).__name__)
         self.mark_error(span, type(exc).__name__, str(exc))
 
@@ -575,6 +591,49 @@ def test_tool_execution_exception_marks_tool_span_error():
     assert results[0]["content"] == "Error: boom"
     assert tracer.tool_calls[0]["span"].attributes["bourbon.tool.is_error"] is True
     assert tracer.tool_calls[0]["span"].attributes["error.type"] == "ValueError"
+
+
+def test_tool_execution_queue_uses_mark_tool_result_helper_for_semantic_errors():
+    from bourbon.tools.execution_queue import ToolExecutionOutcome, ToolExecutionQueue
+
+    tracer = ToolRecordingTracer()
+    q = ToolExecutionQueue(
+        execute_fn=lambda block: ToolExecutionOutcome(
+            content="bad",
+            is_error=True,
+            error_type="custom_tool_error",
+            error_message="bad things happened",
+        ),
+        tracer=tracer,
+    )
+    q.add(make_queue_block("err"), make_queue_tool(concurrent=False), 0)
+
+    q.execute_all()
+
+    assert [
+        (is_error, error_type, message)
+        for _, is_error, error_type, message in tracer.tool_results
+    ] == [(True, "custom_tool_error", "bad things happened")]
+    assert tracer.recorded_errors == []
+
+
+def test_tool_execution_queue_exception_uses_record_error_and_mark_tool_result():
+    from bourbon.tools.execution_queue import ToolExecutionQueue
+
+    def bad_execute(block):
+        raise ValueError("boom")
+
+    tracer = ToolRecordingTracer()
+    q = ToolExecutionQueue(execute_fn=bad_execute, tracer=tracer)
+    q.add(make_queue_block("boom"), make_queue_tool(concurrent=False), 0)
+
+    q.execute_all()
+
+    assert [
+        (is_error, error_type, message)
+        for _, is_error, error_type, message in tracer.tool_results
+    ] == [(True, "ValueError", "boom")]
+    assert [type(exc).__name__ for _, exc in tracer.recorded_errors] == ["ValueError"]
 
 
 def allow_policy_decision():
@@ -821,6 +880,55 @@ def test_resume_permission_request_subagent_denial_after_approval_records_tool_s
     assert call["name"] == "Bash"
     assert call["span"].attributes["bourbon.tool.is_error"] is True
     assert call["span"].attributes["error.type"] == "subagent_tool_denial"
+
+
+def test_resume_permission_request_uses_mark_tool_result_helper(tmp_path):
+    tracer = ToolRecordingTracer()
+
+    def mark_tool_result(span, *, is_error, error_type="tool_error", message=""):
+        tracer.tool_results.append((is_error, error_type, message))
+
+    tracer.mark_tool_result = mark_tool_result
+    tracer.record_error = lambda span, exc: None
+    agent = object.__new__(Agent)
+    agent.workdir = tmp_path
+    agent._tracer = tracer
+    agent._obs_manager = SimpleNamespace(force_flush=lambda timeout=None: True)
+    agent.session_permissions = SimpleNamespace(add=lambda candidate: None)
+    agent._subagent_tool_denial = lambda tool_name: None
+    agent._execute_regular_tool_outcome = lambda *args, **kwargs: SimpleNamespace(
+        content="bad output",
+        is_error=True,
+        error_type="tool_error",
+        error_message="bad output",
+    )
+    agent._execute_tools = lambda *args, **kwargs: []
+    agent._build_tool_results_transcript_message = lambda *args, **kwargs: SimpleNamespace(content=[])
+    agent._append_task_nudge_if_due = lambda *args, **kwargs: None
+    agent._run_conversation_loop = lambda: "continued"
+    agent.session = SimpleNamespace(add_message=lambda msg: None, save=lambda: None)
+    request = PermissionRequest(
+        request_id="req-1",
+        tool_use_id="tool-1",
+        tool_name="Read",
+        tool_input={"path": "README.md"},
+        title="Read file",
+        description="Read README.md",
+        reason="approval",
+    )
+    agent.suspended_tool_round = SuspendedToolRound(
+        source_assistant_uuid=None,
+        tool_use_blocks=[{"id": "tool-1"}],
+        completed_results=[],
+        next_tool_index=0,
+        active_request=request,
+    )
+
+    agent.resume_permission_request(PermissionChoice.ALLOW_ONCE)
+    assert tracer.tool_results == [
+        (False, "tool_error", ""),
+        (True, "tool_error", "bad output"),
+    ]
 
 
 def _make_test_tracer():
