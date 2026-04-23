@@ -1,3 +1,5 @@
+"""Centralized OpenTelemetry span names, kinds, and attribute builders for Bourbon."""
+
 from __future__ import annotations
 
 from opentelemetry.trace import SpanKind
@@ -10,6 +12,7 @@ TOOL_SPAN_KIND = SpanKind.INTERNAL
 AGENT_WORKDIR_ATTR = "bourbon.agent.workdir"
 AGENT_ENTRYPOINT_ATTR = "bourbon.agent.entrypoint"
 TOOL_IS_ERROR_ATTR = "bourbon.tool.is_error"
+TOOL_SUSPENDED_ATTR = "bourbon.tool.suspended"
 TOOL_ERROR_ATTR = "error.type"
 
 

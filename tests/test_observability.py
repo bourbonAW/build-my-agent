@@ -134,6 +134,8 @@ def test_noop_tracer_helper_methods_do_not_error():
             error_type="tool_error",
             message="bad output",
         )
+    with tracer.tool_call(name="Bash", call_id="id2", concurrent=False) as span:
+        tracer.mark_tool_suspended(span)
 
 
 def test_noop_tracer_exceptions_propagate():
@@ -275,6 +277,9 @@ class RecordingSpan:
 
     def set_attribute(self, key, value):
         self.attributes[key] = value
+
+    def set_attributes(self, attributes):
+        self.attributes.update(attributes)
 
 
 class AsyncPromptBuilder:
@@ -468,6 +473,7 @@ def test_streaming_llm_path_uses_record_llm_response_helper_once(tmp_path):
     assert call["model"] == "stream-model"
     assert call["max_tokens"] == 8000
     assert call["provider"] == "anthropic"
+    assert len(agent._tracer.recorded_llm_responses) == 1
     assert agent._tracer.recorded_llm_responses == [(call["span"], "end_turn", 7, 4)]
     assert call["span"].attributes == {}
 
@@ -525,6 +531,9 @@ class ToolRecordingTracer:
         self.recorded_errors.append((span, exc))
         span.set_attribute("exception.type", type(exc).__name__)
         self.mark_error(span, type(exc).__name__, str(exc))
+
+    def mark_tool_suspended(self, span):
+        span.set_attribute("bourbon.tool.suspended", True)
 
 
 def make_queue_tool(*, concurrent: bool):
@@ -1111,6 +1120,17 @@ def test_record_error_sets_status_and_exception_event():
     assert [event.name for event in span.events] == ["exception"]
 
 
+def test_mark_tool_suspended_sets_bourbon_tool_suspended_attribute():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.tool_call(name="Bash", call_id="tool-1", concurrent=False) as span:
+        tracer.mark_tool_suspended(span)
+
+    span = _span_named(exporter, "execute_tool Bash")
+    assert span.attributes["bourbon.tool.suspended"] is True
+    assert span.attributes.get("bourbon.tool.is_error") is None
+
+
 def test_otel_llm_and_tool_spans_are_children_of_agent_root():
     tracer, exporter = _make_test_tracer()
 
@@ -1254,6 +1274,26 @@ def test_agent_shutdown_observability_forwards_timeout():
     agent.shutdown_observability(timeout=0.5)
 
     agent._obs_manager.shutdown.assert_called_once_with(timeout=0.5)
+
+
+def test_agent_and_queue_do_not_import_opentelemetry_sdk():
+    import ast
+    import pathlib
+
+    runtime_files = [
+        pathlib.Path("src/bourbon/agent.py"),
+        pathlib.Path("src/bourbon/tools/execution_queue.py"),
+    ]
+    for path in runtime_files:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                module = getattr(node, "module", "") or ""
+                for alias in getattr(node, "names", []):
+                    full = f"{module}.{alias.name}" if module else alias.name
+                    assert not full.startswith("opentelemetry.sdk"), (
+                        f"{path} must not import opentelemetry.sdk: found {full!r}"
+                    )
 
 
 def test_inline_subagent_root_span_is_child_of_agent_tool_span():

@@ -1502,7 +1502,7 @@ class Agent:
                             workdir=self.workdir,
                         ),
                     )
-                    span.set_attribute("bourbon.tool.suspended", True)
+                    self._tracer.mark_tool_suspended(span)
                     direct_end(tool_name, "Requires permission")
                 return completed
 

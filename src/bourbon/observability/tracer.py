@@ -15,6 +15,7 @@ from bourbon.observability.semconv import (
     TOOL_ERROR_ATTR,
     TOOL_IS_ERROR_ATTR,
     TOOL_SPAN_KIND,
+    TOOL_SUSPENDED_ATTR,
     agent_span_attributes,
     llm_request_attributes,
     llm_response_attributes,
@@ -58,8 +59,7 @@ class BourbonTracer:
         return self._tracer is not None
 
     def _apply_attributes(self, span: Any, attributes: dict[str, object]) -> None:
-        for key, value in attributes.items():
-            span.set_attribute(key, value)
+        span.set_attributes(attributes)
 
     def _set_error_status(self, span: Any, error_type: str, message: str) -> None:
         span.set_attribute(TOOL_ERROR_ATTR, error_type)
@@ -145,6 +145,9 @@ class BourbonTracer:
         if is_error:
             self._set_error_status(span, error_type, message)
 
+    def mark_tool_suspended(self, span: Any) -> None:
+        span.set_attribute(TOOL_SUSPENDED_ATTR, True)
+
     def mark_error(self, span: Any, error_type: str = "tool_error", message: str = "") -> None:
         self.mark_tool_result(
             span,
@@ -154,5 +157,10 @@ class BourbonTracer:
         )
 
     def record_error(self, span: Any, exc: Exception) -> None:
+        """Record an exception on the span and mark it as an error outcome.
+
+        Sets the exception event (record_exception), error.type attribute, span status to ERROR,
+        and bourbon.tool.is_error=True via mark_error → mark_tool_result.
+        """
         span.record_exception(exc)
         self.mark_error(span, type(exc).__name__, str(exc))
