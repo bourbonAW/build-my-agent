@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from opentelemetry.trace import SpanKind
+from opentelemetry.trace import SpanKind, StatusCode
 
 from bourbon.access_control.capabilities import CapabilityType
 from bourbon.access_control.policy import CapabilityDecision, PolicyAction, PolicyDecision
@@ -783,6 +783,16 @@ def test_otel_root_span_records_agent_attributes():
     assert span.attributes["bourbon.agent.entrypoint"] == "step_stream"
 
 
+def test_otel_agent_span_uses_explicit_kind():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.agent_step(workdir="/tmp/project", entrypoint="step"):
+        pass
+
+    span = _span_named(exporter, "invoke_agent bourbon")
+    assert span.kind is SpanKind.INTERNAL
+
+
 def test_otel_llm_span_records_request_and_response_attributes():
     tracer, exporter = _make_test_tracer()
 
@@ -796,6 +806,24 @@ def test_otel_llm_span_records_request_and_response_attributes():
     assert span.attributes["gen_ai.provider.name"] == "anthropic"
     assert span.attributes["gen_ai.request.model"] == "model-x"
     assert span.attributes["gen_ai.request.max_tokens"] == 123
+    assert span.attributes["gen_ai.response.finish_reasons"] == ("end_turn",)
+    assert span.attributes["gen_ai.usage.input_tokens"] == 10
+    assert span.attributes["gen_ai.usage.output_tokens"] == 4
+
+
+def test_record_llm_response_sets_all_response_attributes():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.llm_call(model="model-x", max_tokens=123, provider="anthropic") as span:
+        tracer.record_llm_response(
+            span,
+            finish_reason="end_turn",
+            input_tokens=10,
+            output_tokens=4,
+        )
+
+    span = _span_named(exporter, "chat model-x")
+    assert span.kind is SpanKind.CLIENT
     assert span.attributes["gen_ai.response.finish_reasons"] == ("end_turn",)
     assert span.attributes["gen_ai.usage.input_tokens"] == 10
     assert span.attributes["gen_ai.usage.output_tokens"] == 4
@@ -815,9 +843,26 @@ def test_otel_tool_span_records_call_attributes():
     assert span.attributes["bourbon.tool.is_error"] is False
 
 
+def test_mark_tool_result_sets_error_flag_and_status():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.tool_call(name="Read", call_id="tool-1", concurrent=False) as span:
+        tracer.mark_tool_result(
+            span,
+            is_error=True,
+            error_type="tool_error",
+            message="bad output",
+        )
+
+    span = _span_named(exporter, "execute_tool Read")
+    assert span.kind is SpanKind.INTERNAL
+    assert span.attributes["bourbon.tool.is_error"] is True
+    assert span.attributes["error.type"] == "tool_error"
+    assert span.status.status_code == StatusCode.ERROR
+
+
 def test_mark_error_sets_status_without_exception_event():
     tracer, exporter = _make_test_tracer()
-    from opentelemetry.trace import StatusCode
 
     with tracer.tool_call(name="Read", call_id="tool-1", concurrent=False) as span:
         tracer.mark_error(span, "tool_error", "bad output")
@@ -830,7 +875,6 @@ def test_mark_error_sets_status_without_exception_event():
 
 def test_record_error_sets_status_and_exception_event():
     tracer, exporter = _make_test_tracer()
-    from opentelemetry.trace import StatusCode
 
     with tracer.tool_call(name="Read", call_id="tool-1", concurrent=False) as span:
         tracer.record_error(span, ValueError("boom"))
