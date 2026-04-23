@@ -42,14 +42,17 @@ def llm_request_attributes(model: str, max_tokens: int, provider: str) -> dict[s
 
 def llm_response_attributes(
     finish_reason: str,
-    input_tokens: int,
-    output_tokens: int,
+    input_tokens: int | None,
+    output_tokens: int | None,
 ) -> dict[str, object]:
-    return {
+    attributes: dict[str, object] = {
         "gen_ai.response.finish_reasons": [finish_reason],
-        "gen_ai.usage.input_tokens": input_tokens,
-        "gen_ai.usage.output_tokens": output_tokens,
     }
+    if input_tokens is not None:
+        attributes["gen_ai.usage.input_tokens"] = input_tokens
+    if output_tokens is not None:
+        attributes["gen_ai.usage.output_tokens"] = output_tokens
+    return attributes
 
 
 def tool_span_attributes(name: str, call_id: str, concurrent: bool) -> dict[str, object]:

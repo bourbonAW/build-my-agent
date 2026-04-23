@@ -93,6 +93,9 @@ def test_semconv_llm_and_tool_helpers_build_expected_attributes():
         "gen_ai.usage.input_tokens": 12,
         "gen_ai.usage.output_tokens": 8,
     }
+    assert llm_response_attributes("end_turn", None, None) == {
+        "gen_ai.response.finish_reasons": ["end_turn"],
+    }
     assert tool_span_attributes("Read", "tool-1", True) == {
         "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": "Read",
@@ -372,7 +375,7 @@ def test_sync_llm_path_uses_record_llm_response_helper(tmp_path):
 
     def record_llm_response(span, *, finish_reason, input_tokens, output_tokens):
         agent._tracer.recorded_llm_responses.append(
-            (finish_reason, input_tokens, output_tokens)
+            (span, finish_reason, input_tokens, output_tokens)
         )
 
     agent._tracer.record_llm_response = record_llm_response
@@ -383,7 +386,38 @@ def test_sync_llm_path_uses_record_llm_response_helper(tmp_path):
     assert call["model"] == "model-x"
     assert call["max_tokens"] == 8000
     assert call["provider"] == "anthropic"
-    assert agent._tracer.recorded_llm_responses == [("end_turn", 2, 1)]
+    assert agent._tracer.recorded_llm_responses == [(call["span"], "end_turn", 2, 1)]
+    assert call["span"].attributes == {}
+
+
+def test_sync_llm_path_omits_token_attrs_when_usage_missing(tmp_path):
+    llm = SimpleNamespace(
+        model="model-x",
+        chat=lambda **kwargs: {
+            "content": [{"type": "text", "text": "done"}],
+            "stop_reason": "end_turn",
+        },
+    )
+    agent = make_llm_loop_agent(tmp_path, llm)
+    agent._build_assistant_transcript_message = lambda content: SimpleNamespace(
+        uuid="assistant-1", content=content, usage=None
+    )
+    agent._tracer.recorded_llm_responses = []
+
+    def record_llm_response(span, *, finish_reason, input_tokens, output_tokens):
+        agent._tracer.recorded_llm_responses.append(
+            (span, finish_reason, input_tokens, output_tokens)
+        )
+
+    agent._tracer.record_llm_response = record_llm_response
+
+    assert agent._run_conversation_loop() == "done"
+
+    call = agent._tracer.llm_calls[0]
+    assert agent._tracer.recorded_llm_responses == [
+        (call["span"], "end_turn", None, None)
+    ]
+    assert call["span"].attributes == {}
 
 
 def test_streaming_llm_path_uses_record_llm_response_helper_once(tmp_path):
@@ -402,7 +436,7 @@ def test_streaming_llm_path_uses_record_llm_response_helper_once(tmp_path):
 
     def record_llm_response(span, *, finish_reason, input_tokens, output_tokens):
         agent._tracer.recorded_llm_responses.append(
-            (finish_reason, input_tokens, output_tokens)
+            (span, finish_reason, input_tokens, output_tokens)
         )
 
     agent._tracer.record_llm_response = record_llm_response
@@ -414,7 +448,8 @@ def test_streaming_llm_path_uses_record_llm_response_helper_once(tmp_path):
     assert call["model"] == "stream-model"
     assert call["max_tokens"] == 8000
     assert call["provider"] == "anthropic"
-    assert agent._tracer.recorded_llm_responses == [("end_turn", 7, 4)]
+    assert agent._tracer.recorded_llm_responses == [(call["span"], "end_turn", 7, 4)]
+    assert call["span"].attributes == {}
 
 
 CURRENT_ROOT = ContextVar("CURRENT_ROOT", default=None)
@@ -864,6 +899,24 @@ def test_record_llm_response_sets_all_response_attributes():
     assert span.attributes["gen_ai.response.finish_reasons"] == ("end_turn",)
     assert span.attributes["gen_ai.usage.input_tokens"] == 10
     assert span.attributes["gen_ai.usage.output_tokens"] == 4
+
+
+def test_record_llm_response_omits_token_attributes_when_usage_missing():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.llm_call(model="model-x", max_tokens=123, provider="anthropic") as span:
+        tracer.record_llm_response(
+            span,
+            finish_reason="end_turn",
+            input_tokens=None,
+            output_tokens=None,
+        )
+
+    span = _span_named(exporter, "chat model-x")
+    assert span.kind is SpanKind.CLIENT
+    assert span.attributes["gen_ai.response.finish_reasons"] == ("end_turn",)
+    assert "gen_ai.usage.input_tokens" not in span.attributes
+    assert "gen_ai.usage.output_tokens" not in span.attributes
 
 
 def test_otel_tool_span_records_call_attributes():

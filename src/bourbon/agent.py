@@ -677,12 +677,12 @@ class Agent:
                         system=self.system_prompt,
                         max_tokens=self._llm_max_tokens(),
                     )
-                    usage = response.get("usage", {})
+                    usage = response.get("usage")
                     tracer.record_llm_response(
                         _llm_span,
                         finish_reason=response.get("stop_reason", ""),
-                        input_tokens=usage.get("input_tokens", 0),
-                        output_tokens=usage.get("output_tokens", 0),
+                        input_tokens=None if usage is None else usage.get("input_tokens", 0),
+                        output_tokens=None if usage is None else usage.get("output_tokens", 0),
                     )
                 response_content = response.get("content", [])
                 response_tool_uses = [
