@@ -480,8 +480,12 @@ class ToolRecordingTracer:
         yield span
 
     def mark_error(self, span, error_type: str = "tool_error", message: str = ""):
-        span.set_attribute("error.type", error_type)
-        span.set_attribute("error.message", message)
+        self.mark_tool_result(
+            span,
+            is_error=True,
+            error_type=error_type,
+            message=message,
+        )
 
     def mark_tool_result(
         self,
@@ -494,7 +498,8 @@ class ToolRecordingTracer:
         self.tool_results.append((span, is_error, error_type, message))
         span.set_attribute("bourbon.tool.is_error", is_error)
         if is_error:
-            self.mark_error(span, error_type, message)
+            span.set_attribute("error.type", error_type)
+            span.set_attribute("error.message", message)
 
     def record_error(self, span, exc: Exception):
         self.recorded_errors.append((span, exc))
@@ -617,7 +622,7 @@ def test_tool_execution_queue_uses_mark_tool_result_helper_for_semantic_errors()
     assert tracer.recorded_errors == []
 
 
-def test_tool_execution_queue_exception_uses_record_error_and_mark_tool_result():
+def test_tool_execution_queue_exception_uses_single_outcome_recording_via_record_error():
     from bourbon.tools.execution_queue import ToolExecutionQueue
 
     def bad_execute(block):

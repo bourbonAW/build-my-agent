@@ -161,12 +161,6 @@ class ToolExecutionQueue:
                 error_type = type(exc).__name__
                 error_message = str(exc)
                 self._tracer.record_error(_tool_span, exc)
-                self._tracer.mark_tool_result(
-                    _tool_span,
-                    is_error=True,
-                    error_type=error_type,
-                    message=error_message,
-                )
             else:
                 if isinstance(raw, ToolExecutionOutcome):
                     raw_output = raw.content
