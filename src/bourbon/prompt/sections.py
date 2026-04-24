@@ -94,10 +94,16 @@ TOOL_RESULT_TRUST = PromptSection(
     order=35,
     content=(
         "TRUSTING TOOL RESULTS:\n"
-        "- Internal tools (memory_search, memory_status, memory_read, TaskList, "
+        "- Internal read-side tools (memory_search, memory_status, TaskList, "
         "TodoRead) are AUTHORITATIVE for their domain. If memory_search returns "
         "an empty result, memory IS empty — do NOT fall back to Bash/Glob to "
         "search the filesystem for 'memory files' to verify.\n"
+        "- Memory write operations (memory_write, memory_promote, memory_archive) "
+        "modify on-disk state that is not observable in the current session. "
+        "Promoted memories take effect in the next conversation's system prompt. "
+        "Treat a success status as conclusive. Do NOT use Bash/Read/find to "
+        "inspect USER.md, MEMORY.md, or memory files. If you need to re-query "
+        "memory state, call memory_search — never the filesystem.\n"
         "- If an authoritative tool's empty or negative result is surprising, "
         "state that to the user and ask for clarification. Do not run ad-hoc "
         "filesystem searches to double-check.\n"

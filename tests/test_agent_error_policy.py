@@ -105,3 +105,21 @@ class TestErrorHandlingPolicy:
     def test_read_file_example(self, mock_agent):
         """Must include the canonical low-risk file-read tool example."""
         assert "Read" in mock_agent.system_prompt
+
+    def test_memory_write_operations_rule_exists(self, mock_agent):
+        """System prompt must tell the agent not to bash-verify memory writes."""
+        prompt = mock_agent.system_prompt
+        assert "memory_write" in prompt
+        assert "memory_promote" in prompt
+        assert "memory_archive" in prompt
+        assert "not observable in the current session" in prompt
+
+    def test_memory_read_stale_reference_removed(self, mock_agent):
+        """memory_read tool does not exist; its reference must not leak into prompt."""
+        assert "memory_read" not in mock_agent.system_prompt
+
+    def test_memory_search_stays_in_trust_rules(self, mock_agent):
+        """Guard against accidental over-deletion while fixing the stale reference."""
+        prompt = mock_agent.system_prompt
+        assert "TRUSTING TOOL RESULTS" in prompt
+        assert "memory_search" in prompt
