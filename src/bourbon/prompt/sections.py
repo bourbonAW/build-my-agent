@@ -99,7 +99,7 @@ TOOL_RESULT_TRUST = PromptSection(
         "an empty result, memory IS empty — do NOT fall back to Bash/Glob to "
         "search the filesystem for 'memory files' to verify.\n"
         "- Memory write operations (memory_write, memory_promote, memory_archive) "
-        "modify on-disk state that is NOT observable in the current session."
+        "modify on-disk state that is NOT observable in the current session. "
         "Promoted memories take effect in the next conversation's system prompt. "
         "Treat a success status as conclusive. Do NOT use Bash/Read/find to "
         "inspect USER.md, MEMORY.md, or memory files. If you need to re-query "
