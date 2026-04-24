@@ -401,7 +401,157 @@ Dialectic supplement（按 dialecticCadence 刷新）:
 
 ---
 
-## 10. 参考资料
+## 10. 写入决策机制：源码级分析
+
+> 本节基于直接阅读 `agent/prompt_builder.py`、`tools/memory_tool.py`、`agent/memory_provider.py` 源码（`NousResearch/hermes-agent` GitHub 仓库）得出，比 DeepWiki 文档更权威。
+
+### 10.1 决策架构：完全 LLM 驱动
+
+Hermes 的写入决策**没有自动提取 hook，没有分类器，没有规则引擎**。所有决策由 LLM 在每轮对话结束时自主判断，引导文本被编码在两处：
+
+1. **system prompt 常量**（`prompt_builder.py`）：`MEMORY_GUIDANCE` + `SKILLS_GUIDANCE`
+2. **tool schema description**（`memory_tool.py`：`MEMORY_SCHEMA["description"]`）
+
+### 10.2 三个核心引导文本（原文）
+
+**`MEMORY_GUIDANCE`**（注入 system prompt）：
+```
+You have persistent memory across sessions. Save durable facts using the memory
+tool: user preferences, environment details, tool quirks, and stable conventions.
+Memory is injected into every turn, so keep it compact and focused on facts that
+will still matter later.
+Prioritize what reduces future user steering — the most valuable memory is one
+that prevents the user from having to correct or remind you again.
+User preferences and recurring corrections matter more than procedural task details.
+Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO
+state to memory; use session_search to recall those from past transcripts.
+If you've discovered a new way to do something, solved a problem that could be
+necessary later, save it as a skill with the skill tool.
+Write memories as declarative facts, not instructions to yourself.
+'User prefers concise responses' ✓ — 'Always respond concisely' ✗.
+'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗.
+Imperative phrasing gets re-read as a directive in later sessions...
+```
+
+**`SKILLS_GUIDANCE`**（注入 system prompt）：
+```
+After completing a complex task (5+ tool calls), fixing a tricky error,
+or discovering a non-trivial workflow, save the approach as a
+skill with skill_manage so you can reuse it next time.
+When using a skill and finding it outdated, incomplete, or wrong,
+patch it immediately with skill_manage(action='patch') — don't wait to be asked.
+Skills that aren't maintained become liabilities.
+```
+
+**`MEMORY_SCHEMA["description"]`** 中的 WHEN TO SAVE 部分（tool schema，更贴近工具调用决策层）：
+```
+WHEN TO SAVE (do this proactively, don't wait to be asked):
+- User corrects you or says 'remember this' / 'don't do that again'
+- User shares a preference, habit, or personal detail (name, role, timezone, coding style)
+- You discover something about the environment (OS, installed tools, project structure)
+- You learn a convention, API quirk, or workflow specific to this user's setup
+- You identify a stable fact that will be useful again in future sessions
+
+PRIORITY: User preferences and corrections > environment facts > procedural knowledge.
+The most valuable memory prevents the user from having to repeat themselves.
+
+Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO
+state to memory; use session_search to recall those from past transcripts.
+```
+
+### 10.3 三分法决策树
+
+这是 Hermes 写入决策的核心骨架：
+
+```
+每轮对话结束，LLM 自问：有没有值得保存的信息？
+        │
+        ├─ 声明性事实（what is true）
+        │   用户偏好/纠正/角色/习惯 → memory tool, target="user"
+        │   环境/约定/工具 quirk → memory tool, target="memory"
+        │
+        ├─ 可复用流程（how to do something）
+        │   5+ 工具调用的复杂任务
+        │   tricky bug 的解决方式        → skill_manage create/patch
+        │   非显然的 workflow
+        │
+        └─ 任务过程/进度（what happened）
+            session 结果、TODO 状态     → 不写，session_search 可召回
+```
+
+### 10.4 写入格式约束：声明式 vs 命令式
+
+写法不是任意的，Hermes 明确禁止命令式写法：
+
+| ✓ 声明式（允许） | ✗ 命令式（禁止） |
+|----------------|----------------|
+| "User prefers concise responses" | "Always respond concisely" |
+| "Project uses pytest with xdist" | "Run tests with pytest -n 4" |
+
+**原因**：memory 条目在下次 session 注入 system prompt，命令式写法被 LLM 当成 directive 执行，可能覆盖用户当前的请求。**程序和流程属于 skill，不属于 memory。**
+
+### 10.5 Skill 触发阈值
+
+Skill 写入有明确的量化 + 定性双条件：
+
+| 触发条件 | 类型 |
+|---------|------|
+| 完成了 **5+ 工具调用**的任务 | 量化阈值 |
+| 修了一个 **tricky error** | 定性判断 |
+| 发现了**非显然的 workflow** | 定性判断 |
+| 使用中发现已有 skill **过时/不完整/错误** | 维护触发（立刻 patch，不等被问） |
+
+### 10.6 生命周期 Hook（MemoryProvider 接口）
+
+LLM 主动判断之外，`MemoryProvider` 基类定义了额外的自动触发时机（外部 provider 使用）：
+
+```python
+# 每轮对话结束 → 同步数据到外部后端（Honcho 等用此写入）
+def sync_turn(user_content, assistant_content, session_id): ...
+
+# session 真正结束时（CLI 退出 / /reset / gateway 超时）→ 提取洞察
+# 注意：NOT after every turn — only at actual session boundaries
+def on_session_end(messages): ...
+
+# context 压缩前 → 从即将被删除的消息里提取要点，避免压缩时丢失知识
+def on_pre_compress(messages) -> str: ...
+
+# 父 agent 观察到 subagent 完成工作 → 记录委派结果
+def on_delegation(task, result, child_session_id): ...
+```
+
+**关键区别**：内置 memory（MEMORY.md/USER.md）**没有每轮自动提取逻辑**，完全靠 LLM 调用 `memory` tool。`on_session_end` 只在 session 边界触发，不是每轮。
+
+### 10.7 完整写入流程
+
+```
+每轮对话结束
+     │
+     ├─① LLM 内部判断（主路径）
+     │       ├─ 有声明性事实 → 调用 memory tool (add/replace/remove)
+     │       ├─ 有可复用流程 → 调用 skill_manage (create/patch)
+     │       └─ 只有任务过程 → 不写，session_search 可找到
+     │
+     ├─② MemoryManager.sync_turn()
+     │       └─ 外部 provider（Honcho 等）后台同步对话数据
+     │
+     └─③ MemoryManager.queue_prefetch_all()
+             └─ 后台预热下一轮的召回结果
+```
+
+### 10.8 对 Bourbon 写入决策的具体启示
+
+| Hermes 设计 | Bourbon 现状 | 落地建议 |
+|------------|-------------|---------|
+| tool schema description 里的 WHEN TO SAVE | system prompt 里有引导，但 tool description 较简单 | 在 `memory_write` tool schema description 里加具体触发清单，让 LLM 在决定是否调用时就能看到 |
+| 三分法明确边界（memory/skill/session_search）| 目前只有 memory，无 session_search | 显式写清"任务进度不写 memory"，防止 memory 被任务状态污染 |
+| 声明式 vs 命令式格式约束 | 无此约束 | 在引导文本中加入"写事实不写指令"的反例 |
+| Skill 5+ 工具调用阈值 | 无自动触发 | 统计每轮 tool_calls 数量，超过阈值时在 response 末尾提示 agent 考虑写 skill |
+| `on_pre_compress` 压缩前提取 | 无 | 在 ContextCompressor 压缩前调用记忆提取，防止长对话中的知识被压缩丢弃 |
+
+---
+
+## 11. 参考资料
 
 - [DeepWiki: NousResearch/hermes-agent](https://deepwiki.com/NousResearch/hermes-agent)
 - [DeepWiki: Memory and Sessions](https://deepwiki.com/NousResearch/hermes-agent/4.3-context-management-and-compression)

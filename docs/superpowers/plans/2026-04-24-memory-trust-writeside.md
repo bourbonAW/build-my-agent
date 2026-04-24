@@ -4,7 +4,7 @@
 
 **Goal:** Extend `TOOL_RESULT_TRUST` prompt section with a write-side clause that bans filesystem verification of memory writes, explains the mechanism, and redirects to `memory_search`. Also remove the stale `memory_read` tool reference.
 
-**Architecture:** Single-file prompt edit in `src/bourbon/prompt/sections.py` plus three assertion tests in `tests/test_agent_error_policy.py`. No tool changes, no subsystem changes. TDD cycle.
+**Architecture:** Single-file prompt edit in `src/bourbon/prompt/sections.py` plus four assertion tests in `tests/test_agent_error_policy.py`. No tool changes, no subsystem changes. TDD cycle.
 
 **Tech Stack:** Python, pytest, Bourbon prompt builder, existing `mock_agent` fixture.
 
@@ -31,7 +31,7 @@ No new files. No deletions.
 
 ### - [ ] Step 1: Write the failing tests
 
-Open `tests/test_agent_error_policy.py` and append the following three methods at the end of the `TestErrorHandlingPolicy` class (after the last existing `test_*` method). Keep them inside the class — they need the `mock_agent` fixture.
+Open `tests/test_agent_error_policy.py` and append the following methods at the end of the `TestErrorHandlingPolicy` class (after the last existing `test_*` method). Keep them inside the class — they need the `mock_agent` fixture.
 
 ```python
     def test_memory_write_operations_rule_exists(self, mock_agent):
@@ -51,6 +51,13 @@ Open `tests/test_agent_error_policy.py` and append the following three methods a
         prompt = mock_agent.system_prompt
         assert "TRUSTING TOOL RESULTS" in prompt
         assert "memory_search" in prompt
+
+    def test_memory_write_requery_rule_names_status_filters(self, mock_agent):
+        """Re-query guidance must account for non-active memory statuses."""
+        prompt = mock_agent.system_prompt
+        assert "status=['promoted']" in prompt
+        assert "status=['stale']" in prompt
+        assert "status=['rejected']" in prompt
 ```
 
 ### - [ ] Step 2: Run tests to verify they fail
@@ -58,13 +65,14 @@ Open `tests/test_agent_error_policy.py` and append the following three methods a
 Run:
 
 ```bash
-uv run pytest tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_write_operations_rule_exists tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_read_stale_reference_removed tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_search_stays_in_trust_rules -v
+uv run pytest tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_write_operations_rule_exists tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_read_stale_reference_removed tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_search_stays_in_trust_rules tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_write_requery_rule_names_status_filters -v
 ```
 
 Expected:
 - `test_memory_write_operations_rule_exists` — **FAIL** (no `memory_write`/`memory_promote`/`memory_archive`/`not observable in the current session` text present yet).
 - `test_memory_read_stale_reference_removed` — **FAIL** (current prompt still contains `memory_read`).
 - `test_memory_search_stays_in_trust_rules` — **PASS** (already true before the edit). This one is a guard rail, passing pre-change is expected.
+- `test_memory_write_requery_rule_names_status_filters` — **FAIL** (no explicit promoted/stale/rejected status filter guidance present yet).
 
 If any result differs from the above, stop and investigate — your baseline is not what the plan assumes.
 
@@ -87,7 +95,9 @@ TOOL_RESULT_TRUST = PromptSection(
         "Promoted memories take effect in the next conversation's system prompt. "
         "Treat a success status as conclusive. Do NOT use Bash/Read/find to "
         "inspect USER.md, MEMORY.md, or memory files. If you need to re-query "
-        "memory state, call memory_search — never the filesystem.\n"
+        "memory state, call memory_search with the status matching the operation: "
+        "status=['promoted'] after memory_promote; status=['stale'] or "
+        "status=['rejected'] after memory_archive — never the filesystem.\n"
         "- If an authoritative tool's empty or negative result is surprising, "
         "state that to the user and ask for clarification. Do not run ad-hoc "
         "filesystem searches to double-check.\n"
@@ -107,7 +117,7 @@ Diff summary:
 ### - [ ] Step 4: Run the three targeted tests to verify they pass
 
 ```bash
-uv run pytest tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_write_operations_rule_exists tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_read_stale_reference_removed tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_search_stays_in_trust_rules -v
+uv run pytest tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_write_operations_rule_exists tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_read_stale_reference_removed tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_search_stays_in_trust_rules tests/test_agent_error_policy.py::TestErrorHandlingPolicy::test_memory_write_requery_rule_names_status_filters -v
 ```
 
 Expected: all 3 PASS.
@@ -164,7 +174,7 @@ Expected: commit succeeds; `git status` is clean for the edited files.
 
 - Spec § Changes — ✅ Task 1 Step 3 makes the exact three edits: replace `memory_read` reference, insert write-side clause, leave other clauses untouched.
 - Spec § Final Text — ✅ Task 1 Step 3's code block reproduces the approved wording verbatim.
-- Spec § Testing (three assertions) — ✅ Task 1 Step 1 adds all three tests with the exact assertions from the spec.
+- Spec § Testing — ✅ Task 1 Step 1 adds all prompt guard tests with the exact assertions from the spec.
 - Spec § Out of Scope — ✅ Plan does not modify any tool, subsystem, or return JSON.
 
 ### Placeholder scan

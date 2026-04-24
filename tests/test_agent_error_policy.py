@@ -123,3 +123,10 @@ class TestErrorHandlingPolicy:
         prompt = mock_agent.system_prompt
         assert "TRUSTING TOOL RESULTS" in prompt
         assert "memory_search" in prompt
+
+    def test_memory_write_requery_rule_names_status_filters(self, mock_agent):
+        """Re-query guidance must account for non-active memory statuses."""
+        prompt = mock_agent.system_prompt
+        assert "status=['promoted']" in prompt
+        assert "status=['stale']" in prompt
+        assert "status=['rejected']" in prompt

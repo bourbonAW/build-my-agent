@@ -42,7 +42,9 @@ TRUSTING TOOL RESULTS:
   Promoted memories take effect in the next conversation's system prompt.
   Treat a success status as conclusive. Do NOT use Bash/Read/find to inspect
   USER.md, MEMORY.md, or memory files. If you need to re-query memory state,
-  call memory_search — never the filesystem.
+  call memory_search with the status matching the operation: status=['promoted']
+  after memory_promote; status=['stale'] or status=['rejected'] after
+  memory_archive — never the filesystem.
 - If an authoritative tool's empty or negative result is surprising, state
   that to the user and ask for clarification. Do not run ad-hoc filesystem
   searches to double-check.
@@ -58,17 +60,18 @@ The new clause uses a recommendation-grade pattern — ban + mechanism + legal a
 
 - **Ban:** "Do NOT use Bash/Read/find to inspect `USER.md`, `MEMORY.md`, or memory files."
 - **Mechanism:** "…modify on-disk state that is NOT observable in the current session. Promoted memories take effect in the next conversation's system prompt." The model can reason about edge cases instead of blindly following.
-- **Legal alternative:** "If you need to re-query memory state, call `memory_search` — never the filesystem." Redirects the "I just want to check" instinct toward a sanctioned tool.
+- **Legal alternative:** Use `memory_search` with an explicit status filter that matches the operation (`status=['promoted']` after `memory_promote`; `status=['stale']` or `status=['rejected']` after `memory_archive`). Redirects the "I just want to check" instinct toward a sanctioned tool without relying on the filesystem.
 
-`memory_search` already supports filtering by `scope='user'` and `status='promoted'`, so it is sufficient for the ~90% "did my write land" case without any new tool.
+`memory_search` defaults to active memories, so promoted or archived records require an explicit status filter. It already supports filtering by `scope='user'` and `status`, so it is sufficient for the ~90% "did my write land" case without any new tool.
 
 ## Testing
 
-Add three assertions to `tests/test_agent_error_policy.py`, following the existing `test_*_section_exists` pattern:
+Add assertions to `tests/test_agent_error_policy.py`, following the existing `test_*_section_exists` pattern:
 
 1. `test_memory_write_operations_rule_exists` — assert that `memory_write`, `memory_promote`, and `not observable in the current session` all appear in the rendered `system_prompt`.
 2. `test_memory_read_stale_reference_removed` — assert that the substring `memory_read` is absent from `system_prompt`.
 3. `test_memory_search_stays_in_trust_rules` — assert that both `TRUSTING TOOL RESULTS` and `memory_search` appear in `system_prompt` (guards against accidental over-deletion while removing the stale `memory_read` reference).
+4. `test_memory_write_requery_rule_names_status_filters` — assert that `status=['promoted']`, `status=['stale']`, and `status=['rejected']` all appear in the rendered `system_prompt` (guards against telling the model to use default `memory_search`, which only searches active memories).
 
 No changes to existing tests are required. No implementation-code tests are added (there is no implementation code change).
 
@@ -92,5 +95,5 @@ If post-deployment observation shows the prompt-only fix is insufficient, the wr
 ## Implementation Estimate
 
 - 1 file edited (`src/bourbon/prompt/sections.py`)
-- 3 test cases added (`tests/test_agent_error_policy.py`)
+- 4 test cases added (`tests/test_agent_error_policy.py`)
 - ~15 minutes implementation + verification
