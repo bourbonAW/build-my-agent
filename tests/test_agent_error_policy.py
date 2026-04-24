@@ -112,7 +112,7 @@ class TestErrorHandlingPolicy:
         assert "memory_write" in prompt
         assert "memory_promote" in prompt
         assert "memory_archive" in prompt
-        assert "not observable in the current session" in prompt
+        assert "NOT observable in the current session" in prompt
 
     def test_memory_read_stale_reference_removed(self, mock_agent):
         """memory_read tool does not exist; its reference must not leak into prompt."""
