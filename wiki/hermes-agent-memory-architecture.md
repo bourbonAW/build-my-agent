@@ -401,7 +401,185 @@ Dialectic supplement（按 dialecticCadence 刷新）:
 
 ---
 
-## 10. 写入决策机制：源码级分析
+## 10. 记忆的时间层次：长中短期设计
+
+> 本节基于 `hermes_state.py`、`agent/context_compressor.py`、`tools/session_search_tool.py`、`tools/memory_tool.py` 源码分析（v0.11.0）。
+
+Hermes 没有显式使用"长中短期记忆"的命名，但其架构自然形成了五个时间跨度不同的记忆层：
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  层级          │ 载体                   │ 生命周期         │ 容量上限   │
+├────────────────┼───────────────────────┼─────────────────┼───────────┤
+│ 1. 工作记忆     │ 当前 context window   │ 当前轮次        │ 模型上限   │
+│ 2. 会话内记忆   │ 压缩摘要（结构化）     │ 当前 session    │ 12k token │
+│ 3. 跨会话记忆   │ SQLite + FTS5        │ 90 天（可配置） │ 无上限     │
+│ 4. 持久精华记忆  │ MEMORY.md / USER.md  │ 永久（手动清除）│ 3575 字符  │
+│ 5. 技能记忆     │ ~/.hermes/skills/    │ 永久（可删除）  │ 无硬上限   │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.1 工作记忆（当前 context window）
+
+最短暂的层：当前轮次的所有消息，加上 system prompt 的 Frozen Snapshot 注入。超出 75% 上下文阈值后触发压缩，旧消息被摘要替代。
+
+### 10.2 会话内记忆（Context Compression Summary）
+
+当 context window 填满时，`ContextCompressor` 生成一份**结构化摘要**替代被压缩的旧轮次：
+
+```
+[CONTEXT COMPACTION — REFERENCE ONLY]
+Earlier turns were compacted into the summary below.
+This is a handoff from a previous context window —
+treat it as background reference, NOT as active instructions.
+Your current task is identified in the '## Active Task' section —
+resume exactly from there.
+```
+
+摘要的结构模板（固定格式）：
+```
+## Goal
+## Progress
+## Decisions Made
+## Resolved Questions
+## Pending Questions
+## Files Modified
+## Remaining Work (Active Task)
+```
+
+**工程细节：**
+- 触发阈值：context 达到 **75%** 时触发
+- 保护区：head 前 3 条消息 + tail 后 6 条消息不被压缩
+- 摘要 token 预算：被压缩内容的 **20%**，最小 2000 token，上限 12,000 token
+- **迭代更新**：若已有摘要，再次压缩时更新摘要而非重新生成，保留跨多次压缩的信息
+- **工具结果预剪枝**：LLM 摘要前先做 cheap pre-pass，把旧工具输出替换为 `[Old tool output cleared]`，节省摘要预算
+- **`parent_session_id` 链**：压缩触发 session 分裂时通过外键链追踪历史
+
+摘要会明确告知"不要响应摘要中的问题，只处理最新用户消息"，防止 agent 把历史 task 当成当前任务执行。
+
+### 10.3 跨会话记忆（SQLite + FTS5）
+
+**存储位置**：`~/.hermes/sessions/state.db`（WAL 模式）
+
+数据库 schema 核心表：
+
+```sql
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    source TEXT,           -- cli / telegram / discord ...
+    parent_session_id TEXT, -- 压缩分裂链
+    started_at REAL,
+    ended_at REAL,
+    message_count INTEGER,
+    tool_call_count INTEGER,
+    input_tokens INTEGER, output_tokens INTEGER, ...
+    title TEXT
+);
+
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY,
+    session_id TEXT,
+    role TEXT,
+    content TEXT,
+    tool_calls TEXT,       -- JSON 格式工具调用
+    tool_name TEXT,
+    timestamp REAL,
+    reasoning TEXT, ...    -- 支持存储推理内容
+);
+```
+
+**双 FTS5 索引**（v0.11.0 新增 trigram 支持 CJK）：
+
+```sql
+-- 标准 FTS（英文/分词语言）
+CREATE VIRTUAL TABLE messages_fts USING fts5(content);
+
+-- Trigram FTS（CJK、子串匹配）
+CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
+    content, tokenize='trigram'
+);
+```
+
+FTS 索引内容 = `content || tool_name || tool_calls`，工具调用本身也可被搜索。
+
+**`session_search_tool` 召回流程**：
+```
+FTS5 query（关键词匹配）
+    ↓
+按 session 分组，取 Top N（默认 3 个 session）
+    ↓
+加载每个 session 的完整对话（最多 100k 字符）
+    ↓
+_truncate_around_matches()
+    策略优先级：1.全短语命中 → 2.所有词共现（200字符范围内）→ 3.单词命中
+    窗口偏置：命中点前 25%，后 75%
+    ↓
+并发调用辅助 LLM（Gemini Flash 等 cheap 模型）生成摘要（默认最多 3 并发）
+    ↓
+摘要注入主模型 context（不暴露原始历史文本）
+```
+
+**保留策略（v0.11.0 新增）**：
+- 默认保留 **90 天**（`retention_days=90`）
+- 启动时自动执行 `maybe_auto_prune_and_vacuum()`，每 24 小时最多一次
+- 只清除已结束的 session（active session 不受影响）
+- 清除后执行 `VACUUM` 回收磁盘空间（独占锁，启动时服务前执行）
+- 子 session 被 orphan（`parent_session_id` 置 NULL）而非级联删除
+
+### 10.4 持久精华记忆（MEMORY.md / USER.md）
+
+详见第 3 节。关键参数：
+
+| 文件 | 字符限制 | 用途 |
+|------|---------|------|
+| MEMORY.md | **2200** | Agent 的个人笔记（环境、约定、经验） |
+| USER.md | **1375** | 用户画像（偏好、风格、纠正记录） |
+
+总计 **3575 字符**（约 900 token）是整个 session 生命周期内始终存在于 system prompt 的记忆预算。
+
+**重要机制**：`on_pre_compress` hook
+```python
+def on_pre_compress(self, messages: List[Dict]) -> str:
+    """Called BEFORE context compression discards old messages.
+    Return text to include in compression summary prompt."""
+```
+外部 provider 可在消息被压缩丢弃前提取洞察，写入自己的后端（这是跨层记忆迁移的关键接口）。
+
+### 10.5 技能记忆（Skill Library）
+
+详见第 4 节。与其他层的关键区别：
+
+- **无时间限制**：技能不会自动过期，保持到被明确删除
+- **可进化**：通过 `skill_manage patch` 原地改进，而非累积新版本
+- **从经验结晶**：由完成复杂任务后的 agent 自主写入（5+ 工具调用阈值）
+- **主动加载**：不像 MEMORY.md 那样全量注入，只在 agent 调用 `skill_view` 时按需加载
+
+### 10.6 五层记忆的协作关系
+
+```
+任务执行中（会话内）
+    工作记忆（context window）
+         ↓ 填满时
+    压缩摘要（会话内记忆）  ←─── on_pre_compress 提取
+         ↓ session 结束
+
+跨 session
+    session_search 召回（SQLite FTS5）→ 注入摘要到当前 context
+         ↓ 90天后自动清除
+
+永久
+    精华事实 → MEMORY.md / USER.md（每 session 全量注入）
+    可复用流程 → Skills（按需加载）
+```
+
+**关键设计取舍**：
+- 精华记忆字符上限极小（3575字符）迫使 agent 做真正的"信息蒸馏"，而非直接存原文
+- 跨会话记忆（SQLite）存原始对话，但注入时必须经过 LLM 摘要，避免历史对话直接污染当前 context
+- 技能不在 context 里全量注入，只注入 name+description（level 0），按需才展开，保持 token 效率
+
+---
+
+## 11. 写入决策机制：源码级分析
 
 > 本节基于直接阅读 `agent/prompt_builder.py`、`tools/memory_tool.py`、`agent/memory_provider.py` 源码（`NousResearch/hermes-agent` GitHub 仓库）得出，比 DeepWiki 文档更权威。
 
@@ -551,7 +729,7 @@ def on_delegation(task, result, child_session_id): ...
 
 ---
 
-## 11. 参考资料
+## 12. 参考资料
 
 - [DeepWiki: NousResearch/hermes-agent](https://deepwiki.com/NousResearch/hermes-agent)
 - [DeepWiki: Memory and Sessions](https://deepwiki.com/NousResearch/hermes-agent/4.3-context-management-and-compression)
