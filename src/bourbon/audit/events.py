@@ -16,9 +16,7 @@ class EventType(StrEnum):
     TOOL_CALL = "tool_call"
     MEMORY_WRITE = "memory_write"
     MEMORY_SEARCH = "memory_search"
-    MEMORY_FLUSH = "memory_flush"
-    MEMORY_PROMOTE = "memory_promote"
-    MEMORY_REJECT = "memory_reject"
+    MEMORY_DELETE = "memory_delete"
 
 
 @dataclass(slots=True)

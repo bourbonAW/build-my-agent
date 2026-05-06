@@ -3,37 +3,25 @@
 from __future__ import annotations
 
 import secrets
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from bourbon.audit.events import AuditEvent, EventType
 from bourbon.config import MemoryConfig
-from bourbon.memory.compact import extract_flush_candidates
-from bourbon.memory.cues.engine import CueEngine
-from bourbon.memory.cues.models import CueGenerationStatus, QueryCue
-from bourbon.memory.cues.query import QueryCueCache
-from bourbon.memory.cues.runtime import CueRuntimeContext
-from bourbon.memory.files import update_managed_block_status, upsert_managed_block
+from bourbon.memory.cues import expand_query_terms, generate_cues
 from bourbon.memory.models import (
+    MEMORY_TARGETS,
     MemoryActor,
     MemoryRecord,
     MemoryRecordDraft,
-    MemoryScope,
     MemorySearchResult,
-    MemorySource,
-    MemoryStatus,
-    MemoryStatusInfo,
+    MemorySystemInfo,
     RecentWriteSummary,
-    actor_to_created_by,
+    validate_memory_target,
 )
-from bourbon.memory.policy import (
-    check_archive_permission,
-    check_promote_permission,
-    check_write_permission,
-)
-from bourbon.memory.store import MemoryStore, _record_to_filename
+from bourbon.memory.policy import check_delete_permission, check_write_permission
+from bourbon.memory.store import MemoryStore
 
 if TYPE_CHECKING:
     from bourbon.audit import AuditLogger
@@ -43,30 +31,13 @@ def _generate_id() -> str:
     return f"mem_{secrets.token_hex(4)}"
 
 
-def _derive_name(draft: MemoryRecordDraft) -> str:
-    if draft.name:
-        return draft.name
-    first_line = draft.content.splitlines()[0].strip() if draft.content else ""
-    return first_line[:60] or "Untitled memory"
-
-
-def _derive_description(draft: MemoryRecordDraft, *, name: str) -> str:
-    if draft.description:
-        return draft.description
-    first_line = draft.content.splitlines()[0].strip() if draft.content else ""
-    return first_line[:120] or name
-
-
-def _managed_block_marker(memory_id: str) -> str:
-    return f'<!-- bourbon-memory:start id="{memory_id}" -->'
-
-
-def _managed_block_end_marker(memory_id: str) -> str:
-    return f'<!-- bourbon-memory:end id="{memory_id}" -->'
+def _preview(content: str, *, limit: int = 100) -> str:
+    first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
+    return (first_line or content.strip())[:limit].rstrip()
 
 
 class MemoryManager:
-    """High-level facade for memory writes, search, and status."""
+    """High-level facade for memory writes, search, delete, and status."""
 
     def __init__(
         self,
@@ -83,199 +54,51 @@ class MemoryManager:
         self._memory_dir = Path(config.storage_dir).expanduser() / project_key / "memory"
         self._store = MemoryStore(memory_dir=self._memory_dir)
         self._recent_writes: list[RecentWriteSummary] = []
-        self._cue_engine = (
-            CueEngine() if config.cue_enabled and config.cue_record_generation else None
-        )
-        self._query_cue_engine = (
-            CueEngine(query_cache=QueryCueCache(max_size=config.cue_query_cache_size))
-            if config.cue_enabled and config.cue_query_interpretation
-            else None
-        )
-        self._last_query_cue: QueryCue | None = None
+        self._last_expanded_terms: tuple[str, ...] = ()
 
     def get_memory_dir(self) -> Path:
-        """Return the backing memory directory."""
         return self._memory_dir
 
-    def _build_default_cue_runtime_context(self, draft: MemoryRecordDraft) -> CueRuntimeContext:
-        return CueRuntimeContext(
-            workdir=self.workdir,
-            current_files=[],
-            touched_files=[],
-            modified_files=[],
-            symbols=[],
-            source_ref=draft.source_ref,
-            recent_tool_names=[],
-            task_subject=draft.name or draft.description,
-            session_id=draft.source_ref.session_id if draft.source_ref else None,
-        )
-
-    def _build_default_query_runtime_context(self) -> CueRuntimeContext:
-        return CueRuntimeContext(
-            workdir=self.workdir,
-            current_files=[],
-            touched_files=[],
-            modified_files=[],
-            symbols=[],
-            source_ref=None,
-            recent_tool_names=[],
-            task_subject=None,
-            session_id=None,
-        )
-
-    def get_last_query_cue(self) -> QueryCue | None:
-        """Return the last query cue produced by search, if query interpretation ran."""
-        return self._last_query_cue
-
-    def _global_user_md_path(self) -> Path:
-        return Path("~/.bourbon/USER.md").expanduser()
-
-    def _require_managed_block_exists(self, user_md_path: Path, memory_id: str) -> None:
-        if not user_md_path.exists():
-            raise RuntimeError("Managed USER.md projection missing")
-
-        text = user_md_path.read_text(encoding="utf-8")
-        start_marker = _managed_block_marker(memory_id)
-        end_marker = _managed_block_end_marker(memory_id)
-        start_index = text.find(start_marker)
-        if start_index == -1:
-            raise RuntimeError(f"Managed USER.md block missing for {memory_id}")
-        end_index = text.find(end_marker, start_index)
-        if end_index == -1:
-            raise RuntimeError(f"Managed USER.md block missing for {memory_id}")
-
-        block = text[start_index : end_index + len(end_marker)]
-        if "- status:" not in block:
-            raise RuntimeError(f"Managed USER.md block missing status for {memory_id}")
-
-    def promote(self, memory_id: str, actor: MemoryActor, note: str = "") -> MemoryRecord:
-        """Promote an eligible record into the managed global USER.md section."""
-        record = self._store.read_record(memory_id)
-        if record is None:
-            raise KeyError(f"Unknown memory id: {memory_id}")
-        if record.status not in {MemoryStatus.ACTIVE, MemoryStatus.STALE}:
-            raise ValueError(f"Cannot promote record with status {record.status}")
-        check_promote_permission(actor, record)
-
-        promotion_time = datetime.now(record.updated_at.tzinfo or UTC)
-        promoted_record = replace(
-            record,
-            status=MemoryStatus.PROMOTED,
-            updated_at=promotion_time,
-        )
-        global_user_md = self._global_user_md_path()
-        source_filename = self._store._id_to_filename.get(record.id)
-        if source_filename is None:
-            source_filename = _record_to_filename(record)
-        source_path = self._memory_dir / source_filename
-        upsert_managed_block(
-            global_user_md,
-            promoted_record,
-            note=note,
-            source_path=source_path,
-        )
-        updated = self._store.update_status(memory_id, MemoryStatus.PROMOTED)
-        self._record_audit(
-            EventType.MEMORY_PROMOTE,
-            tool_input_summary=record.name,
-            memory_id=record.id,
-            actor=actor_to_created_by(actor),
-        )
-        return updated
-
-    def archive(
-        self,
-        memory_id: str,
-        status: MemoryStatus,
-        actor: MemoryActor,
-        reason: str = "",
-    ) -> MemoryRecord:
-        """Archive a record as stale or rejected, updating USER.md when needed."""
-        record = self._store.read_record(memory_id)
-        if record is None:
-            raise KeyError(f"Unknown memory id: {memory_id}")
-        if status not in {MemoryStatus.STALE, MemoryStatus.REJECTED}:
-            raise ValueError(f"Cannot archive record as {status}")
-        check_archive_permission(actor, record)
-
-        if record.status == MemoryStatus.PROMOTED:
-            user_md_path = self._global_user_md_path()
-            self._require_managed_block_exists(user_md_path, memory_id)
-            update_managed_block_status(
-                user_md_path,
-                memory_id,
-                str(status),
-            )
-
-        updated = self._store.update_status(memory_id, status)
-        self._record_audit(
-            EventType.MEMORY_REJECT,
-            tool_input_summary=record.name,
-            memory_id=record.id,
-            archive_status=str(status),
-            actor=actor_to_created_by(actor),
-            reason=reason,
-        )
-        return updated
+    def get_last_expanded_terms(self) -> tuple[str, ...]:
+        return self._last_expanded_terms
 
     def write(self, draft: MemoryRecordDraft, *, actor: MemoryActor) -> MemoryRecord:
-        """Persist a new memory record and update the MEMORY.md index."""
-        if not check_write_permission(actor, kind=draft.kind, scope=draft.scope):
-            raise PermissionError(
-                f"Actor {actor.kind}:{actor.agent_type} cannot write "
-                f"kind={draft.kind} scope={draft.scope}"
-            )
+        target = validate_memory_target(draft.target)
+        content = draft.content.strip()
+        if not content:
+            raise ValueError("Memory content must be non-empty")
+        if not check_write_permission(actor, target=target):
+            raise PermissionError(f"Actor {actor.kind}:{actor.agent_type} cannot write target={target}")
+        if self._audit is None:
+            raise RuntimeError("memory writes require audit")
 
-        now = datetime.now(UTC)
-        name = _derive_name(draft)
-        description = _derive_description(draft, name=name)
-        cue_metadata = None
-        if self._cue_engine is not None:
-            runtime_context = self._build_default_cue_runtime_context(draft)
-            cue_metadata = self._cue_engine.generate_for_record(
-                draft,
-                runtime_context=runtime_context,
-            )
-            if (
-                cue_metadata.generation_status == CueGenerationStatus.FAILED
-                and not self.config.cue_persist_failed_metadata
-            ):
-                cue_metadata = None
         record = MemoryRecord(
             id=_generate_id(),
-            name=name,
-            description=description,
-            kind=draft.kind,
-            scope=draft.scope,
-            confidence=draft.confidence,
-            source=draft.source,
-            status=MemoryStatus.ACTIVE,
-            created_at=now,
-            updated_at=now,
-            created_by=actor_to_created_by(actor),
-            content=draft.content,
-            source_ref=draft.source_ref,
-            cue_metadata=cue_metadata,
+            target=target,
+            content=content,
+            created_at=datetime.now(UTC),
+            cues=generate_cues(content),
         )
-
         self._store.write_record(record)
-        self._store.update_index(record)
         self._recent_writes.append(
             RecentWriteSummary(
                 id=record.id,
-                name=record.name,
-                kind=record.kind,
+                target=record.target,
+                preview=_preview(record.content),
                 created_at=record.created_at,
             )
         )
         self._recent_writes = self._recent_writes[-10:]
         self._record_audit(
             EventType.MEMORY_WRITE,
-            tool_input_summary=record.name,
+            tool_input_summary=_preview(record.content),
             memory_id=record.id,
-            memory_kind=str(record.kind),
-            memory_scope=str(record.scope),
-            actor=actor_to_created_by(actor),
+            target=record.target,
+            actor_kind=actor.kind,
+            session_id=actor.session_id,
+            run_id=actor.run_id,
+            agent_type=actor.agent_type,
+            content_preview=_preview(record.content),
         )
         return record
 
@@ -283,218 +106,73 @@ class MemoryManager:
         self,
         query: str,
         *,
-        scope: str | None = None,
-        kind: list[str] | None = None,
+        target: str | None = None,
         limit: int | None = None,
-        status: list[str] | None = None,
     ) -> list[MemorySearchResult]:
-        """Search stored memories."""
-        if self._query_cue_engine is None:
-            self._last_query_cue = None
-            return self._legacy_search(
-                query,
-                scope=scope,
-                kind=kind,
-                limit=limit,
-                status=status,
-            )
-
-        query_cue = self._query_cue_engine.interpret_query(
-            query,
-            runtime_context=self._build_default_query_runtime_context(),
-        )
-        self._last_query_cue = query_cue
-        results = self._search_with_query_cue(
-            query,
-            query_cue=query_cue,
-            scope=scope,
-            kind=kind,
-            status=status,
-            limit=limit or self.config.recall_limit,
-        )
-        self._record_audit(
-            EventType.MEMORY_SEARCH,
-            tool_input_summary=query[:200],
-            query=query,
-            scope=scope,
-            kind=kind,
-            result_count=len(results),
-        )
-        return results
-
-    def _search_with_query_cue(
-        self,
-        query: str,
-        *,
-        query_cue: QueryCue,
-        scope: str | None,
-        kind: list[str] | None,
-        limit: int,
-        status: list[str] | None,
-    ) -> list[MemorySearchResult]:
+        if target is not None:
+            target = validate_memory_target(target)
+        terms = expand_query_terms(query)
+        self._last_expanded_terms = terms
         results: list[MemorySearchResult] = []
-        results_by_id: dict[str, MemorySearchResult] = {}
-        seen_ids: set[str] = set()
-        terms = self._query_cue_search_terms(query, query_cue=query_cue)
-
-        for term, used_query_cue in terms:
-            if len(results) >= limit:
-                break
-            search_limit = self._expanded_search_limit(limit, scope=scope)
-            term_results = self._store.search(
-                term,
-                kind=kind,
-                status=status,
-                limit=search_limit,
-            )
-            for result in term_results:
-                if scope is not None and result.scope != scope:
-                    continue
-                if result.id in seen_ids:
-                    if used_query_cue:
-                        existing = results_by_id[result.id]
-                        existing.why_matched = self._append_query_cue_reason(
-                            existing.why_matched,
-                            term,
-                        )
-                    continue
-                if used_query_cue:
-                    result.why_matched = self._append_query_cue_reason(
-                        result.why_matched,
-                        term,
-                    )
-                results.append(result)
-                results_by_id[result.id] = result
-                seen_ids.add(result.id)
-                if len(results) >= limit:
-                    break
-
-        return results
-
-    def _query_cue_search_terms(
-        self,
-        query: str,
-        *,
-        query_cue: QueryCue,
-    ) -> list[tuple[str, bool]]:
-        terms: list[tuple[str, bool]] = []
         seen: set[str] = set()
-        terms.append((query, False))
-        seen.add(self._normalize_search_term(query))
-
-        for cue in query_cue.cue_phrases[:8]:
-            phrase = cue.text.strip()
-            normalized = self._normalize_search_term(phrase)
-            if not phrase or normalized in seen:
-                continue
-            terms.append((phrase, True))
-            seen.add(normalized)
-
-        return terms
-
-    def _expanded_search_limit(self, limit: int, *, scope: str | None) -> int:
-        if scope is None:
-            return limit
-        return max(limit, limit * 4)
-
-    def _append_query_cue_reason(self, why_matched: str, phrase: str) -> str:
-        annotation = f"query cue: {phrase}"
-        if annotation in why_matched:
-            return why_matched
-        if why_matched:
-            return f"{why_matched}; {annotation}"
-        return annotation
-
-    def _normalize_search_term(self, value: str) -> str:
-        return " ".join(value.strip().split()).casefold()
-
-    def _legacy_search(
-        self,
-        query: str,
-        *,
-        scope: str | None = None,
-        kind: list[str] | None = None,
-        limit: int | None = None,
-        status: list[str] | None = None,
-    ) -> list[MemorySearchResult]:
-        results = self._store.search(
-            query,
-            kind=kind,
-            status=status,
-            limit=limit or self.config.recall_limit,
-        )
-        if scope is not None:
-            results = [result for result in results if result.scope == scope]
-        self._record_audit(
-            EventType.MEMORY_SEARCH,
-            tool_input_summary=query[:200],
-            query=query,
-            scope=scope,
-            kind=kind,
-            result_count=len(results),
-        )
+        for term in terms:
+            for result in self._store.search(
+                term,
+                target=target,
+                limit=limit or self.config.recall_limit,
+            ):
+                if result.id in seen:
+                    continue
+                results.append(result)
+                seen.add(result.id)
+                if len(results) >= (limit or self.config.recall_limit):
+                    self._record_search_audit(query=query, target=target, result_count=len(results))
+                    return results
+        self._record_search_audit(query=query, target=target, result_count=len(results))
         return results
 
-    def get_status(self, *, actor: MemoryActor) -> MemoryStatusInfo:
-        """Return current memory system status for the actor."""
-        if actor.kind in {"user", "agent", "system"}:
-            readable_scopes = ["project", "session", "user"]
-            writable_scopes = ["project", "session", "user"]
-        else:
-            readable_scopes = ["project", "session"]
-            writable_scopes = ["project", "session"]
+    def delete(self, memory_id: str, *, actor: MemoryActor) -> None:
+        check_delete_permission(actor)
+        self._store.delete_record(memory_id)
+        self._record_audit(
+            EventType.MEMORY_DELETE,
+            tool_input_summary=memory_id,
+            memory_id=memory_id,
+            actor_kind=actor.kind,
+            session_id=actor.session_id,
+            run_id=actor.run_id,
+            agent_type=actor.agent_type,
+        )
 
+    def get_status(self, *, actor: MemoryActor) -> MemorySystemInfo:
+        writable_targets = ["project"] if actor.kind == "subagent" else list(MEMORY_TARGETS)
         memory_file_count = 0
         if self._memory_dir.exists():
             memory_file_count = len(
                 [path for path in self._memory_dir.glob("*.md") if path.name != "MEMORY.md"]
             )
-
-        index_at_capacity = False
         index_path = self._memory_dir / "MEMORY.md"
+        index_at_capacity = False
         if index_path.exists():
-            lines = [line for line in index_path.read_text(encoding="utf-8").splitlines() if line]
-            index_at_capacity = len(lines) >= 200
-
-        return MemoryStatusInfo(
-            readable_scopes=readable_scopes,
-            writable_scopes=writable_scopes,
-            prompt_anchor_tokens=0,
-            recent_writes=list(self._recent_writes),
+            index_at_capacity = len(
+                [line for line in index_path.read_text(encoding="utf-8").splitlines() if line]
+            ) >= 200
+        return MemorySystemInfo(
+            readable_targets=MEMORY_TARGETS,
+            writable_targets=tuple(writable_targets),
+            recent_writes=tuple(self._recent_writes),
             index_at_capacity=index_at_capacity,
             memory_file_count=memory_file_count,
         )
 
-    def flush_before_compact(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        session_id: str,
-    ) -> list[MemoryRecord]:
-        """Persist deterministic candidates before a session compact."""
-        written: list[MemoryRecord] = []
-        for candidate in extract_flush_candidates(messages, session_id=session_id):
-            draft = MemoryRecordDraft(
-                kind=candidate.kind,
-                scope=MemoryScope.SESSION,
-                content=candidate.content,
-                source=MemorySource.COMPACTION,
-                confidence=candidate.confidence,
-                source_ref=candidate.source_ref,
-            )
-            record = self.write(draft, actor=MemoryActor(kind="system"))
-            written.append(record)
-
-        if written:
-            self._record_audit(
-                EventType.MEMORY_FLUSH,
-                tool_input_summary=f"flush:{session_id}",
-                session_id=session_id,
-                records_flushed=len(written),
-                record_ids=[record.id for record in written],
-            )
-
-        return written
+    def _record_search_audit(self, *, query: str, target: str | None, result_count: int) -> None:
+        self._record_audit(
+            EventType.MEMORY_SEARCH,
+            tool_input_summary=query[:100],
+            query=query,
+            target=target,
+            result_count=result_count,
+        )
 
     def _record_audit(
         self,
