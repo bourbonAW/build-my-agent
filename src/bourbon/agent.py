@@ -350,8 +350,6 @@ class Agent:
         # Pre-process: micro-compact
         self.session.context_manager.microcompact()
 
-        self._maybe_flush_memory_before_compact()
-
         # Check if we need full compression
         self.session.maybe_compact()
 
@@ -412,8 +410,6 @@ class Agent:
 
         # Pre-process: micro-compact
         self.session.context_manager.microcompact()
-
-        self._maybe_flush_memory_before_compact()
 
         # Check if we need full compression
         self.session.maybe_compact()
@@ -1013,15 +1009,6 @@ class Agent:
         )
         return f"Denied: Tool '{tool_name}' is not available to {agent_def.agent_type} subagents."
 
-    def _make_cue_runtime_context(self) -> Any:
-        from bourbon.memory.cues.runtime import build_runtime_context_from_messages
-
-        return build_runtime_context_from_messages(
-            self.session.chain.get_llm_messages(),
-            workdir=self.workdir,
-            session_id=str(self.session.session_id),
-        )
-
     def _make_tool_context(self) -> ToolContext:
         """Construct the shared tool execution context."""
         memory_manager = getattr(self, "_memory_manager", None)
@@ -1051,54 +1038,6 @@ class Agent:
             on_tools_discovered=self._get_discovered_tools().update,
             memory_manager=memory_manager,
             memory_actor=memory_actor,
-            cue_runtime_context_factory=self._make_cue_runtime_context,
-        )
-
-    def _serialize_message_for_memory_flush(self, msg: TranscriptMessage) -> dict:
-        """Convert a transcript message to the flush input format."""
-        text_parts: list[str] = []
-        tool_results: list[dict[str, object]] = []
-        for block in msg.content:
-            if isinstance(block, TextBlock):
-                text_parts.append(block.text)
-            elif isinstance(block, ToolResultBlock):
-                tool_results.append(
-                    {
-                        "tool_name": "unknown",
-                        "output": block.content,
-                        "is_error": block.is_error,
-                    }
-                )
-
-        return {
-            "role": msg.role.value,
-            "content": "\n".join(part for part in text_parts if part),
-            "uuid": str(msg.uuid),
-            "tool_results": tool_results,
-        }
-
-    def _compactable_messages_for_flush(self) -> list[dict]:
-        """Return the messages that would be archived by the next compact."""
-        chain = self.session.chain.build_active_chain()
-        preserve_count = getattr(self.session, "_compact_preserve_count", 3)
-        if len(chain) <= preserve_count:
-            return []
-        return [self._serialize_message_for_memory_flush(msg) for msg in chain[:-preserve_count]]
-
-    def _maybe_flush_memory_before_compact(self) -> None:
-        """Flush memory candidates before a full compact when enabled."""
-        memory_manager = getattr(self, "_memory_manager", None)
-        if memory_manager is None:
-            return
-        if not self.config.memory.auto_flush_on_compact:
-            return
-        if not self.session.context_manager.should_compact():
-            return
-
-        flush_msgs = self._compactable_messages_for_flush()
-        memory_manager.flush_before_compact(
-            flush_msgs,
-            session_id=str(self.session.session_id),
         )
 
     def _permission_decision_for_tool(

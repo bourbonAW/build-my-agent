@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from bourbon.config import Config
 
@@ -74,105 +74,21 @@ def test_make_tool_context_includes_memory_fields(tmp_path: Path) -> None:
     assert ctx.memory_actor.kind == "agent"
 
 
-def test_agent_tool_context_has_cue_runtime_context_factory(tmp_path: Path) -> None:
+def test_agent_tool_context_has_memory_actor_without_cue_runtime_context(tmp_path: Path) -> None:
     from bourbon.agent import Agent
-    from bourbon.session.types import MessageRole, ToolUseBlock, TranscriptMessage
 
-    config = _make_config(tmp_path, enabled=True)
+    config = Config()
+    config.memory.enabled = True
+    config.memory.storage_dir = str(tmp_path / "memory")
     with (
         patch("bourbon.agent.create_client", return_value=MagicMock()),
         patch("bourbon.agent.Path.home", return_value=tmp_path),
     ):
         agent = Agent(config=config, workdir=tmp_path)
-
-    agent.session.add_message(
-        TranscriptMessage(
-            role=MessageRole.ASSISTANT,
-            content=[
-                ToolUseBlock(
-                    id="toolu_1",
-                    name="Read",
-                    input={"file_path": "src/bourbon/agent.py"},
-                )
-            ],
-        )
-    )
 
     ctx = agent._make_tool_context()
 
-    assert ctx.cue_runtime_context_factory is not None
-    runtime_context = ctx.cue_runtime_context_factory()
-    assert runtime_context.workdir == tmp_path
-    assert runtime_context.current_files == ["src/bourbon/agent.py"]
-    assert runtime_context.touched_files == ["src/bourbon/agent.py"]
-    assert runtime_context.session_id == str(agent.session.session_id)
-
-
-def test_step_impl_flushes_before_compact(tmp_path: Path) -> None:
-    from bourbon.agent import Agent
-
-    config = _make_config(tmp_path, enabled=True)
-    with (
-        patch("bourbon.agent.create_client", return_value=MagicMock()),
-        patch("bourbon.agent.Path.home", return_value=tmp_path),
-    ):
-        agent = Agent(config=config, workdir=tmp_path)
-
-    agent._memory_manager = MagicMock()
-    agent._prompt_ctx.memory_manager = agent._memory_manager
-
-    with (
-        patch.object(agent._prompt_builder, "build", new=AsyncMock(return_value="system")),
-        patch.object(
-            agent._context_injector,
-            "inject",
-            new=AsyncMock(return_value="remember this"),
-        ),
-        patch.object(agent.session.context_manager, "microcompact"),
-        patch.object(agent.session.context_manager, "should_compact", return_value=True),
-        patch.object(agent, "_compactable_messages_for_flush", return_value=[{"role": "user"}]),
-        patch.object(agent.session, "maybe_compact", return_value=None),
-        patch.object(agent, "_run_conversation_loop", return_value="ok"),
-    ):
-        result = agent._step_impl("remember this")
-
-    assert result == "ok"
-    agent._memory_manager.flush_before_compact.assert_called_once_with(
-        [{"role": "user"}],
-        session_id=str(agent.session.session_id),
-    )
-
-
-def test_step_stream_impl_flushes_before_compact(tmp_path: Path) -> None:
-    from bourbon.agent import Agent
-
-    config = _make_config(tmp_path, enabled=True)
-    with (
-        patch("bourbon.agent.create_client", return_value=MagicMock()),
-        patch("bourbon.agent.Path.home", return_value=tmp_path),
-    ):
-        agent = Agent(config=config, workdir=tmp_path)
-
-    agent._memory_manager = MagicMock()
-    agent._prompt_ctx.memory_manager = agent._memory_manager
-
-    with (
-        patch.object(agent._prompt_builder, "build", new=AsyncMock(return_value="system")),
-        patch.object(
-            agent._context_injector,
-            "inject",
-            new=AsyncMock(return_value="remember this"),
-        ),
-        patch.object(agent.session.context_manager, "microcompact"),
-        patch.object(agent.session.context_manager, "should_compact", return_value=True),
-        patch.object(agent, "_compactable_messages_for_flush", return_value=[{"role": "user"}]),
-        patch.object(agent.session, "maybe_compact", return_value=None),
-        patch.object(agent, "_run_conversation_loop_stream", return_value="ok"),
-    ):
-        result = agent._step_stream_impl("remember this", lambda _chunk: None)
-
-    assert result == "ok"
-    agent._memory_manager.flush_before_compact.assert_called_once_with(
-        [{"role": "user"}],
-        session_id=str(agent.session.session_id),
-    )
+    assert ctx.memory_manager is agent._memory_manager
+    assert ctx.memory_actor is not None
+    assert ctx.memory_actor.kind == "agent"
+    assert not hasattr(ctx, "cue_runtime_context_factory")

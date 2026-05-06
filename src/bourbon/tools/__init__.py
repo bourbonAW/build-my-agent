@@ -51,7 +51,6 @@ class ToolContext:
     on_tools_discovered: Callable[[set[str]], None] | None = None
     memory_manager: Any | None = None
     memory_actor: Any | None = None
-    cue_runtime_context_factory: Callable[[], Any] | None = None
 
 
 @dataclass
