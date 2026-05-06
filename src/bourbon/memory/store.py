@@ -1,4 +1,4 @@
-"""Memory file store — file CRUD, MEMORY.md index, grep search."""
+"""Minimal memory file store."""
 
 from __future__ import annotations
 
@@ -6,164 +6,76 @@ import contextlib
 import hashlib
 import os
 import re
-import subprocess
 import tempfile
 import threading
-from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
-from bourbon.memory.cues.models import MemoryCueMetadata
-from bourbon.memory.models import (
-    MemoryKind,
-    MemoryRecord,
-    MemoryScope,
-    MemorySearchResult,
-    MemorySource,
-    MemoryStatus,
-    SourceRef,
-)
+from bourbon.memory.cues import normalize_cues
+from bourbon.memory.models import MemoryRecord, MemorySearchResult, validate_memory_target
 
 _index_lock = threading.Lock()
 
 
 def sanitize_project_key(canonical_path: Path) -> str:
-    """Derive a filesystem-safe project key from canonical path.
-
-    Algorithm:
-    1. Convert path to string
-    2. Slugify: replace /, \\, space with -, remove non-ASCII, lowercase
-    3. Truncate slug to 64 chars
-    4. Append SHA256[:8] of original path
-    """
+    """Derive a filesystem-safe project key from canonical path."""
     path_str = str(canonical_path)
-    # Slugify
     slug = path_str.replace("/", "-").replace("\\", "-").replace(" ", "-")
     slug = re.sub(r"[^a-z0-9\-]", "", slug.lower())
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    slug = slug[:64]
-    # Hash suffix
+    slug = re.sub(r"-+", "-", slug).strip("-")[:64]
     hash_suffix = hashlib.sha256(path_str.encode()).hexdigest()[:8]
     return f"{slug}-{hash_suffix}"
 
 
-def _slugify_name(name: str) -> str:
-    """Convert name to filename-safe slug."""
-    slug = name.lower().replace(" ", "-")
-    slug = re.sub(r"[^a-z0-9\-]", "", slug)
-    slug = re.sub(r"-+", "-", slug).strip("-")
-    return slug[:50]
-
-
 def _record_to_filename(record: MemoryRecord) -> str:
-    """Derive filename from kind, name and id (id suffix guarantees uniqueness)."""
-    slug = _slugify_name(record.name)
-    return f"{record.kind}_{slug}_{record.id[:8]}.md"
+    """Return the record filename."""
+    return f"{record.id}.md"
+
+
+def _record_preview(record: MemoryRecord, *, limit: int = 100) -> str:
+    """Return display text derived from content."""
+    first_line = next((line.strip() for line in record.content.splitlines() if line.strip()), "")
+    preview = first_line or record.content.strip()
+    return preview[:limit].rstrip()
 
 
 def _record_to_frontmatter(record: MemoryRecord) -> dict[str, Any]:
-    """Convert record metadata to YAML frontmatter dict."""
-    fm: dict[str, Any] = {
+    raw: dict[str, Any] = {
         "id": record.id,
-        "name": record.name,
-        "description": record.description,
-        "kind": str(record.kind),
-        "scope": str(record.scope),
-        "confidence": record.confidence,
-        "source": str(record.source),
-        "status": str(record.status),
+        "target": record.target,
         "created_at": record.created_at.isoformat(),
-        "updated_at": record.updated_at.isoformat(),
-        "created_by": record.created_by,
     }
-    if record.source_ref:
-        ref_dict: dict[str, Any] = {"kind": record.source_ref.kind}
-        for f in (
-            "project_name",
-            "session_id",
-            "message_uuid",
-            "start_message_uuid",
-            "end_message_uuid",
-            "file_path",
-            "tool_call_id",
-        ):
-            val = getattr(record.source_ref, f)
-            if val is not None:
-                ref_dict[f] = val
-        fm["source_ref"] = ref_dict
-    if record.cue_metadata:
-        fm["cue_metadata"] = record.cue_metadata.to_frontmatter()
-    return fm
+    if record.cues:
+        raw["cues"] = list(record.cues)
+    return raw
 
 
 def _record_to_file_content(record: MemoryRecord) -> str:
-    """Serialize a record as a markdown file with YAML frontmatter."""
-    fm = _record_to_frontmatter(record)
-    return (
-        f"---\n{yaml.dump(fm, default_flow_style=False, allow_unicode=True)}---\n\n"
-        f"{record.content}\n"
-    )
-
-
-def _parse_optional_cue_metadata(fm: dict[str, Any]) -> MemoryCueMetadata | None:
-    """Parse optional cue metadata without making record parsing fragile."""
-    raw = fm.get("cue_metadata")
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        return None
-    try:
-        return MemoryCueMetadata.from_frontmatter(raw)
-    except (KeyError, TypeError, ValueError):
-        return None
+    frontmatter = yaml.dump(_record_to_frontmatter(record), default_flow_style=False)
+    return f"---\n{frontmatter}---\n\n{record.content.rstrip()}\n"
 
 
 def _frontmatter_to_record(fm: dict[str, Any], body: str) -> MemoryRecord:
-    """Parse frontmatter dict + body into MemoryRecord."""
-    source_ref = None
-    if "source_ref" in fm:
-        ref_data = fm["source_ref"]
-        source_ref = SourceRef(
-            kind=ref_data["kind"],
-            project_name=ref_data.get("project_name"),
-            session_id=ref_data.get("session_id"),
-            message_uuid=ref_data.get("message_uuid"),
-            start_message_uuid=ref_data.get("start_message_uuid"),
-            end_message_uuid=ref_data.get("end_message_uuid"),
-            file_path=ref_data.get("file_path"),
-            tool_call_id=ref_data.get("tool_call_id"),
-        )
-
     created_at = fm["created_at"]
     if isinstance(created_at, str):
         created_at = datetime.fromisoformat(created_at)
-    updated_at = fm["updated_at"]
-    if isinstance(updated_at, str):
-        updated_at = datetime.fromisoformat(updated_at)
-
+    cues = fm.get("cues", [])
+    if not isinstance(cues, list):
+        cues = []
     return MemoryRecord(
-        id=fm["id"],
-        name=fm["name"],
-        description=fm["description"],
-        kind=MemoryKind(fm["kind"]),
-        scope=MemoryScope(fm["scope"]),
-        confidence=float(fm["confidence"]),
-        source=MemorySource(fm["source"]),
-        status=MemoryStatus(fm["status"]),
-        created_at=created_at,
-        updated_at=updated_at,
-        created_by=fm["created_by"],
+        id=str(fm["id"]),
+        target=validate_memory_target(str(fm["target"])),
         content=body.strip(),
-        source_ref=source_ref,
-        cue_metadata=_parse_optional_cue_metadata(fm),
+        created_at=created_at,
+        cues=normalize_cues(cues),
     )
 
 
 class MemoryStore:
-    """File-based memory storage with atomic writes and grep search."""
+    """File-based memory storage with atomic writes and simple search."""
 
     def __init__(self, memory_dir: Path) -> None:
         self.memory_dir = memory_dir
@@ -171,21 +83,19 @@ class MemoryStore:
         self._scan_existing()
 
     def _scan_existing(self) -> None:
-        """Build id->filename index from existing files."""
         if not self.memory_dir.exists():
             return
-        for f in self.memory_dir.glob("*.md"):
-            if f.name == "MEMORY.md":
+        for path in self.memory_dir.glob("*.md"):
+            if path.name == "MEMORY.md":
                 continue
             try:
-                fm, _ = self._parse_file(f)
+                fm, _ = self._parse_file(path)
                 if "id" in fm:
-                    self._id_to_filename[fm["id"]] = f.name
+                    self._id_to_filename[str(fm["id"])] = path.name
             except Exception:
                 continue
 
     def _parse_file(self, path: Path) -> tuple[dict[str, Any], str]:
-        """Parse a memory file into (frontmatter_dict, body_str)."""
         text = path.read_text(encoding="utf-8")
         if not text.startswith("---\n"):
             return {}, text
@@ -194,16 +104,10 @@ class MemoryStore:
             return {}, text
         raw_frontmatter = text[4:end_marker]
         body = text[end_marker + len("\n---\n") :]
-        try:
-            fm = yaml.safe_load(raw_frontmatter) or {}
-        except yaml.YAMLError:
-            return {}, body
-        if not isinstance(fm, dict):
-            return {}, body
-        return fm, body
+        loaded = yaml.safe_load(raw_frontmatter) or {}
+        return loaded if isinstance(loaded, dict) else {}, body
 
     def _atomic_write(self, path: Path, content: str) -> None:
-        """Write content to path using atomic rename."""
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
@@ -220,292 +124,103 @@ class MemoryStore:
             raise
 
     def write_record(self, record: MemoryRecord) -> Path:
-        """Write a memory record to disk using atomic rename."""
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         filename = _record_to_filename(record)
         target = self.memory_dir / filename
-
         self._atomic_write(target, _record_to_file_content(record))
         self._id_to_filename[record.id] = filename
+        self.rebuild_index()
         return target
 
-    def update_status(self, memory_id: str, status: MemoryStatus) -> MemoryRecord:
-        """Update a record's status and rebuild the active-only index."""
-        record = self.read_record(memory_id)
-        if record is None:
-            raise KeyError(f"Unknown memory id: {memory_id}")
-
-        updated = replace(
-            record,
-            status=status,
-            updated_at=datetime.now(record.updated_at.tzinfo or UTC),
-        )
-        self.write_record(updated)
-        self._rebuild_index()
-        return updated
-
-    def update_cue_metadata(
-        self,
-        memory_id: str,
-        cue_metadata: MemoryCueMetadata,
-    ) -> MemoryRecord:
-        """Update a record's cue metadata without changing its file identity."""
-        record = self.read_record(memory_id)
-        if record is None:
-            raise KeyError(f"Unknown memory id: {memory_id}")
-
+    def delete_record(self, memory_id: str) -> None:
         filename = self._id_to_filename.get(memory_id)
         if filename is None:
-            raise KeyError(f"Unknown memory id: {memory_id}")
-
-        updated = replace(
-            record,
-            cue_metadata=cue_metadata,
-            updated_at=datetime.now(record.updated_at.tzinfo or UTC),
-        )
-        self._atomic_write(self.memory_dir / filename, _record_to_file_content(updated))
-        self._id_to_filename[memory_id] = filename
-        return updated
-
-    def read_record(self, memory_id: str) -> MemoryRecord | None:
-        """Read a memory record by id."""
-        filename = self._id_to_filename.get(memory_id)
-        if not filename:
-            # Fallback: scan files
             self._scan_existing()
             filename = self._id_to_filename.get(memory_id)
-        if not filename:
-            return None
+        if filename is None:
+            raise KeyError(f"Unknown memory id: {memory_id}")
+        path = self.memory_dir / filename
+        if path.exists():
+            path.unlink()
+        self._id_to_filename.pop(memory_id, None)
+        self.rebuild_index()
 
+    def read_record(self, memory_id: str) -> MemoryRecord | None:
+        filename = self._id_to_filename.get(memory_id)
+        if filename is None:
+            self._scan_existing()
+            filename = self._id_to_filename.get(memory_id)
+        if filename is None:
+            return None
         path = self.memory_dir / filename
         if not path.exists():
             return None
-
         fm, body = self._parse_file(path)
         if "id" not in fm:
             return None
         return _frontmatter_to_record(fm, body)
 
-    def list_records(self, *, status: list[str] | None = None) -> list[MemoryRecord]:
-        """List all memory records, optionally filtered by status."""
+    def list_records(self) -> list[MemoryRecord]:
         records: list[MemoryRecord] = []
         if not self.memory_dir.exists():
             return records
-        for f in sorted(self.memory_dir.glob("*.md")):
-            if f.name == "MEMORY.md":
+        for path in sorted(self.memory_dir.glob("*.md")):
+            if path.name == "MEMORY.md":
                 continue
             try:
-                fm, body = self._parse_file(f)
+                fm, body = self._parse_file(path)
                 if "id" not in fm:
                     continue
-                record = _frontmatter_to_record(fm, body)
-                if status and record.status not in status:
-                    continue
-                records.append(record)
+                records.append(_frontmatter_to_record(fm, body))
             except Exception:
                 continue
-        return records
+        return sorted(records, key=lambda record: record.created_at, reverse=True)
 
-    # --- Task 5: MEMORY.md Index ---
-
-    def update_index(self, record: MemoryRecord) -> bool:
-        """Update MEMORY.md index with record entry.
-
-        Returns True if index is at capacity (>=200 lines) and entry was NOT added.
-        """
-        index_path = self.memory_dir / "MEMORY.md"
-        filename = _record_to_filename(record)
-        entry_line = f"- [{record.name}]({filename}) — {record.description}"
-
-        with _index_lock:
-            existing_lines: list[str] = []
-            if index_path.exists():
-                existing_lines = index_path.read_text(encoding="utf-8").strip().split("\n")
-                existing_lines = [line for line in existing_lines if line.strip()]
-
-            # Deduplicate: remove existing entry with same filename
-            new_lines = [line for line in existing_lines if f"]({filename})" not in line]
-
-            # Capacity check
-            if len(new_lines) >= 200:
-                content = "\n".join(new_lines) + "\n"
-                self._atomic_write(index_path, content)
-                return True
-
-            new_lines.append(entry_line)
-            content = "\n".join(new_lines) + "\n"
-            self._atomic_write(index_path, content)
-            return False
-
-    def _rebuild_index(self) -> bool:
-        """Rebuild MEMORY.md from active records only.
-
-        Returns True when the rebuilt active index reaches the 200-entry cap,
-        which means additional active records were truncated from MEMORY.md.
-        """
-        index_path = self.memory_dir / "MEMORY.md"
-        active_records = sorted(
-            self.list_records(status=["active"]),
-            key=lambda record: record.updated_at,
-            reverse=True,
-        )[:200]
-
+    def rebuild_index(self) -> bool:
+        records = self.list_records()[:200]
         lines = [
-            f"- [{record.name}]({_record_to_filename(record)}) — {record.description}"
-            for record in active_records
+            f"- [{record.target}] {_record_preview(record)} ([{_record_to_filename(record)}]({_record_to_filename(record)}))"
+            for record in records
         ]
         content = "\n".join(lines)
-        if lines:
+        if content:
             content += "\n"
-
         with _index_lock:
-            self._atomic_write(index_path, content)
-
-        return len(active_records) >= 200
-
-    # --- Task 6: Grep-Based Search ---
+            self._atomic_write(self.memory_dir / "MEMORY.md", content)
+        return len(records) >= 200
 
     def search(
         self,
         query: str,
         *,
-        kind: list[str] | None = None,
-        status: list[str] | None = None,
+        target: str | None = None,
         limit: int = 8,
     ) -> list[MemorySearchResult]:
-        """Search memory files using grep.
-
-        Args:
-            query: Search string
-            kind: Filter by memory kind
-            status: Filter by status (default: ["active"])
-            limit: Max results to return
-        """
-        if status is None:
-            status = ["active"]
-
-        if not self.memory_dir.exists():
-            return []
-
-        matching_files = self._grep_files(query)
-        if not matching_files and len(query.split()) > 1:
-            matching_files = self._token_grep(query)
-
+        normalized_query = query.casefold()
         results: list[MemorySearchResult] = []
-        for filepath, matched_lines in matching_files:
-            try:
-                fm, body = self._parse_file(filepath)
-                if "id" not in fm:
-                    continue
-
-                record = _frontmatter_to_record(fm, body)
-
-                # Apply filters
-                if record.status not in status:
-                    continue
-                if kind and record.kind not in kind:
-                    continue
-
-                snippet = "\n".join(matched_lines[:3])
-                results.append(
-                    MemorySearchResult(
-                        id=record.id,
-                        name=record.name,
-                        kind=record.kind,
-                        scope=record.scope,
-                        snippet=snippet,
-                        confidence=record.confidence,
-                        status=record.status,
-                        source_ref=record.source_ref,
-                        why_matched=f"grep: {query}",
-                    )
-                )
-
-                if len(results) >= limit:
-                    break
-            except Exception:
+        for record in self.list_records():
+            if target is not None and record.target != target:
                 continue
-
-        return results
-
-    def _grep_files(self, query: str) -> list[tuple[Path, list[str]]]:
-        """Run grep/ripgrep on memory directory, return (file, matched_lines) pairs."""
-        if not self.memory_dir.exists():
-            return []
-
-        try:
-            # Use -l to get file list, then read matched lines via Python
-            result = subprocess.run(
-                ["rg", "-l", "--type", "md", query, str(self.memory_dir)],
-                capture_output=True,
-                text=True,
-                timeout=5,
+            content_match = normalized_query in record.content.casefold()
+            matched_cue = next(
+                (cue for cue in record.cues if normalized_query in cue.casefold()),
+                None,
             )
-            if result.returncode not in (0, 1):  # 1 means no matches
-                return self._python_grep(query)
-            if not result.stdout.strip():
-                return []
-
-            files_with_matches: list[tuple[Path, list[str]]] = []
-            query_lower = query.lower()
-            for filepath_str in result.stdout.strip().split("\n"):
-                fp = Path(filepath_str)
-                if fp.name == "MEMORY.md":
-                    continue
-                try:
-                    text = fp.read_text(encoding="utf-8")
-                    lines = [line for line in text.split("\n") if query_lower in line.lower()]
-                    files_with_matches.append((fp, lines[:5]))
-                except Exception:
-                    continue
-
-            return files_with_matches
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            # Fallback to Python grep if rg not available
-            return self._python_grep(query)
-
-    def _token_grep(self, query: str) -> list[tuple[Path, list[str]]]:
-        """Fallback multi-word search requiring all query tokens to appear."""
-        tokens = [token.lower() for token in query.split() if token.strip()]
-        if not tokens or not self.memory_dir.exists():
-            return []
-
-        results: list[tuple[Path, list[str]]] = []
-        for f in sorted(self.memory_dir.glob("*.md")):
-            if f.name == "MEMORY.md":
+            if not content_match and matched_cue is None:
                 continue
-            try:
-                text = f.read_text(encoding="utf-8")
-            except Exception:
-                continue
-
-            text_lower = text.lower()
-            if not all(token in text_lower for token in tokens):
-                continue
-
-            lines = [
-                line
-                for line in text.split("\n")
-                if any(token in line.lower() for token in tokens)
-            ]
-            results.append((f, lines[:5]))
-
-        return results
-
-    def _python_grep(self, query: str) -> list[tuple[Path, list[str]]]:
-        """Fallback grep using Python when ripgrep is not available."""
-        results: list[tuple[Path, list[str]]] = []
-        if not self.memory_dir.exists():
-            return results
-        query_lower = query.lower()
-        for f in sorted(self.memory_dir.glob("*.md")):
-            if f.name == "MEMORY.md":
-                continue
-            try:
-                text = f.read_text(encoding="utf-8")
-                if query_lower in text.lower():
-                    lines = [line for line in text.split("\n") if query_lower in line.lower()]
-                    results.append((f, lines[:5]))
-            except Exception:
-                continue
+            reason = (
+                f"matched cue: {matched_cue}"
+                if matched_cue is not None
+                else f"matched content: {query}"
+            )
+            results.append(
+                MemorySearchResult(
+                    id=record.id,
+                    target=record.target,
+                    snippet=_record_preview(record),
+                    why_matched=reason,
+                )
+            )
+            if len(results) >= limit:
+                break
         return results
