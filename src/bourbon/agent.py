@@ -1013,6 +1013,15 @@ class Agent:
         )
         return f"Denied: Tool '{tool_name}' is not available to {agent_def.agent_type} subagents."
 
+    def _make_cue_runtime_context(self) -> Any:
+        from bourbon.memory.cues.runtime import build_runtime_context_from_messages
+
+        return build_runtime_context_from_messages(
+            self.session.chain.get_llm_messages(),
+            workdir=self.workdir,
+            session_id=str(self.session.session_id),
+        )
+
     def _make_tool_context(self) -> ToolContext:
         """Construct the shared tool execution context."""
         memory_manager = getattr(self, "_memory_manager", None)
@@ -1042,6 +1051,7 @@ class Agent:
             on_tools_discovered=self._get_discovered_tools().update,
             memory_manager=memory_manager,
             memory_actor=memory_actor,
+            cue_runtime_context_factory=self._make_cue_runtime_context,
         )
 
     def _serialize_message_for_memory_flush(self, msg: TranscriptMessage) -> dict:

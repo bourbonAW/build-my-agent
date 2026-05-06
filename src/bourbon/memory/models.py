@@ -7,6 +7,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
+from bourbon.memory.cues.models import MemoryCueMetadata
+
 
 class MemoryKind(StrEnum):
     USER = "user"
@@ -136,6 +138,7 @@ class MemoryRecord:
     created_by: str
     content: str
     source_ref: SourceRef | None = None
+    cue_metadata: MemoryCueMetadata | None = None
 
 
 @dataclass

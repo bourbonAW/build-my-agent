@@ -1,0 +1,283 @@
+{
+  "records": [
+    {
+      "memory_id": "mem_a_database_decoy",
+      "name": "Database testing note",
+      "description": "Flaky database setup",
+      "content": "Database testing container restart advice.",
+      "cue_metadata": {
+        "schema_version": "cue.v1",
+        "generator_version": "record-cue-smoke-v1",
+        "concepts": ["project_context"],
+        "retrieval_cues": [
+          {
+            "text": "container restart troubleshooting",
+            "kind": "problem_phrase",
+            "source": "user",
+            "confidence": 1.0
+          }
+        ],
+        "files": [],
+        "symbols": [],
+        "generation_status": "generated",
+        "quality_flags": []
+      }
+    },
+    {
+      "memory_id": "mem_b_prompt_decoy",
+      "name": "Prompt budget scratchpad",
+      "description": "Token spreadsheet snapshot",
+      "content": "Prompt budget spreadsheet placeholder.",
+      "cue_metadata": {
+        "schema_version": "cue.v1",
+        "generator_version": "record-cue-smoke-v1",
+        "concepts": ["project_context"],
+        "retrieval_cues": [
+          {
+            "text": "spreadsheet placeholder",
+            "kind": "task_phrase",
+            "source": "user",
+            "confidence": 1.0
+          }
+        ],
+        "files": [],
+        "symbols": [],
+        "generation_status": "generated",
+        "quality_flags": []
+      }
+    },
+    {
+      "memory_id": "mem_c_sandbox_decoy",
+      "name": "Sandbox provider matrix",
+      "description": "Placeholder comparison note",
+      "content": "Sandbox provider matrix placeholder.",
+      "cue_metadata": {
+        "schema_version": "cue.v1",
+        "generator_version": "record-cue-smoke-v1",
+        "concepts": ["project_context"],
+        "retrieval_cues": [
+          {
+            "text": "provider matrix placeholder",
+            "kind": "task_phrase",
+            "source": "user",
+            "confidence": 1.0
+          }
+        ],
+        "files": [],
+        "symbols": [],
+        "generation_status": "generated",
+        "quality_flags": []
+      }
+    },
+    {
+      "memory_id": "mem_z_database_policy",
+      "name": "Persistence rule",
+      "description": "Preference for stateful stores",
+      "content": "Use integration coverage for database persistent state behavior.",
+      "cue_metadata": {
+        "schema_version": "cue.v1",
+        "generator_version": "record-cue-smoke-v1",
+        "concepts": ["behavior_rule"],
+        "retrieval_cues": [
+          {
+            "text": "never mock persistence policy",
+            "kind": "user_phrase",
+            "source": "user",
+            "confidence": 1.0
+          }
+        ],
+        "files": ["tests/test_memory_store.py"],
+        "symbols": ["MemoryStore"],
+        "generation_status": "generated",
+        "quality_flags": []
+      }
+    },
+    {
+      "memory_id": "mem_z_prompt_anchor",
+      "name": "Managed memory anchor",
+      "description": "Reserved tokens for injected preferences",
+      "content": "Keep promoted preference blocks ahead of freeform user notes in prompt.",
+      "cue_metadata": {
+        "schema_version": "cue.v1",
+        "generator_version": "record-cue-smoke-v1",
+        "concepts": ["implementation_pattern"],
+        "retrieval_cues": [
+          {
+            "text": "managed USER anchor reserved token",
+            "kind": "task_phrase",
+            "source": "user",
+            "confidence": 1.0
+          }
+        ],
+        "files": ["src/bourbon/prompt/builder.py"],
+        "symbols": ["PromptBuilder"],
+        "generation_status": "generated",
+        "quality_flags": []
+      }
+    },
+    {
+      "memory_id": "mem_z_seatbelt_sandbox",
+      "name": "MacOS containment rule",
+      "description": "Local execution isolation note",
+      "content": "Prefer seatbelt profiles for macOS local sandbox runs.",
+      "cue_metadata": {
+        "schema_version": "cue.v1",
+        "generator_version": "record-cue-smoke-v1",
+        "concepts": ["architecture_decision"],
+        "retrieval_cues": [
+          {
+            "text": "seatbelt macos local isolation",
+            "kind": "file_or_symbol",
+            "source": "user",
+            "confidence": 1.0
+          }
+        ],
+        "files": ["src/bourbon/sandbox/providers/seatbelt.py"],
+        "symbols": ["SeatbeltProvider"],
+        "generation_status": "generated",
+        "quality_flags": []
+      }
+    }
+  ],
+  "cases": [
+    {
+      "query": "database testing",
+      "expected_memory_ids": ["mem_z_database_policy"],
+      "query_cue": {
+        "schema_version": "cue.v1",
+        "interpreter_version": "query-cue-smoke-v1",
+        "recall_need": "strong",
+        "concepts": [],
+        "cue_phrases": [
+          {
+            "text": "never mock persistence policy",
+            "kind": "user_phrase",
+            "source": "llm",
+            "confidence": 1.0
+          }
+        ],
+        "file_hints": [],
+        "symbol_hints": [],
+        "uncertainty": 0.0
+      },
+      "k": 8
+    },
+    {
+      "query": "prompt budget",
+      "expected_memory_ids": ["mem_z_prompt_anchor"],
+      "query_cue": {
+        "schema_version": "cue.v1",
+        "interpreter_version": "query-cue-smoke-v1",
+        "recall_need": "strong",
+        "concepts": [],
+        "cue_phrases": [
+          {
+            "text": "managed USER anchor reserved token",
+            "kind": "task_phrase",
+            "source": "llm",
+            "confidence": 1.0
+          }
+        ],
+        "file_hints": [],
+        "symbol_hints": [],
+        "uncertainty": 0.0
+      },
+      "k": 8
+    },
+    {
+      "query": "sandbox provider",
+      "expected_memory_ids": ["mem_z_seatbelt_sandbox"],
+      "query_cue": {
+        "schema_version": "cue.v1",
+        "interpreter_version": "query-cue-smoke-v1",
+        "recall_need": "strong",
+        "concepts": [],
+        "cue_phrases": [
+          {
+            "text": "seatbelt macos local isolation",
+            "kind": "file_or_symbol",
+            "source": "llm",
+            "confidence": 1.0
+          }
+        ],
+        "file_hints": [],
+        "symbol_hints": [],
+        "uncertainty": 0.0
+      },
+      "k": 8
+    },
+    {
+      "query": "persistence policy",
+      "expected_memory_ids": ["mem_z_database_policy"],
+      "query_cue": {
+        "schema_version": "cue.v1",
+        "interpreter_version": "query-cue-smoke-v1",
+        "recall_need": "strong",
+        "concepts": [],
+        "cue_phrases": [
+          {
+            "text": "never mock persistence policy",
+            "kind": "user_phrase",
+            "source": "llm",
+            "confidence": 1.0
+          }
+        ],
+        "file_hints": [],
+        "symbol_hints": [],
+        "uncertainty": 0.0
+      },
+      "k": 8
+    },
+    {
+      "query": "managed anchor",
+      "expected_memory_ids": ["mem_z_prompt_anchor"],
+      "query_cue": {
+        "schema_version": "cue.v1",
+        "interpreter_version": "query-cue-smoke-v1",
+        "recall_need": "strong",
+        "concepts": [],
+        "cue_phrases": [
+          {
+            "text": "managed USER anchor reserved token",
+            "kind": "task_phrase",
+            "source": "llm",
+            "confidence": 1.0
+          }
+        ],
+        "file_hints": [],
+        "symbol_hints": [],
+        "uncertainty": 0.0
+      },
+      "k": 8
+    },
+    {
+      "query": "seatbelt isolation",
+      "expected_memory_ids": ["mem_z_seatbelt_sandbox"],
+      "query_cue": {
+        "schema_version": "cue.v1",
+        "interpreter_version": "query-cue-smoke-v1",
+        "recall_need": "strong",
+        "concepts": [],
+        "cue_phrases": [
+          {
+            "text": "seatbelt macos local isolation",
+            "kind": "file_or_symbol",
+            "source": "llm",
+            "confidence": 1.0
+          }
+        ],
+        "file_hints": [],
+        "symbol_hints": [],
+        "uncertainty": 0.0
+      },
+      "k": 8
+    }
+  ],
+  "thresholds": {
+    "record_query_cues_recall_at_8_min": 1.0,
+    "record_query_cues_recall_at_3_min": 1.0,
+    "record_query_cues_mrr_min": 1.0,
+    "record_query_cues_noise_at_8_max": 0.35,
+    "record_query_cues_mrr_lift_min": 0.2
+  }
+}

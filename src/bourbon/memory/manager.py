@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, Any
 from bourbon.audit.events import AuditEvent, EventType
 from bourbon.config import MemoryConfig
 from bourbon.memory.compact import extract_flush_candidates
+from bourbon.memory.cues.engine import CueEngine
+from bourbon.memory.cues.models import CueGenerationStatus, QueryCue
+from bourbon.memory.cues.query import QueryCueCache
+from bourbon.memory.cues.runtime import CueRuntimeContext
 from bourbon.memory.files import update_managed_block_status, upsert_managed_block
 from bourbon.memory.models import (
     MemoryActor,
@@ -79,10 +83,49 @@ class MemoryManager:
         self._memory_dir = Path(config.storage_dir).expanduser() / project_key / "memory"
         self._store = MemoryStore(memory_dir=self._memory_dir)
         self._recent_writes: list[RecentWriteSummary] = []
+        self._cue_engine = (
+            CueEngine() if config.cue_enabled and config.cue_record_generation else None
+        )
+        self._query_cue_engine = (
+            CueEngine(query_cache=QueryCueCache(max_size=config.cue_query_cache_size))
+            if config.cue_enabled and config.cue_query_interpretation
+            else None
+        )
+        self._last_query_cue: QueryCue | None = None
 
     def get_memory_dir(self) -> Path:
         """Return the backing memory directory."""
         return self._memory_dir
+
+    def _build_default_cue_runtime_context(self, draft: MemoryRecordDraft) -> CueRuntimeContext:
+        return CueRuntimeContext(
+            workdir=self.workdir,
+            current_files=[],
+            touched_files=[],
+            modified_files=[],
+            symbols=[],
+            source_ref=draft.source_ref,
+            recent_tool_names=[],
+            task_subject=draft.name or draft.description,
+            session_id=draft.source_ref.session_id if draft.source_ref else None,
+        )
+
+    def _build_default_query_runtime_context(self) -> CueRuntimeContext:
+        return CueRuntimeContext(
+            workdir=self.workdir,
+            current_files=[],
+            touched_files=[],
+            modified_files=[],
+            symbols=[],
+            source_ref=None,
+            recent_tool_names=[],
+            task_subject=None,
+            session_id=None,
+        )
+
+    def get_last_query_cue(self) -> QueryCue | None:
+        """Return the last query cue produced by search, if query interpretation ran."""
+        return self._last_query_cue
 
     def _global_user_md_path(self) -> Path:
         return Path("~/.bourbon/USER.md").expanduser()
@@ -186,6 +229,18 @@ class MemoryManager:
         now = datetime.now(UTC)
         name = _derive_name(draft)
         description = _derive_description(draft, name=name)
+        cue_metadata = None
+        if self._cue_engine is not None:
+            runtime_context = self._build_default_cue_runtime_context(draft)
+            cue_metadata = self._cue_engine.generate_for_record(
+                draft,
+                runtime_context=runtime_context,
+            )
+            if (
+                cue_metadata.generation_status == CueGenerationStatus.FAILED
+                and not self.config.cue_persist_failed_metadata
+            ):
+                cue_metadata = None
         record = MemoryRecord(
             id=_generate_id(),
             name=name,
@@ -200,6 +255,7 @@ class MemoryManager:
             created_by=actor_to_created_by(actor),
             content=draft.content,
             source_ref=draft.source_ref,
+            cue_metadata=cue_metadata,
         )
 
         self._store.write_record(record)
@@ -233,6 +289,134 @@ class MemoryManager:
         status: list[str] | None = None,
     ) -> list[MemorySearchResult]:
         """Search stored memories."""
+        if self._query_cue_engine is None:
+            self._last_query_cue = None
+            return self._legacy_search(
+                query,
+                scope=scope,
+                kind=kind,
+                limit=limit,
+                status=status,
+            )
+
+        query_cue = self._query_cue_engine.interpret_query(
+            query,
+            runtime_context=self._build_default_query_runtime_context(),
+        )
+        self._last_query_cue = query_cue
+        results = self._search_with_query_cue(
+            query,
+            query_cue=query_cue,
+            scope=scope,
+            kind=kind,
+            status=status,
+            limit=limit or self.config.recall_limit,
+        )
+        self._record_audit(
+            EventType.MEMORY_SEARCH,
+            tool_input_summary=query[:200],
+            query=query,
+            scope=scope,
+            kind=kind,
+            result_count=len(results),
+        )
+        return results
+
+    def _search_with_query_cue(
+        self,
+        query: str,
+        *,
+        query_cue: QueryCue,
+        scope: str | None,
+        kind: list[str] | None,
+        limit: int,
+        status: list[str] | None,
+    ) -> list[MemorySearchResult]:
+        results: list[MemorySearchResult] = []
+        results_by_id: dict[str, MemorySearchResult] = {}
+        seen_ids: set[str] = set()
+        terms = self._query_cue_search_terms(query, query_cue=query_cue)
+
+        for term, used_query_cue in terms:
+            if len(results) >= limit:
+                break
+            search_limit = self._expanded_search_limit(limit, scope=scope)
+            term_results = self._store.search(
+                term,
+                kind=kind,
+                status=status,
+                limit=search_limit,
+            )
+            for result in term_results:
+                if scope is not None and result.scope != scope:
+                    continue
+                if result.id in seen_ids:
+                    if used_query_cue:
+                        existing = results_by_id[result.id]
+                        existing.why_matched = self._append_query_cue_reason(
+                            existing.why_matched,
+                            term,
+                        )
+                    continue
+                if used_query_cue:
+                    result.why_matched = self._append_query_cue_reason(
+                        result.why_matched,
+                        term,
+                    )
+                results.append(result)
+                results_by_id[result.id] = result
+                seen_ids.add(result.id)
+                if len(results) >= limit:
+                    break
+
+        return results
+
+    def _query_cue_search_terms(
+        self,
+        query: str,
+        *,
+        query_cue: QueryCue,
+    ) -> list[tuple[str, bool]]:
+        terms: list[tuple[str, bool]] = []
+        seen: set[str] = set()
+        terms.append((query, False))
+        seen.add(self._normalize_search_term(query))
+
+        for cue in query_cue.cue_phrases[:8]:
+            phrase = cue.text.strip()
+            normalized = self._normalize_search_term(phrase)
+            if not phrase or normalized in seen:
+                continue
+            terms.append((phrase, True))
+            seen.add(normalized)
+
+        return terms
+
+    def _expanded_search_limit(self, limit: int, *, scope: str | None) -> int:
+        if scope is None:
+            return limit
+        return max(limit, limit * 4)
+
+    def _append_query_cue_reason(self, why_matched: str, phrase: str) -> str:
+        annotation = f"query cue: {phrase}"
+        if annotation in why_matched:
+            return why_matched
+        if why_matched:
+            return f"{why_matched}; {annotation}"
+        return annotation
+
+    def _normalize_search_term(self, value: str) -> str:
+        return " ".join(value.strip().split()).casefold()
+
+    def _legacy_search(
+        self,
+        query: str,
+        *,
+        scope: str | None = None,
+        kind: list[str] | None = None,
+        limit: int | None = None,
+        status: list[str] | None = None,
+    ) -> list[MemorySearchResult]:
         results = self._store.search(
             query,
             kind=kind,

@@ -71,6 +71,8 @@ def test_memory_search_tool_schema() -> None:
     schema = tool.input_schema
     assert "query" in schema["properties"]
     assert "status" in schema["properties"]
+    assert schema["properties"]["debug_cue"]["type"] == "boolean"
+    assert schema["properties"]["debug_cue"]["default"] is False
 
 
 def test_memory_search_passes_status_filter_to_manager() -> None:
@@ -98,6 +100,131 @@ def test_memory_search_passes_status_filter_to_manager() -> None:
             "limit": None,
         }
     ]
+
+
+def test_memory_search_omits_query_cue_by_default() -> None:
+    from bourbon.tools.memory import memory_search
+
+    class _FakeQueryCue:
+        def to_frontmatter(self) -> dict[str, object]:
+            return {"recall_need": "weak"}
+
+    class _FakeMemoryManager:
+        def search(self, query: str, **kwargs: object) -> list[object]:
+            return []
+
+        def get_last_query_cue(self) -> _FakeQueryCue:
+            return _FakeQueryCue()
+
+    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=_FakeMemoryManager())
+
+    result = json.loads(memory_search(query="test", ctx=ctx))
+
+    assert result == {"results": []}
+
+
+def test_memory_search_includes_query_cue_when_debug_requested() -> None:
+    from bourbon.memory.cues.models import (
+        CueKind,
+        CueQualityFlag,
+        CueSource,
+        MemoryConcept,
+        QueryCue,
+        RecallNeed,
+        RetrievalCue,
+    )
+    from bourbon.memory.models import MemoryKind, MemoryScope
+    from bourbon.tools.memory import memory_search
+
+    class _FakeMemoryManager:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+            self.query_cue = QueryCue(
+                schema_version="cue.v1",
+                interpreter_version="query-cue-test",
+                recall_need=RecallNeed.WEAK,
+                concepts=[MemoryConcept.WORKFLOW],
+                cue_phrases=[
+                    RetrievalCue(
+                        text="sqlite wal",
+                        kind=CueKind.USER_PHRASE,
+                        source=CueSource.USER,
+                        confidence=1.0,
+                    )
+                ],
+                file_hints=["src/db.py"],
+                symbol_hints=["MemoryManager"],
+                kind_hints=[MemoryKind.PROJECT],
+                scope_hint=MemoryScope.PROJECT,
+                uncertainty=0.2,
+                fallback_used=True,
+                quality_flags=[CueQualityFlag.FALLBACK_USED],
+            )
+
+        def search(self, query: str, **kwargs: object) -> list[object]:
+            self.calls.append({"query": query, **kwargs})
+            return []
+
+        def get_last_query_cue(self) -> QueryCue:
+            return self.query_cue
+
+    fake_manager = _FakeMemoryManager()
+    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=fake_manager)
+
+    result = json.loads(memory_search(query="test", ctx=ctx, debug_cue=True))
+
+    assert result == {
+        "results": [],
+        "query_cue": {
+            "recall_need": "weak",
+            "concepts": ["workflow"],
+            "cue_phrases": [
+                {
+                    "text": "sqlite wal",
+                    "kind": "user_phrase",
+                    "confidence": 1.0,
+                }
+            ],
+            "file_hints": ["src/db.py"],
+            "symbol_hints": ["MemoryManager"],
+            "kind_hints": ["project"],
+            "scope_hint": "project",
+            "uncertainty": 0.2,
+            "fallback_used": True,
+            "quality_flags": ["fallback_used"],
+        },
+    }
+    assert fake_manager.calls == [
+        {
+            "query": "test",
+            "scope": None,
+            "kind": None,
+            "status": None,
+            "limit": None,
+        }
+    ]
+
+
+def test_memory_search_omits_query_cue_when_debug_requested_but_unavailable() -> None:
+    from bourbon.tools.memory import memory_search
+
+    class _ManagerWithoutCueGetter:
+        def search(self, query: str, **kwargs: object) -> list[object]:
+            return []
+
+    class _ManagerWithNoQueryCue:
+        def search(self, query: str, **kwargs: object) -> list[object]:
+            return []
+
+        def get_last_query_cue(self) -> None:
+            return None
+
+    for manager in (_ManagerWithoutCueGetter(), _ManagerWithNoQueryCue()):
+        ctx = ToolContext(workdir=Path("/tmp"), memory_manager=manager)
+
+        result = json.loads(memory_search(query="test", ctx=ctx, debug_cue=True))
+
+        assert result == {"results": []}
 
 
 def test_memory_tools_return_error_when_disabled() -> None:

@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
+from bourbon.memory.cues.models import MemoryCueMetadata
 from bourbon.memory.models import (
     MemoryKind,
     MemoryRecord,
@@ -93,7 +94,31 @@ def _record_to_frontmatter(record: MemoryRecord) -> dict[str, Any]:
             if val is not None:
                 ref_dict[f] = val
         fm["source_ref"] = ref_dict
+    if record.cue_metadata:
+        fm["cue_metadata"] = record.cue_metadata.to_frontmatter()
     return fm
+
+
+def _record_to_file_content(record: MemoryRecord) -> str:
+    """Serialize a record as a markdown file with YAML frontmatter."""
+    fm = _record_to_frontmatter(record)
+    return (
+        f"---\n{yaml.dump(fm, default_flow_style=False, allow_unicode=True)}---\n\n"
+        f"{record.content}\n"
+    )
+
+
+def _parse_optional_cue_metadata(fm: dict[str, Any]) -> MemoryCueMetadata | None:
+    """Parse optional cue metadata without making record parsing fragile."""
+    raw = fm.get("cue_metadata")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return MemoryCueMetadata.from_frontmatter(raw)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _frontmatter_to_record(fm: dict[str, Any], body: str) -> MemoryRecord:
@@ -133,6 +158,7 @@ def _frontmatter_to_record(fm: dict[str, Any], body: str) -> MemoryRecord:
         created_by=fm["created_by"],
         content=body.strip(),
         source_ref=source_ref,
+        cue_metadata=_parse_optional_cue_metadata(fm),
     )
 
 
@@ -161,13 +187,19 @@ class MemoryStore:
     def _parse_file(self, path: Path) -> tuple[dict[str, Any], str]:
         """Parse a memory file into (frontmatter_dict, body_str)."""
         text = path.read_text(encoding="utf-8")
-        if not text.startswith("---"):
+        if not text.startswith("---\n"):
             return {}, text
-        parts = text.split("---", 2)
-        if len(parts) < 3:
+        end_marker = text.find("\n---\n", 4)
+        if end_marker == -1:
             return {}, text
-        fm = yaml.safe_load(parts[1]) or {}
-        body = parts[2]
+        raw_frontmatter = text[4:end_marker]
+        body = text[end_marker + len("\n---\n") :]
+        try:
+            fm = yaml.safe_load(raw_frontmatter) or {}
+        except yaml.YAMLError:
+            return {}, body
+        if not isinstance(fm, dict):
+            return {}, body
         return fm, body
 
     def _atomic_write(self, path: Path, content: str) -> None:
@@ -193,13 +225,7 @@ class MemoryStore:
         filename = _record_to_filename(record)
         target = self.memory_dir / filename
 
-        fm = _record_to_frontmatter(record)
-        content = (
-            f"---\n{yaml.dump(fm, default_flow_style=False, allow_unicode=True)}---\n\n"
-            f"{record.content}\n"
-        )
-
-        self._atomic_write(target, content)
+        self._atomic_write(target, _record_to_file_content(record))
         self._id_to_filename[record.id] = filename
         return target
 
@@ -218,6 +244,29 @@ class MemoryStore:
         self._rebuild_index()
         return updated
 
+    def update_cue_metadata(
+        self,
+        memory_id: str,
+        cue_metadata: MemoryCueMetadata,
+    ) -> MemoryRecord:
+        """Update a record's cue metadata without changing its file identity."""
+        record = self.read_record(memory_id)
+        if record is None:
+            raise KeyError(f"Unknown memory id: {memory_id}")
+
+        filename = self._id_to_filename.get(memory_id)
+        if filename is None:
+            raise KeyError(f"Unknown memory id: {memory_id}")
+
+        updated = replace(
+            record,
+            cue_metadata=cue_metadata,
+            updated_at=datetime.now(record.updated_at.tzinfo or UTC),
+        )
+        self._atomic_write(self.memory_dir / filename, _record_to_file_content(updated))
+        self._id_to_filename[memory_id] = filename
+        return updated
+
     def read_record(self, memory_id: str) -> MemoryRecord | None:
         """Read a memory record by id."""
         filename = self._id_to_filename.get(memory_id)
@@ -233,6 +282,8 @@ class MemoryStore:
             return None
 
         fm, body = self._parse_file(path)
+        if "id" not in fm:
+            return None
         return _frontmatter_to_record(fm, body)
 
     def list_records(self, *, status: list[str] | None = None) -> list[MemoryRecord]:

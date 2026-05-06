@@ -123,6 +123,13 @@ class MemoryConfig:
     memory_md_token_limit: int = 1200
     user_md_token_limit: int = 600
     core_block_token_limit: int = 1200  # reserved for Phase 2 (core memory block)
+    cue_enabled: bool = False
+    cue_record_generation: bool = True
+    cue_query_interpretation: bool = False
+    cue_query_cache_size: int = 512
+    cue_generation_timeout_ms: int = 1500
+    cue_record_generation_mode: str = "sync"
+    cue_persist_failed_metadata: bool = True
 
 
 @dataclass
@@ -313,6 +320,13 @@ class Config:
                 "memory_md_token_limit": self.memory.memory_md_token_limit,
                 "user_md_token_limit": self.memory.user_md_token_limit,
                 "core_block_token_limit": self.memory.core_block_token_limit,
+                "cue_enabled": self.memory.cue_enabled,
+                "cue_record_generation": self.memory.cue_record_generation,
+                "cue_query_interpretation": self.memory.cue_query_interpretation,
+                "cue_query_cache_size": self.memory.cue_query_cache_size,
+                "cue_generation_timeout_ms": self.memory.cue_generation_timeout_ms,
+                "cue_record_generation_mode": self.memory.cue_record_generation_mode,
+                "cue_persist_failed_metadata": self.memory.cue_persist_failed_metadata,
             },
             "observability": {
                 "enabled": self.observability.enabled,

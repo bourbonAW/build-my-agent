@@ -74,6 +74,40 @@ def test_make_tool_context_includes_memory_fields(tmp_path: Path) -> None:
     assert ctx.memory_actor.kind == "agent"
 
 
+def test_agent_tool_context_has_cue_runtime_context_factory(tmp_path: Path) -> None:
+    from bourbon.agent import Agent
+    from bourbon.session.types import MessageRole, ToolUseBlock, TranscriptMessage
+
+    config = _make_config(tmp_path, enabled=True)
+    with (
+        patch("bourbon.agent.create_client", return_value=MagicMock()),
+        patch("bourbon.agent.Path.home", return_value=tmp_path),
+    ):
+        agent = Agent(config=config, workdir=tmp_path)
+
+    agent.session.add_message(
+        TranscriptMessage(
+            role=MessageRole.ASSISTANT,
+            content=[
+                ToolUseBlock(
+                    id="toolu_1",
+                    name="Read",
+                    input={"file_path": "src/bourbon/agent.py"},
+                )
+            ],
+        )
+    )
+
+    ctx = agent._make_tool_context()
+
+    assert ctx.cue_runtime_context_factory is not None
+    runtime_context = ctx.cue_runtime_context_factory()
+    assert runtime_context.workdir == tmp_path
+    assert runtime_context.current_files == ["src/bourbon/agent.py"]
+    assert runtime_context.touched_files == ["src/bourbon/agent.py"]
+    assert runtime_context.session_id == str(agent.session.session_id)
+
+
 def test_step_impl_flushes_before_compact(tmp_path: Path) -> None:
     from bourbon.agent import Agent
 

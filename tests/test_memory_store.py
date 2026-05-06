@@ -149,6 +149,269 @@ def test_list_records_empty_dir(tmp_path: Path) -> None:
     assert store.list_records() == []
 
 
+def test_store_persists_cue_metadata_frontmatter(tmp_path: Path) -> None:
+    from bourbon.memory.cues.models import (
+        CueGenerationStatus,
+        CueKind,
+        CueSource,
+        MemoryConcept,
+        MemoryCueMetadata,
+        RetrievalCue,
+    )
+
+    store = MemoryStore(memory_dir=tmp_path)
+    metadata = MemoryCueMetadata(
+        schema_version="cue.v1",
+        generator_version="record-cue-v1",
+        concepts=[MemoryConcept.ARCHITECTURE_DECISION],
+        retrieval_cues=[
+            RetrievalCue(
+                text="why cue metadata",
+                kind=CueKind.DECISION_QUESTION,
+                source=CueSource.LLM,
+                confidence=0.8,
+            ),
+            RetrievalCue(
+                text="src/bourbon/memory/store.py",
+                kind=CueKind.FILE_OR_SYMBOL,
+                source=CueSource.RUNTIME,
+                confidence=1.0,
+            ),
+        ],
+        files=["src/bourbon/memory/store.py"],
+        symbols=[],
+        generation_status=CueGenerationStatus.GENERATED,
+    )
+    record = _make_record(
+        id="mem_cue00001",
+        name="Cue metadata",
+        content="Store cue metadata in frontmatter.",
+    )
+    record.cue_metadata = metadata
+
+    store.write_record(record)
+    raw_text = (tmp_path / _record_to_filename(record)).read_text(encoding="utf-8")
+    loaded = store.read_record(record.id)
+
+    assert "cue_metadata:" in raw_text
+    assert "why cue metadata" in raw_text
+    assert loaded is not None
+    assert loaded.cue_metadata == metadata
+
+
+def test_store_round_trips_cue_text_containing_yaml_delimiter(tmp_path: Path) -> None:
+    from bourbon.memory.cues.models import (
+        CueGenerationStatus,
+        CueKind,
+        CueSource,
+        MemoryConcept,
+        MemoryCueMetadata,
+        RetrievalCue,
+    )
+
+    store = MemoryStore(memory_dir=tmp_path)
+    metadata = MemoryCueMetadata(
+        schema_version="cue.v1",
+        generator_version="record-cue-v1",
+        concepts=[MemoryConcept.PROJECT_CONTEXT],
+        retrieval_cues=[
+            RetrievalCue(
+                text="why --- metadata marker",
+                kind=CueKind.USER_PHRASE,
+                source=CueSource.USER,
+                confidence=1.0,
+            )
+        ],
+        files=[],
+        symbols=[],
+        generation_status=CueGenerationStatus.GENERATED,
+    )
+    record = _make_record(id="mem_delim001", name="Delimiter cue")
+    record.cue_metadata = metadata
+
+    store.write_record(record)
+    loaded = store.read_record(record.id)
+
+    assert loaded is not None
+    assert loaded.cue_metadata == metadata
+
+
+def test_store_reads_old_record_without_cue_metadata(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_old00001", name="Old record")
+
+    store.write_record(record)
+    loaded = store.read_record(record.id)
+
+    assert loaded is not None
+    assert loaded.cue_metadata is None
+
+
+def test_update_cue_metadata_rewrites_existing_record_without_changing_status(
+    tmp_path: Path,
+) -> None:
+    from bourbon.memory.cues.models import (
+        CueGenerationStatus,
+        CueKind,
+        CueSource,
+        MemoryConcept,
+        MemoryCueMetadata,
+        RetrievalCue,
+    )
+
+    original_store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(
+        id="mem_cueupdate",
+        name="Cue update",
+        status=MemStatus.STALE,
+        content="Keep this content unchanged.",
+    )
+    original_path = original_store.write_record(record)
+    custom_path = tmp_path / "custom_existing_memory_file.md"
+    original_path.rename(custom_path)
+
+    metadata = MemoryCueMetadata(
+        schema_version="cue.v1",
+        generator_version="record-cue-v1",
+        concepts=[MemoryConcept.PROJECT_CONTEXT],
+        retrieval_cues=[
+            RetrievalCue(
+                text="how cue updates work",
+                kind=CueKind.DECISION_QUESTION,
+                source=CueSource.BACKFILL,
+                confidence=0.9,
+            )
+        ],
+        files=["src/bourbon/memory/store.py"],
+        symbols=["MemoryStore.update_cue_metadata"],
+        generation_status=CueGenerationStatus.GENERATED,
+    )
+    store = MemoryStore(memory_dir=tmp_path)
+
+    updated = store.update_cue_metadata(record.id, metadata)
+
+    assert updated.id == record.id
+    assert updated.status == record.status
+    assert updated.content == record.content
+    assert updated.created_at == record.created_at
+    assert updated.updated_at > record.updated_at
+    assert updated.cue_metadata == metadata
+    assert custom_path.exists()
+    assert not original_path.exists()
+
+    loaded = store.read_record(record.id)
+    assert loaded is not None
+    assert loaded.cue_metadata == metadata
+    assert loaded.status == MemStatus.STALE
+
+
+def test_store_ignores_malformed_cue_metadata_without_losing_record(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_badcue1", name="Bad cue")
+    store.write_record(record)
+    path = tmp_path / _record_to_filename(record)
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "created_by: user\n",
+        "created_by: user\ncue_metadata:\n  schema_version: cue.v1\n"
+        "  retrieval_cues: not-a-list\n",
+    )
+    path.write_text(text, encoding="utf-8")
+
+    loaded = store.read_record(record.id)
+
+    assert loaded is not None
+    assert loaded.id == "mem_badcue1"
+    assert loaded.cue_metadata is None
+
+
+def test_store_ignores_malformed_nested_cue_metadata_without_losing_record(
+    tmp_path: Path,
+) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_badcue2", name="Bad nested cue")
+    store.write_record(record)
+    path = tmp_path / _record_to_filename(record)
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "created_by: user\n",
+        "created_by: user\ncue_metadata:\n  schema_version: cue.v1\n"
+        "  generator_version: record-cue-v1\n"
+        "  generation_status: generated\n"
+        "  concepts:\n"
+        "    - project_context\n"
+        "  domain_concepts: not-a-list\n"
+        "  retrieval_cues:\n"
+        "    - text: valid cue\n"
+        "      kind: user_phrase\n"
+        "      source: user\n"
+        "      confidence: 1.0\n",
+    )
+    path.write_text(text, encoding="utf-8")
+
+    loaded = store.read_record(record.id)
+    listed = store.list_records()
+
+    assert loaded is not None
+    assert loaded.id == "mem_badcue2"
+    assert loaded.cue_metadata is None
+    assert [item.id for item in listed] == ["mem_badcue2"]
+
+
+def test_store_ignores_invalid_domain_concept_source_without_losing_record(
+    tmp_path: Path,
+) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_badcue3", name="Invalid domain source")
+    store.write_record(record)
+    path = tmp_path / _record_to_filename(record)
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "created_by: user\n",
+        "created_by: user\ncue_metadata:\n"
+        "  schema_version: cue.v1\n"
+        "  generator_version: record-cue-v1\n"
+        "  generation_status: generated\n"
+        "  concepts:\n"
+        "    - project_context\n"
+        "  domain_concepts:\n"
+        "    - namespace: investment\n"
+        "      value: risk_model\n"
+        "      source: not-valid\n"
+        "      schema_version: cue.v1\n"
+        "  retrieval_cues:\n"
+        "    - text: valid cue\n"
+        "      kind: user_phrase\n"
+        "      source: user\n"
+        "      confidence: 1.0\n",
+    )
+    path.write_text(text, encoding="utf-8")
+
+    loaded = store.read_record(record.id)
+
+    assert loaded is not None
+    assert loaded.cue_metadata is None
+
+
+def test_store_ignores_malformed_yaml_frontmatter(tmp_path: Path) -> None:
+    path = tmp_path / "project_bad_mem_bad00001.md"
+    path.write_text("---\nid: [unterminated\n---\n\nBody remains readable.\n", encoding="utf-8")
+    store = MemoryStore(memory_dir=tmp_path)
+
+    assert store.list_records() == []
+    assert store.search("Body remains readable") == []
+
+
+def test_read_record_returns_none_for_known_file_with_malformed_yaml(tmp_path: Path) -> None:
+    store = MemoryStore(memory_dir=tmp_path)
+    record = _make_record(id="mem_malformed", name="Malformed yaml")
+    store.write_record(record)
+    path = tmp_path / _record_to_filename(record)
+    path.write_text("---\nid: [unterminated\n---\n\nBody remains readable.\n", encoding="utf-8")
+
+    assert store.read_record(record.id) is None
+
+
 # --- Task 5: MEMORY.md Index Maintenance ---
 
 

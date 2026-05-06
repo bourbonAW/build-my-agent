@@ -209,3 +209,49 @@ def test_recent_write_summary():
         created_at=datetime(2026, 4, 20, tzinfo=UTC),
     )
     assert rws.id == "mem_xyz"
+
+
+def test_memory_record_accepts_optional_cue_metadata() -> None:
+    from bourbon.memory.cues.models import (
+        CueGenerationStatus,
+        CueKind,
+        CueSource,
+        MemoryConcept,
+        MemoryCueMetadata,
+        RetrievalCue,
+    )
+
+    metadata = MemoryCueMetadata(
+        schema_version="cue.v1",
+        generator_version="record-cue-v1",
+        concepts=[MemoryConcept.PROJECT_CONTEXT],
+        retrieval_cues=[
+            RetrievalCue(
+                text="pytest preference",
+                kind=CueKind.USER_PHRASE,
+                source=CueSource.USER,
+                confidence=1.0,
+            )
+        ],
+        files=[],
+        symbols=[],
+        generation_status=CueGenerationStatus.GENERATED,
+    )
+    record = MemoryRecord(
+        id="mem_abc12345",
+        name="test",
+        description="test",
+        kind=MemoryKind.PROJECT,
+        scope=MemoryScope.PROJECT,
+        confidence=1.0,
+        source=MemorySource.USER,
+        status=MemStatus.ACTIVE,
+        created_at=datetime(2026, 4, 20, tzinfo=UTC),
+        updated_at=datetime(2026, 4, 20, tzinfo=UTC),
+        created_by="user",
+        content="Use pytest.",
+        source_ref=SourceRef(kind="manual"),
+        cue_metadata=metadata,
+    )
+
+    assert record.cue_metadata is metadata

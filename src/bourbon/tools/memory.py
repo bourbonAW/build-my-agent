@@ -48,6 +48,11 @@ def _filename(kind: str, name: str, record_id: str) -> str:
                 "description": "Optional memory status filter",
             },
             "limit": {"type": "integer", "default": 8, "description": "Maximum results"},
+            "debug_cue": {
+                "type": "boolean",
+                "default": False,
+                "description": "Include query cue debug metadata when available",
+            },
             # from_date / to_date date filtering reserved for Phase 2
         },
         "required": ["query"],
@@ -68,23 +73,87 @@ def memory_search(query: str, *, ctx: ToolContext, **kwargs: Any) -> str:
         status=kwargs.get("status"),
         limit=kwargs.get("limit"),
     )
-    return _json_output(
-        {
-            "results": [
-                {
-                    "id": result.id,
-                    "name": result.name,
-                    "kind": str(result.kind),
-                    "scope": str(result.scope),
-                    "status": str(result.status),
-                    "confidence": result.confidence,
-                    "snippet": result.snippet,
-                    "why_matched": result.why_matched,
-                }
-                for result in results
-            ]
+    payload: dict[str, Any] = {
+        "results": [
+            {
+                "id": result.id,
+                "name": result.name,
+                "kind": str(result.kind),
+                "scope": str(result.scope),
+                "status": str(result.status),
+                "confidence": result.confidence,
+                "snippet": result.snippet,
+                "why_matched": result.why_matched,
+            }
+            for result in results
+        ]
+    }
+
+    if kwargs.get("debug_cue"):
+        get_last_query_cue = getattr(ctx.memory_manager, "get_last_query_cue", None)
+        if callable(get_last_query_cue):
+            query_cue = get_last_query_cue()
+            if query_cue is not None:
+                payload["query_cue"] = _serialize_query_cue(query_cue)
+
+    return _json_output(payload)
+
+
+def _serialize_query_cue(query_cue: Any) -> dict[str, Any]:
+    """Return a compact, JSON-ready query cue debug representation."""
+    return {
+        "recall_need": str(getattr(query_cue, "recall_need", "")),
+        "concepts": _bounded_string_list(getattr(query_cue, "concepts", [])),
+        "cue_phrases": _serialize_query_cue_phrases(
+            getattr(query_cue, "cue_phrases", [])
+        ),
+        "file_hints": _bounded_string_list(getattr(query_cue, "file_hints", [])),
+        "symbol_hints": _bounded_string_list(getattr(query_cue, "symbol_hints", [])),
+        "kind_hints": _bounded_string_list(getattr(query_cue, "kind_hints", [])),
+        "scope_hint": _optional_string(getattr(query_cue, "scope_hint", None)),
+        "uncertainty": _float_value(getattr(query_cue, "uncertainty", 1.0)),
+        "fallback_used": bool(getattr(query_cue, "fallback_used", False)),
+        "quality_flags": _bounded_string_list(getattr(query_cue, "quality_flags", [])),
+    }
+
+
+def _bounded_string_list(values: Any, *, limit: int = 8) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(value) for value in values[:limit]]
+
+
+def _serialize_query_cue_phrases(values: Any, *, limit: int = 8) -> list[dict[str, Any]]:
+    if not isinstance(values, list):
+        return []
+
+    phrases: list[dict[str, Any]] = []
+    for cue in values[:limit]:
+        text = str(getattr(cue, "text", "")).strip()
+        if not text:
+            continue
+        phrase: dict[str, Any] = {
+            "text": text[:80],
+            "kind": str(getattr(cue, "kind", "")),
         }
-    )
+        confidence = getattr(cue, "confidence", None)
+        if isinstance(confidence, (int, float)):
+            phrase["confidence"] = float(confidence)
+        phrases.append(phrase)
+    return phrases
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _float_value(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 1.0
 
 
 @register_tool(
