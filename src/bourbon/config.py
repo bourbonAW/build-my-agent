@@ -116,20 +116,9 @@ class MemoryConfig:
 
     enabled: bool = True
     storage_dir: str = "~/.bourbon/projects"
-    auto_flush_on_compact: bool = True
-    auto_extract: bool = False  # reserved for Phase 2 (automatic memory extraction)
     recall_limit: int = 8
-    recall_transcript_session_limit: int = 10  # reserved for Phase 2 (transcript recall)
     memory_md_token_limit: int = 1200
     user_md_token_limit: int = 600
-    core_block_token_limit: int = 1200  # reserved for Phase 2 (core memory block)
-    cue_enabled: bool = False
-    cue_record_generation: bool = True
-    cue_query_interpretation: bool = False
-    cue_query_cache_size: int = 512
-    cue_generation_timeout_ms: int = 1500
-    cue_record_generation_mode: str = "sync"
-    cue_persist_failed_metadata: bool = True
 
 
 @dataclass
@@ -313,20 +302,9 @@ class Config:
             "memory": {
                 "enabled": self.memory.enabled,
                 "storage_dir": self.memory.storage_dir,
-                "auto_flush_on_compact": self.memory.auto_flush_on_compact,
-                "auto_extract": self.memory.auto_extract,
                 "recall_limit": self.memory.recall_limit,
-                "recall_transcript_session_limit": self.memory.recall_transcript_session_limit,
                 "memory_md_token_limit": self.memory.memory_md_token_limit,
                 "user_md_token_limit": self.memory.user_md_token_limit,
-                "core_block_token_limit": self.memory.core_block_token_limit,
-                "cue_enabled": self.memory.cue_enabled,
-                "cue_record_generation": self.memory.cue_record_generation,
-                "cue_query_interpretation": self.memory.cue_query_interpretation,
-                "cue_query_cache_size": self.memory.cue_query_cache_size,
-                "cue_generation_timeout_ms": self.memory.cue_generation_timeout_ms,
-                "cue_record_generation_mode": self.memory.cue_record_generation_mode,
-                "cue_persist_failed_metadata": self.memory.cue_persist_failed_metadata,
             },
             "observability": {
                 "enabled": self.observability.enabled,

@@ -1,31 +1,25 @@
 """Bourbon memory system."""
 
 from bourbon.memory.models import (
+    MEMORY_TARGETS,
     MemoryActor,
-    MemoryKind,
     MemoryRecord,
     MemoryRecordDraft,
-    MemoryScope,
     MemorySearchResult,
-    MemorySource,
-    MemoryStatus,
-    MemoryStatusInfo,
+    MemorySystemInfo,
+    MemoryTarget,
     RecentWriteSummary,
-    SourceRef,
-    actor_to_created_by,
+    validate_memory_target,
 )
 
 __all__ = [
+    "MEMORY_TARGETS",
     "MemoryActor",
-    "MemoryKind",
     "MemoryRecord",
     "MemoryRecordDraft",
-    "MemoryScope",
     "MemorySearchResult",
-    "MemorySource",
-    "MemoryStatus",
-    "MemoryStatusInfo",
+    "MemorySystemInfo",
+    "MemoryTarget",
     "RecentWriteSummary",
-    "SourceRef",
-    "actor_to_created_by",
+    "validate_memory_target",
 ]
