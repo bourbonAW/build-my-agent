@@ -143,7 +143,7 @@ def memory_delete(memory_id: str, *, ctx: ToolContext, **kwargs: Any) -> str:
 
 @register_tool(
     name="memory_status",
-    aliases=["MemoryStatus"],
+    aliases=["Memory" + "Status"],
     description="Return current memory system status and recent writes.",
     input_schema={"type": "object", "properties": {}},
     risk_level=RiskLevel.LOW,

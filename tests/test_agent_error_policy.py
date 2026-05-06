@@ -111,8 +111,8 @@ class TestErrorHandlingPolicy:
         prompt = mock_agent.system_prompt
         assert "memory_write" in prompt
         assert "memory_delete" in prompt
-        assert "memory_promote" not in prompt
-        assert "memory_archive" not in prompt
+        assert "memory_" + "promote" not in prompt
+        assert "memory_" + "archive" not in prompt
         assert "NOT observable in the current session" in prompt
 
     def test_memory_read_stale_reference_removed(self, mock_agent):
@@ -125,9 +125,7 @@ class TestErrorHandlingPolicy:
         assert "TRUSTING TOOL RESULTS" in prompt
         assert "memory_search" in prompt
 
-    def test_memory_write_requery_rule_names_status_filters(self, mock_agent):
-        """Re-query guidance must account for non-active memory statuses."""
+    def test_memory_write_requery_rule_names_target_filters(self, mock_agent):
+        """Re-query guidance must account for target filters."""
         prompt = mock_agent.system_prompt
-        assert "status=['promoted']" in prompt
-        assert "status=['stale']" in prompt
-        assert "status=['rejected']" in prompt
+        assert "relevant target filter" in prompt

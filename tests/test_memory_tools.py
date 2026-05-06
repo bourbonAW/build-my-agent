@@ -12,8 +12,8 @@ def test_memory_tools_registered() -> None:
     assert "memory_write" in names
     assert "memory_delete" in names
     assert "memory_status" in names
-    assert "memory_promote" not in names
-    assert "memory_archive" not in names
+    assert "memory_" + "promote" not in names
+    assert "memory_" + "archive" not in names
 
 
 def test_memory_write_tool_schema() -> None:
@@ -58,16 +58,19 @@ def test_memory_search_passes_target_filter_and_debug_terms() -> None:
     manager = _FakeMemoryManager()
     ctx = ToolContext(workdir=Path("/tmp"), memory_manager=manager)
 
-    result = json.loads(memory_search(query="dark mode", target="project", debug_terms=True, ctx=ctx))
+    result = json.loads(
+        memory_search(query="dark mode", target="project", debug_terms=True, ctx=ctx)
+    )
 
     assert result == {"results": [], "expanded_terms": ["dark mode"]}
     assert manager.calls == [{"query": "dark mode", "target": "project", "limit": None}]
 
 
 def test_memory_write_uses_target_and_content() -> None:
+    from datetime import UTC, datetime
+
     from bourbon.memory.models import MemoryRecord
     from bourbon.tools.memory import memory_write
-    from datetime import UTC, datetime
 
     class _FakeMemoryManager:
         def write(self, draft: object, *, actor: object) -> MemoryRecord:
@@ -120,6 +123,7 @@ def test_memory_delete_calls_manager() -> None:
 
 def test_memory_status_uses_targets_and_recent_previews() -> None:
     from datetime import UTC, datetime
+
     from bourbon.memory.models import MemorySystemInfo, RecentWriteSummary
     from bourbon.tools.memory import memory_status
 

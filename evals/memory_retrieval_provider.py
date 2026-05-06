@@ -17,7 +17,13 @@ def _score_record(record: dict[str, Any], terms: tuple[str, ...], *, use_cues: b
     return sum(1 for term in terms if term.casefold() in haystack)
 
 
-def _rank(records: list[dict[str, Any]], query: str, *, use_cues: bool, expand_query: bool) -> list[str]:
+def _rank(
+    records: list[dict[str, Any]],
+    query: str,
+    *,
+    use_cues: bool,
+    expand_query: bool,
+) -> list[str]:
     terms = expand_query_terms(query) if expand_query else (query,)
     scored = [
         (_score_record(record, terms, use_cues=use_cues), str(record["id"]))

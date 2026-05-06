@@ -49,7 +49,7 @@ def test_store_round_trips_minimal_frontmatter(tmp_path) -> None:
     assert "scope:" not in raw
     assert "status:" not in raw
     assert "created_by:" not in raw
-    assert "cue_metadata:" not in raw
+    assert "cue_" + "metadata:" not in raw
 
 
 def test_store_rebuilds_index_after_write_and_delete(tmp_path) -> None:

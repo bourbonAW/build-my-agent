@@ -68,7 +68,9 @@ class MemoryManager:
         if not content:
             raise ValueError("Memory content must be non-empty")
         if not check_write_permission(actor, target=target):
-            raise PermissionError(f"Actor {actor.kind}:{actor.agent_type} cannot write target={target}")
+            raise PermissionError(
+                f"Actor {actor.kind}:{actor.agent_type} cannot write target={target}"
+            )
         if self._audit is None:
             raise RuntimeError("memory writes require audit")
 

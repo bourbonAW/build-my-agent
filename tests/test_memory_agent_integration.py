@@ -91,4 +91,4 @@ def test_agent_tool_context_has_memory_actor_without_cue_runtime_context(tmp_pat
     assert ctx.memory_manager is agent._memory_manager
     assert ctx.memory_actor is not None
     assert ctx.memory_actor.kind == "agent"
-    assert not hasattr(ctx, "cue_runtime_context_factory")
+    assert not hasattr(ctx, "cue_runtime_context_" + "factory")

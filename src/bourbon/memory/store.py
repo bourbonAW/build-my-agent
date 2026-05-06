@@ -179,7 +179,8 @@ class MemoryStore:
     def rebuild_index(self) -> bool:
         records = self.list_records()[:200]
         lines = [
-            f"- [{record.target}] {_record_preview(record)} ([{_record_to_filename(record)}]({_record_to_filename(record)}))"
+            f"- [{record.target}] {_record_preview(record)} "
+            f"([{_record_to_filename(record)}]({_record_to_filename(record)}))"
             for record in records
         ]
         content = "\n".join(lines)
