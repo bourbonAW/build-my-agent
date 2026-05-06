@@ -6,8 +6,8 @@ providers:
     label: bourbon-agent
     config:
       pythonExecutable: .venv/bin/python
-  - id: python:evals/memory_cue_retrieval_provider.py
-    label: memory-cue-retrieval
+  - id: python:evals/memory_retrieval_provider.py
+    label: memory-retrieval
     config:
       pythonExecutable: .venv/bin/python
 
@@ -43,4 +43,4 @@ tests:
   - file://evals/cases/skills.yaml
   - file://evals/cases/general.yaml
   - file://evals/cases/validator-smoke.yaml
-  - file://evals/cases/memory-cue-retrieval.yaml
+  - file://evals/cases/memory-retrieval.yaml

@@ -1,0 +1,56 @@
+{
+  "records": [
+    {
+      "id": "mem_dark_mode",
+      "target": "user",
+      "content": "User prefers dark UI components.",
+      "cues": ["dark mode", "ui preference"]
+    },
+    {
+      "id": "mem_append_only",
+      "target": "project",
+      "content": "Prefer append-only memory records.",
+      "cues": ["minimal memory model", "record immutability"]
+    },
+    {
+      "id": "mem_no_session",
+      "target": "project",
+      "content": "Temporary session facts stay in active session state.",
+      "cues": ["no session memory", "target user project"]
+    },
+    {
+      "id": "mem_audit",
+      "target": "project",
+      "content": "memory_write must emit an audit event.",
+      "cues": ["memory audit", "required audit"]
+    },
+    {
+      "id": "mem_index",
+      "target": "project",
+      "content": "MEMORY.md is rebuilt after every write and delete.",
+      "cues": ["index rebuild", "memory delete"]
+    }
+  ],
+  "cases": [
+    {
+      "query": "where is `dark mode` preference",
+      "expected_id": "mem_dark_mode"
+    },
+    {
+      "query": "append-only memory",
+      "expected_id": "mem_append_only"
+    },
+    {
+      "query": "`no session memory` decision",
+      "expected_id": "mem_no_session"
+    },
+    {
+      "query": "`memory audit` requirement",
+      "expected_id": "mem_audit"
+    },
+    {
+      "query": "`index rebuild` on delete",
+      "expected_id": "mem_index"
+    }
+  ]
+}

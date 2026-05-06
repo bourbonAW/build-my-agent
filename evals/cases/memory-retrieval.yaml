@@ -1,0 +1,18 @@
+- description: "Memory Retrieval: minimal content and cue smoke"
+  provider: python:evals/memory_retrieval_provider.py
+  vars:
+    case_id: "memory-retrieval-smoke"
+    fixture: "memory_retrieval/retrieval-smoke.json"
+    prompt: "Run deterministic minimal memory retrieval smoke."
+  assert:
+    - type: javascript
+      metric: "memory_retrieval_recall_at_3"
+      value: |
+        const data = JSON.parse(output);
+        const actual = data.metrics.expanded_query_plus_cues.recall_at_3;
+        const min = data.thresholds.expanded_query_plus_cues_recall_at_3_min;
+        const pass = actual >= min;
+        return { pass, reason: `Recall@3 ${actual} >= ${min}` };
+  metadata:
+    category: "memory-retrieval"
+    legacy_case_id: "memory-retrieval-smoke"
