@@ -19,7 +19,7 @@ Bourbon has evolved from a code specialist to a multi-agent platform with:
 - **Multi-Agent**: Subagent system with parallel execution, tool filtering, and cancellation
 - **Persistent Tasks**: File-backed workflow tasks with ownership and dependencies (Task V2)
 - **Session Management**: Structured session layer with MessageChain, ContextManager, and transcript storage
-- **Memory (Phase 2 Delivered)**: File-first memory stack with prompt anchors, recall, governed writes, and promoted preference injection into managed USER.md
+- **Memory (Minimal Model)**: File-first immutable memory with `target + content + created_at + cues`. Simple write/search/delete lifecycle, no promote/archive/status complexity. Cues are write-time extracted textual hints (backticks, quotes, paths) for lightweight retrieval boost.
 - **Security**: Multi-layer sandbox isolation, permissions, access control, credential management, audit logging
 - **Observability**: OpenTelemetry tracing integration
 - **Context Management**: Long session support with compression and streaming markdown rendering
@@ -31,8 +31,27 @@ Bourbon has evolved from a code specialist to a multi-agent platform with:
 3. **Skill System**: Agent Skills compatible - progressive disclosure, multi-scope discovery
 4. **MCP Integration**: External tool servers for extended capabilities
 5. **Sandbox Isolation**: Bubblewrap, Docker, seatbelt providers for safe tool execution
-6. **Memory System**: Governed memory records with write, search, promote, and archive lifecycle
+6. **Memory System**: File-first immutable memory records (`target + content + cues`) with simple write/search/delete lifecycle and lightweight cue-based retrieval
 7. **Eval Framework**: Promptfoo-based evaluation + community benchmarks
+
+## Product & Interface Design Principles
+
+Internalize Dieter Rams's design philosophy: **Less, but better**. This does not mean making interfaces empty; it means removing anything that does not improve usefulness, clarity, durability, or user control.
+
+Apply these principles when designing product behavior, UI, CLI flows, docs, prompts, tools, and agent-facing workflows:
+
+1. **Innovative**: Use new capabilities only when they create real user value; technology is not an end in itself.
+2. **Useful**: Prioritize the user's task, functional clarity, and reliable outcomes over decoration or novelty.
+3. **Aesthetic**: Treat visual and interaction quality as part of usefulness; polish should reduce friction, not add spectacle.
+4. **Understandable**: Make structure, state, affordances, and next actions self-evident.
+5. **Unobtrusive**: Keep interfaces restrained and tool-like; leave room for the user's work and judgment.
+6. **Honest**: Do not overstate capability, certainty, progress, safety, or performance.
+7. **Long-lasting**: Prefer durable patterns, stable language, and maintainable abstractions over fashionable UI or architecture.
+8. **Thorough**: Details must be intentional. Empty states, errors, loading, permissions, edge cases, and accessibility matter.
+9. **Environmentally aware**: Avoid waste in tokens, compute, dependencies, storage, screen space, and user attention.
+10. **As little design as possible**: Remove non-essential steps, controls, copy, configuration, and visual weight until only the essential remains.
+
+Practical bar: before adding a feature, prompt section, UI element, dependency, or workflow step, ask whether it makes the system more useful, understandable, honest, and durable. If not, leave it out.
 
 ## Project Structure
 
@@ -107,6 +126,13 @@ Bourbon has evolved from a code specialist to a multi-agent platform with:
 │   ├── observability/       # OpenTelemetry integration
 │   │   ├── manager.py       # Observability manager
 │   │   └── tracer.py        # Tracer wrapper
+│   ├── memory/              # Memory system (minimal model)
+│   │   ├── manager.py       # MemoryManager orchestration (write/search/delete/status)
+│   │   ├── store.py         # MemoryStore file persistence + MEMORY.md index rebuild
+│   │   ├── models.py        # MemoryRecord (id, target, content, created_at, cues)
+│   │   ├── cues.py          # Cue extraction/normalization from textual hints
+│   │   ├── files.py         # Prompt anchor reading + USER.md merge
+│   │   └── policy.py        # Write/delete permissions
 │   ├── audit/               # Security event logging
 │   │   └── events.py
 │   └── mcp_client/          # MCP Client implementation
@@ -189,7 +215,7 @@ python -m bourbon
 8. **Eval via promptfoo**: Standardized evaluation with caching, dashboards, multi-dimensional scoring, and community benchmarks
 9. **Subagent isolation**: Each subagent gets its own session, tool set, and abort controller
 10. **Task/Todo split**: In-memory todos (V1) for quick checklists; persistent file-backed tasks (V2) for workflow management
-11. **Memory (planned)**: File-first + grep recall; prompt anchors (AGENTS.md, MEMORY.md, USER.md); governed writes with scope isolation
+11. **Memory (Minimal Model)**: Immutable Markdown records with minimal YAML frontmatter (`id`, `target`, `created_at`, `cues`). Only `user`/`project` targets. No promote/archive/status lifecycle. Cues are write-time extracted from textual hints (backticks, quotes, paths). Search is simple content + cue matching with query term expansion. Prompt anchors (AGENTS.md, MEMORY.md, USER.md) remain.
 
 ## Session Management
 
@@ -254,49 +280,92 @@ Sections can be static strings or async callables receiving `PromptContext`.
 
 ## Memory System
 
-Bourbon has a two-phase memory system for persisting and recalling agent-relevant context across sessions.
+Bourbon uses a minimal, immutable memory model: each record is a Markdown file with minimal YAML frontmatter. Records are never modified after creation; updates are new writes. There is no promote/archive/stale/rejected lifecycle, no compact-time extraction, and no LLM-based cue generation.
 
-### Phase 1: File-First Recall (Completed)
+### Model
 
-- **Tools**: `memory_write`, `memory_search`, `memory_status`
-- **Storage**: Individual `.md` records under `~/.bourbon/projects/{key}/memory/`
-- **Index**: `MEMORY.md` (≤200 active records, one-line summaries injected into prompt)
-- **Recall**: Grepped keyword search with status/kind/scope filters
+```python
+@dataclass(frozen=True)
+class MemoryRecord:
+    id: str
+    target: Literal["user", "project"]
+    content: str
+    created_at: datetime
+    cues: tuple[str, ...] = ()
+```
 
-### Phase 2: Promoted Preference Injection (Completed)
+- **`target`**: `user` for durable user preferences; `project` for repository decisions, files, workflows, references
+- **`cues`**: Write-time extracted textual hints from backticks, quotes, and file paths in the content
 
-- **Tools**: `memory_promote`, `memory_archive`
-- **Mechanism**: Stable `user`/`feedback` preferences move from the weak MEMORY.md index into a managed section of `~/.bourbon/USER.md`
-- **Prompt guarantee**: Promoted blocks render before freeform USER.md content with reserved token budget, preventing truncation
-- **Lifecycle**: `active` → `promoted` (strong injection) → `stale`/`rejected` (removed from injection, preserved for audit)
-- **Content guard**: Bodies >150 tokens are truncated with a backlink to source file
+### Cues
+
+Cues are lightweight retrieval hints, not structured metadata:
+
+- **Extraction source**: `` `term` ``, `"term"`, and file paths like `src/foo.py`
+- **Normalization**: deduplicated, casefolded, max 12 cues, max 80 chars each
+- **No LLM involvement**: deterministic regex extraction only
+- **Query expansion**: `expand_query_terms()` normalizes the query plus extracts explicit terms from it
+
+### Tools
+
+| Tool | Purpose | Risk |
+|------|---------|------|
+| `memory_write` | Write an immutable memory record | MEDIUM |
+| `memory_search` | Search by keyword with optional `debug_terms` | LOW |
+| `memory_delete` | Delete a record by id | MEDIUM |
+| `memory_status` | Show recent writes, file count, index capacity | LOW |
+
+### Search
+
+Simple case-insensitive substring matching:
+
+1. Expand query into normalized terms (`expand_query_terms`)
+2. For each term, scan records (content + cues)
+3. Deduplicate and collect until `limit` (default 8)
+4. Annotate `why_matched` as "matched content" or "matched cue: X"
+
+No BM25, FTS, embedding, or LLM query interpretation.
 
 ### Architecture
 
 ```
-Prompt Context (always injected)
-  ├─ AGENTS.md              # Project-level behavior rules
-  ├─ USER.md                # User preferences (handwritten + managed promoted blocks)
-  └─ MEMORY.md              # Memory file index (active records only)
+MemoryManager
+  ├─ MemoryStore          # Atomic file writes, YAML frontmatter, MEMORY.md rebuild
+  │   ├─ write_record()   # Persist .md file, rebuild index
+  │   ├─ delete_record()  # Remove file, rebuild index
+  │   ├─ search()         # Content + cue substring matching
+  │   └─ rebuild_index()  # Generate MEMORY.md from latest 200 records
+  └─ cues.py              # generate_cues(), expand_query_terms(), normalize_cues()
 
 Memory Files
   └─ ~/.bourbon/projects/{project}/memory/
-       ├─ MEMORY.md          # Index (≤200 lines, active only)
-       ├─ {kind}_{slug}.md   # Individual memory records
-       └─ logs/YYYY/MM/DD.md # Daily logs (pre-compact flush)
+       ├─ MEMORY.md        # Auto-rebuilt index (≤200 records)
+       └─ {id}.md          # Individual immutable memory records
 ```
+
+### Prompt Anchors
+
+- **AGENTS.md**: Project-level behavior rules (always injected)
+- **USER.md**: Global + project-level user preferences, merged with project headings taking priority
+- **MEMORY.md**: Auto-generated index of recent memory records (injected up to token limit)
+
+### Permissions
+
+- Subagents can only write `target="project"`; cannot delete
+- Main agent and user can write both `user` and `project`
+- All writes require audit logging
 
 ### Design Principles
 
-- Transcript-first: append-only transcript as recoverable fact base
-- Bounded prompt memory with hard token limits
-- Local recall first (file + grep), no external services in V1
-- Scope-aware sharing between main agent and subagents
-- Governed writes with confidence, source tracking, and audit
+- Immutable records: write once, never edit
+- Minimal surface: no status, no scope, no kind, no promote, no archive
+- Deterministic cues: no LLM for cue generation or query interpretation
+- Local first: file + substring search, no external services
+- Rebuildable index: MEMORY.md is a derivative, not source of truth
+- Less, but better: every field and lifecycle stage must earn its place
 
-**Design specs:**
-- Phase 1: `docs/superpowers/specs/2026-04-19-bourbon-memory-design.md`
-- Phase 2: `docs/superpowers/specs/2026-04-22-bourbon-memory-phase2-design.md`
+**Design spec:**
+- Minimal Model Cleanup: `docs/superpowers/plans/2026-05-06-bourbon-memory-minimal-model-cleanup.md`
 
 ## Skill System (Agent Skills Compatible)
 

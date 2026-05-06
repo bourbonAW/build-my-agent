@@ -12,7 +12,7 @@ Bourbon is a general-purpose AI agent platform with a code-first evolution, desi
 - **Domain Expertise**: Investment analysis, note management, and more via skills
 - **External Tools**: MCP Client for databases, APIs
 - **Security**: Multi-layer sandbox isolation (bubblewrap/docker/seatbelt), access control, audit logging
-- **Memory**: Governed memory records with promoted preference injection into managed USER.md
+- **Memory**: File-first immutable memory with `target + content + created_at + cues`. Simple write/search/delete lifecycle, deterministic cue extraction from textual hints, no promote/archive/status complexity
 - **Safe Operations**: Sandboxed file operations, risk-based error handling
 
 **Architecture**:
@@ -64,6 +64,13 @@ bourbon
 │   ├── agent.py             # Core agent loop
 │   ├── repl.py              # REPL with Rich streaming markdown
 │   ├── skills.py            # Skill system (Agent Skills compatible)
+│   ├── memory/              # Memory system (minimal model)
+│   │   ├── manager.py       # MemoryManager orchestration
+│   │   ├── store.py         # File persistence and MEMORY.md index
+│   │   ├── models.py        # MemoryRecord (id, target, content, created_at, cues)
+│   │   ├── cues.py          # Deterministic cue extraction and query expansion
+│   │   ├── files.py         # Prompt anchors (AGENTS.md, USER.md, MEMORY.md)
+│   │   └── policy.py        # Write/delete permissions
 │   ├── mcp_client/          # MCP Client implementation
 │   ├── tools/               # Built-in tools
 │   ├── sandbox/             # Sandbox isolation (bubblewrap/docker/seatbelt)
@@ -94,10 +101,9 @@ bourbon
 | `shell` | Execute bash commands | Blacklist dangerous commands |
 | `search` | Code search (ripgrep) | Read-only |
 | `todo` | Task management | - |
-| `memory_write` | Write a governed memory record | Sandboxed to workdir |
-| `memory_search` | Search memory records by keyword | Read-only |
-| `memory_promote` | Promote stable preference to USER.md | File write |
-| `memory_archive` | Archive a memory as stale/rejected | File write |
+| `memory_write` | Write an immutable memory record | Sandboxed to workdir |
+| `memory_search` | Search memory records by keyword (with optional `debug_terms`) | Read-only |
+| `memory_delete` | Delete a memory record by id | File write |
 
 ### Stage B: General Knowledge Tools
 
