@@ -33,6 +33,7 @@ This spec intentionally cuts the design back to a small, inspectable memory syst
 - No cue schema versioning.
 - No record/query cue taxonomy registry.
 - No generation quality telemetry in persisted memory records.
+- No session-target memory. Temporary session facts stay in the active session/task context and do not go through the persisted memory system.
 
 ## Core Model
 
@@ -43,7 +44,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-MemoryTarget = Literal["user", "project", "session"]
+MemoryTarget = Literal["user", "project"]
 
 
 @dataclass(frozen=True)
@@ -63,11 +64,13 @@ class MemoryRecord:
 
 `content` is the only memory body. It replaces `name`, `description`, `summary`, and `text` variants.
 
-`target` replaces both `kind` and `scope`. The current distinction is not earning its complexity. A memory is for the user, the project, or the current session.
+`target` replaces both `kind` and `scope`. The current distinction is not earning its complexity. A memory is for the user or for the project.
 
 `created_at` is retained for chronological review and deterministic display. `updated_at` is removed because cue regeneration, lifecycle changes, and content edits have different semantics. If a memory changes, create a new memory or rewrite the record intentionally.
 
 `cues` is a tuple of extra searchable terms. It is empty when no useful terms exist.
+
+Temporary session facts are not memory records. They should remain in the active session, task state, todo state, or transcript. If a session fact becomes durable enough to remember later, it must be written explicitly as `target="user"` or `target="project"`.
 
 ## Removed Record Fields
 
@@ -88,6 +91,8 @@ class MemoryRecord:
 `confidence` is removed. Persisted memory should be accepted memory. Uncertainty should stay out of memory or be written explicitly in `content`.
 
 `status` is removed. The memory store contains active memories only. Unneeded memories are deleted. Archive/reject/promote states can be added later if real product behavior requires them.
+
+Legacy `feedback` and `reference` kinds do not get replacement model fields. There is no automatic conversion. Future writes should choose `target="user"` when the memory is about user preference or behavior, and `target="project"` when the memory is about project context, decisions, files, workflows, or references.
 
 ## Cue Model
 
@@ -110,7 +115,9 @@ Examples:
 )
 ```
 
-The implementation normalizes cues by trimming whitespace, dropping empty strings, deduplicating while preserving order, and enforcing a small maximum count.
+The implementation normalizes cues by trimming whitespace, dropping empty strings, deduplicating while preserving order, and enforcing `MAX_CUES = 12`.
+
+Cue generation happens synchronously before the memory record is first written. Record cues are write-once in this design. If cue generation fails, the record is written with empty cues and no retry/backfill is scheduled. There is no async cue mutation path.
 
 The following cue concepts are removed:
 
@@ -182,6 +189,8 @@ The filename does not repeat target, title, kind, or slug semantics.
 
 The display text is derived from `content`, not stored separately.
 
+The store rebuilds `MEMORY.md` from scratch after every successful write and delete. Incremental index edits are unnecessary because there is no status lifecycle and each memory file is small.
+
 ## Tool Surface
 
 `memory_write` should accept:
@@ -193,7 +202,9 @@ The display text is derived from `content`, not stored separately.
 }
 ```
 
-Runtime metadata such as session id, platform, tool name, write origin, or agent identity can be recorded in audit logs. It must not be copied into `MemoryRecord`.
+Runtime metadata such as session id, platform, tool name, write origin, or agent identity belongs in audit logs. It must not be copied into `MemoryRecord`.
+
+`memory_write` MUST emit an audit event for every successful write. The audit event records the actor, session id when available, origin/tool name when available, target, memory id, and a short content preview. This audit requirement is the replacement for persisted `source`, `source_ref`, and `created_by` fields.
 
 `memory_search` should accept:
 
@@ -223,10 +234,12 @@ get_status(*, actor: MemoryActor) -> MemorySystemInfo
 
 The user-facing `memory_status` tool name may remain, but the returned model should not be named like a record lifecycle state.
 
+`MemorySystemInfo` replaces `MemoryStatusInfo` as the returned status model. It reports system-level information such as readable targets, writable targets, recent writes, index capacity, and memory file count. It does not represent record lifecycle state.
+
 Permissions are target-based:
 
-- user, main agent, and system may write `user`, `project`, and `session`
-- subagents may write `project` and `session`
+- user, main agent, and system may write `user` and `project`
+- subagents may write `project`
 - subagents may not write `user`
 - subagents may not delete memory
 
@@ -298,7 +311,7 @@ Cue tests should verify:
 - query expansion returns tuple strings
 - failed cue generation results in empty cues
 
-Delete tests for removed concepts:
+Tests to remove for concepts that no longer exist:
 
 - promote/archive lifecycle tests
 - backfill tests
@@ -306,6 +319,18 @@ Delete tests for removed concepts:
 - generation quality report tests
 - schema/generator/interpreter version tests
 - malformed old cue metadata compatibility tests
+
+## Module Shape
+
+The `src/bourbon/memory/cues/` package is removed as a package. The old package split across `models.py`, `query.py`, `runtime.py`, `backfill.py`, and `eval.py` is the main source of cue over-design.
+
+If cue logic is still useful after the cleanup, keep it in a single small module:
+
+```text
+src/bourbon/memory/cues.py
+```
+
+That module may expose only simple helpers such as cue normalization, write-time cue generation, and query term expansion. It must not define persisted cue models, query cue models, backfill workflows, generation telemetry reports, or schema versioning.
 
 ## Implementation Notes
 
