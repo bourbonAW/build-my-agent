@@ -7,75 +7,41 @@ from bourbon.tools import ToolContext, _ensure_imports, get_registry
 def test_memory_tools_registered() -> None:
     _ensure_imports()
     registry = get_registry()
-    # Primary names (tool.name) must be snake_case to match plan spec and LLM tool definitions
-    tool_primary_names = [tool.name for tool in registry.list_tools()]
-    assert "memory_promote" in tool_primary_names
-    assert "memory_archive" in tool_primary_names
-    assert "memory_search" in tool_primary_names
-    assert "memory_write" in tool_primary_names
-    assert "memory_status" in tool_primary_names
-    # PascalCase aliases still resolve for backward compatibility
-    assert registry.get_tool("MemoryPromote") is not None
-    assert registry.get_tool("MemoryArchive") is not None
-    assert registry.get_tool("MemorySearch") is not None
-    assert registry.get_tool("MemoryWrite") is not None
-    assert registry.get_tool("MemoryStatus") is not None
-
-
-def test_memory_promote_tool_schema_and_metadata() -> None:
-    _ensure_imports()
-    registry = get_registry()
-    tool = registry.get_tool("MemoryPromote")
-    assert tool is not None
-    assert tool.risk_level.name == "MEDIUM"
-    assert [cap.value for cap in tool.required_capabilities or []] == ["file_write"]
-    schema = tool.input_schema
-    assert schema["required"] == ["memory_id"]
-    assert "note" in schema["properties"]
-    assert "stable across multiple turns" in tool.description
-    assert "before freeform USER.md content" in tool.description
-    assert "exits the MEMORY.md index" in tool.description
-    assert "kind in {'user', 'feedback'}" in tool.description
-
-
-def test_memory_archive_tool_schema_and_metadata() -> None:
-    _ensure_imports()
-    registry = get_registry()
-    tool = registry.get_tool("MemoryArchive")
-    assert tool is not None
-    assert tool.risk_level.name == "MEDIUM"
-    assert [cap.value for cap in tool.required_capabilities or []] == ["file_write"]
-    schema = tool.input_schema
-    assert schema["required"] == ["memory_id", "status"]
-    assert schema["properties"]["status"]["enum"] == ["rejected", "stale"]
-    assert "rejected" in tool.description
-    assert "stale" in tool.description
-    assert "removed from prompt injection" in tool.description
+    names = [tool.name for tool in registry.list_tools()]
+    assert "memory_search" in names
+    assert "memory_write" in names
+    assert "memory_delete" in names
+    assert "memory_status" in names
+    assert "memory_promote" not in names
+    assert "memory_archive" not in names
 
 
 def test_memory_write_tool_schema() -> None:
     _ensure_imports()
-    registry = get_registry()
-    tool = registry.get_tool("MemoryWrite")
+    tool = get_registry().get_tool("MemoryWrite")
     assert tool is not None
     schema = tool.input_schema
-    assert "content" in schema["properties"]
-    assert "kind" in schema["properties"]
+    assert schema["required"] == ["target", "content"]
+    assert schema["properties"]["target"]["enum"] == ["user", "project"]
+    assert "kind" not in schema["properties"]
+    assert "scope" not in schema["properties"]
+    assert "source" not in schema["properties"]
 
 
 def test_memory_search_tool_schema() -> None:
     _ensure_imports()
-    registry = get_registry()
-    tool = registry.get_tool("MemorySearch")
+    tool = get_registry().get_tool("MemorySearch")
     assert tool is not None
     schema = tool.input_schema
-    assert "query" in schema["properties"]
-    assert "status" in schema["properties"]
-    assert schema["properties"]["debug_cue"]["type"] == "boolean"
-    assert schema["properties"]["debug_cue"]["default"] is False
+    assert schema["required"] == ["query"]
+    assert schema["properties"]["target"]["enum"] == ["user", "project"]
+    assert schema["properties"]["debug_terms"]["type"] == "boolean"
+    assert "status" not in schema["properties"]
+    assert "kind" not in schema["properties"]
+    assert "scope" not in schema["properties"]
 
 
-def test_memory_search_passes_status_filter_to_manager() -> None:
+def test_memory_search_passes_target_filter_and_debug_terms() -> None:
     from bourbon.tools.memory import memory_search
 
     class _FakeMemoryManager:
@@ -86,177 +52,109 @@ def test_memory_search_passes_status_filter_to_manager() -> None:
             self.calls.append({"query": query, **kwargs})
             return []
 
-    fake_manager = _FakeMemoryManager()
-    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=fake_manager)
+        def get_last_expanded_terms(self) -> tuple[str, ...]:
+            return ("dark mode",)
 
-    memory_search(query="test", ctx=ctx, status=["promoted"])
+    manager = _FakeMemoryManager()
+    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=manager)
 
-    assert fake_manager.calls == [
-        {
-            "query": "test",
-            "scope": None,
-            "kind": None,
-            "status": ["promoted"],
-            "limit": None,
-        }
-    ]
+    result = json.loads(memory_search(query="dark mode", target="project", debug_terms=True, ctx=ctx))
+
+    assert result == {"results": [], "expanded_terms": ["dark mode"]}
+    assert manager.calls == [{"query": "dark mode", "target": "project", "limit": None}]
 
 
-def test_memory_search_omits_query_cue_by_default() -> None:
-    from bourbon.tools.memory import memory_search
-
-    class _FakeQueryCue:
-        def to_frontmatter(self) -> dict[str, object]:
-            return {"recall_need": "weak"}
+def test_memory_write_uses_target_and_content() -> None:
+    from bourbon.memory.models import MemoryRecord
+    from bourbon.tools.memory import memory_write
+    from datetime import UTC, datetime
 
     class _FakeMemoryManager:
-        def search(self, query: str, **kwargs: object) -> list[object]:
-            return []
-
-        def get_last_query_cue(self) -> _FakeQueryCue:
-            return _FakeQueryCue()
-
-    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=_FakeMemoryManager())
-
-    result = json.loads(memory_search(query="test", ctx=ctx))
-
-    assert result == {"results": []}
-
-
-def test_memory_search_includes_query_cue_when_debug_requested() -> None:
-    from bourbon.memory.cues.models import (
-        CueKind,
-        CueQualityFlag,
-        CueSource,
-        MemoryConcept,
-        QueryCue,
-        RecallNeed,
-        RetrievalCue,
-    )
-    from bourbon.memory.models import MemoryKind, MemoryScope
-    from bourbon.tools.memory import memory_search
-
-    class _FakeMemoryManager:
-        def __init__(self) -> None:
-            self.calls: list[dict[str, object]] = []
-            self.query_cue = QueryCue(
-                schema_version="cue.v1",
-                interpreter_version="query-cue-test",
-                recall_need=RecallNeed.WEAK,
-                concepts=[MemoryConcept.WORKFLOW],
-                cue_phrases=[
-                    RetrievalCue(
-                        text="sqlite wal",
-                        kind=CueKind.USER_PHRASE,
-                        source=CueSource.USER,
-                        confidence=1.0,
-                    )
-                ],
-                file_hints=["src/db.py"],
-                symbol_hints=["MemoryManager"],
-                kind_hints=[MemoryKind.PROJECT],
-                scope_hint=MemoryScope.PROJECT,
-                uncertainty=0.2,
-                fallback_used=True,
-                quality_flags=[CueQualityFlag.FALLBACK_USED],
+        def write(self, draft: object, *, actor: object) -> MemoryRecord:
+            self.draft = draft
+            self.actor = actor
+            return MemoryRecord(
+                id="mem_abc12345",
+                target="project",
+                content="Prefer append-only memory records.",
+                created_at=datetime(2026, 5, 6, tzinfo=UTC),
             )
 
-        def search(self, query: str, **kwargs: object) -> list[object]:
-            self.calls.append({"query": query, **kwargs})
-            return []
-
-        def get_last_query_cue(self) -> QueryCue:
-            return self.query_cue
-
-    fake_manager = _FakeMemoryManager()
-    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=fake_manager)
-
-    result = json.loads(memory_search(query="test", ctx=ctx, debug_cue=True))
-
-    assert result == {
-        "results": [],
-        "query_cue": {
-            "recall_need": "weak",
-            "concepts": ["workflow"],
-            "cue_phrases": [
-                {
-                    "text": "sqlite wal",
-                    "kind": "user_phrase",
-                    "confidence": 1.0,
-                }
-            ],
-            "file_hints": ["src/db.py"],
-            "symbol_hints": ["MemoryManager"],
-            "kind_hints": ["project"],
-            "scope_hint": "project",
-            "uncertainty": 0.2,
-            "fallback_used": True,
-            "quality_flags": ["fallback_used"],
-        },
-    }
-    assert fake_manager.calls == [
-        {
-            "query": "test",
-            "scope": None,
-            "kind": None,
-            "status": None,
-            "limit": None,
-        }
-    ]
-
-
-def test_memory_search_omits_query_cue_when_debug_requested_but_unavailable() -> None:
-    from bourbon.tools.memory import memory_search
-
-    class _ManagerWithoutCueGetter:
-        def search(self, query: str, **kwargs: object) -> list[object]:
-            return []
-
-    class _ManagerWithNoQueryCue:
-        def search(self, query: str, **kwargs: object) -> list[object]:
-            return []
-
-        def get_last_query_cue(self) -> None:
-            return None
-
-    for manager in (_ManagerWithoutCueGetter(), _ManagerWithNoQueryCue()):
-        ctx = ToolContext(workdir=Path("/tmp"), memory_manager=manager)
-
-        result = json.loads(memory_search(query="test", ctx=ctx, debug_cue=True))
-
-        assert result == {"results": []}
-
-
-def test_memory_tools_return_error_when_disabled() -> None:
-    from bourbon.tools.memory import (
-        memory_archive,
-        memory_promote,
-        memory_search,
-        memory_status,
-        memory_write,
-    )
-
-    ctx = ToolContext(workdir=Path("/tmp"))
-
-    result = json.loads(memory_search(query="test", ctx=ctx))
-    assert "error" in result
+    manager = _FakeMemoryManager()
+    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=manager)
 
     result = json.loads(
         memory_write(
-            content="test",
-            kind="project",
-            scope="project",
-            source="user",
+            target="project",
+            content="Prefer append-only memory records.",
             ctx=ctx,
         )
     )
-    assert "error" in result
 
-    result = json.loads(memory_promote(memory_id="mem_test0001", ctx=ctx))
-    assert "error" in result
+    assert result == {
+        "id": "mem_abc12345",
+        "target": "project",
+        "status": "written",
+        "file": "mem_abc12345.md",
+    }
+    assert manager.draft.target == "project"
+    assert manager.draft.content == "Prefer append-only memory records."
 
-    result = json.loads(memory_archive(memory_id="mem_test0001", status="rejected", ctx=ctx))
-    assert "error" in result
+
+def test_memory_delete_calls_manager() -> None:
+    from bourbon.tools.memory import memory_delete
+
+    class _FakeMemoryManager:
+        def delete(self, memory_id: str, *, actor: object) -> None:
+            self.memory_id = memory_id
+            self.actor = actor
+
+    manager = _FakeMemoryManager()
+    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=manager)
+
+    result = json.loads(memory_delete(memory_id="mem_abc12345", ctx=ctx))
+
+    assert result == {"id": "mem_abc12345", "status": "deleted"}
+    assert manager.memory_id == "mem_abc12345"
+
+
+def test_memory_status_uses_targets_and_recent_previews() -> None:
+    from datetime import UTC, datetime
+    from bourbon.memory.models import MemorySystemInfo, RecentWriteSummary
+    from bourbon.tools.memory import memory_status
+
+    class _FakeMemoryManager:
+        def get_status(self, *, actor: object) -> MemorySystemInfo:
+            return MemorySystemInfo(
+                readable_targets=("user", "project"),
+                writable_targets=("project",),
+                recent_writes=(
+                    RecentWriteSummary(
+                        id="mem_abc12345",
+                        target="project",
+                        preview="Prefer append-only memory records.",
+                        created_at=datetime(2026, 5, 6, tzinfo=UTC),
+                    ),
+                ),
+                index_at_capacity=False,
+                memory_file_count=1,
+            )
+
+    ctx = ToolContext(workdir=Path("/tmp"), memory_manager=_FakeMemoryManager())
 
     result = json.loads(memory_status(ctx=ctx))
-    assert "error" in result
+
+    assert result["readable_targets"] == ["user", "project"]
+    assert result["writable_targets"] == ["project"]
+    assert result["recent_writes"][0]["preview"] == "Prefer append-only memory records."
+
+
+def test_memory_tools_return_error_when_disabled() -> None:
+    from bourbon.tools.memory import memory_delete, memory_search, memory_status, memory_write
+
+    ctx = ToolContext(workdir=Path("/tmp"))
+
+    assert "error" in json.loads(memory_search(query="test", ctx=ctx))
+    assert "error" in json.loads(memory_write(target="project", content="test", ctx=ctx))
+    assert "error" in json.loads(memory_delete(memory_id="mem_abc12345", ctx=ctx))
+    assert "error" in json.loads(memory_status(ctx=ctx))

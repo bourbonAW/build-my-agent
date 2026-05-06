@@ -110,8 +110,9 @@ class TestErrorHandlingPolicy:
         """System prompt must tell the agent not to bash-verify memory writes."""
         prompt = mock_agent.system_prompt
         assert "memory_write" in prompt
-        assert "memory_promote" in prompt
-        assert "memory_archive" in prompt
+        assert "memory_delete" in prompt
+        assert "memory_promote" not in prompt
+        assert "memory_archive" not in prompt
         assert "NOT observable in the current session" in prompt
 
     def test_memory_read_stale_reference_removed(self, mock_agent):
