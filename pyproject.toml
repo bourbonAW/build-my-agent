@@ -29,6 +29,7 @@ dependencies = [
     "toml>=0.10.2",
     "mcp>=1.0.0,<2.0.0",
     "opentelemetry-api>=1.20",
+    "fastembed>=0.6.0",
 ]
 
 [project.optional-dependencies]

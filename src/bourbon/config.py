@@ -111,6 +111,38 @@ class TasksConfig:
 
 
 @dataclass
+class MemorySemanticConfig:
+    """Local semantic memory retrieval configuration."""
+
+    enabled: bool = True
+    provider: str = "fastembed"
+    model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    top_k: int = 16
+    min_similarity: float = 0.25
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MemorySemanticConfig":
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            provider=str(data.get("provider", "fastembed")),
+            model=str(
+                data.get("model", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+            ),
+            top_k=int(data.get("top_k", 16)),
+            min_similarity=float(data.get("min_similarity", 0.25)),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            "provider": self.provider,
+            "model": self.model,
+            "top_k": self.top_k,
+            "min_similarity": self.min_similarity,
+        }
+
+
+@dataclass
 class MemoryConfig:
     """Memory system configuration."""
 
@@ -119,6 +151,34 @@ class MemoryConfig:
     recall_limit: int = 8
     memory_md_token_limit: int = 1200
     user_md_token_limit: int = 600
+    semantic: MemorySemanticConfig = field(default_factory=MemorySemanticConfig)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MemoryConfig":
+        semantic_data = data.get("semantic", {})
+        semantic = (
+            semantic_data
+            if isinstance(semantic_data, MemorySemanticConfig)
+            else MemorySemanticConfig.from_dict(dict(semantic_data))
+        )
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            storage_dir=str(data.get("storage_dir", "~/.bourbon/projects")),
+            recall_limit=int(data.get("recall_limit", 8)),
+            memory_md_token_limit=int(data.get("memory_md_token_limit", 1200)),
+            user_md_token_limit=int(data.get("user_md_token_limit", 600)),
+            semantic=semantic,
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            "storage_dir": self.storage_dir,
+            "recall_limit": self.recall_limit,
+            "memory_md_token_limit": self.memory_md_token_limit,
+            "user_md_token_limit": self.user_md_token_limit,
+            "semantic": self.semantic.to_dict(),
+        }
 
 
 @dataclass
@@ -242,7 +302,7 @@ class Config:
             ),
             ui=UIConfig(**ui_data),
             tasks=TasksConfig(**tasks_data),
-            memory=MemoryConfig(**memory_data),
+            memory=MemoryConfig.from_dict(memory_data),
             observability=ObservabilityConfig.from_dict(observability_data),
             mcp=MCPConfig.from_dict(mcp_data),
             access_control=_deep_merge(Config().access_control, access_control_data),
@@ -299,13 +359,7 @@ class Config:
                 "storage_dir": self.tasks.storage_dir,
                 "default_list_id": self.tasks.default_list_id,
             },
-            "memory": {
-                "enabled": self.memory.enabled,
-                "storage_dir": self.memory.storage_dir,
-                "recall_limit": self.memory.recall_limit,
-                "memory_md_token_limit": self.memory.memory_md_token_limit,
-                "user_md_token_limit": self.memory.user_md_token_limit,
-            },
+            "memory": self.memory.to_dict(),
             "observability": {
                 "enabled": self.observability.enabled,
                 "service_name": self.observability.service_name,
