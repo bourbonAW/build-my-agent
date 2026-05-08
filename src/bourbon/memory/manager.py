@@ -87,9 +87,10 @@ class MemoryManager:
         if self._search_index is None:
             return False
         try:
-            if not self._search_index.needs_rebuild(probe_text=probe_text):
+            records = self._store.list_records()
+            if not self._search_index.needs_rebuild(records=records, probe_text=probe_text):
                 return False
-            self._search_index.rebuild(self._store.list_records())
+            self._search_index.rebuild(records)
             return True
         except Exception:
             logger.warning("Memory semantic index rebuild failed", exc_info=True)

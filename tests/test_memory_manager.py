@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,9 @@ import pytest
 from bourbon.audit.events import EventType
 from bourbon.config import MemoryConfig, MemorySemanticConfig
 from bourbon.memory.manager import MemoryManager
-from bourbon.memory.models import MemoryActor, MemoryRecordDraft
+from bourbon.memory.models import MemoryActor, MemoryRecord, MemoryRecordDraft
+from bourbon.memory.search_index import MemorySearchIndex
+from bourbon.memory.store import MemoryStore
 
 
 class FakeAudit:
@@ -43,6 +46,17 @@ class FakeManagerProvider:
         if "dark" in lowered or "界面主题" in text:
             return (1.0, 0.0, 0.0)
         return (0.0, 1.0, 0.0)
+
+
+class LazyDimensionProvider(FakeManagerProvider):
+    dimensions = None
+
+
+class BrokenRebuildProvider(FakeManagerProvider):
+    dimensions = None
+
+    def embed_passages(self, texts: list[str]) -> list[tuple[float, ...]]:
+        raise RuntimeError("embedding unavailable")
 
 
 @pytest.fixture
@@ -185,6 +199,75 @@ def test_search_rebuilds_stale_semantic_index_from_records(
     assert results[0].why_matched.startswith("matched semantic:")
 
 
+def test_search_rebuilds_semantic_index_missing_markdown_record(
+    tmp_path: Path,
+    audit: FakeAudit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bourbon.memory.manager.FastEmbedProvider",
+        FakeManagerProvider,
+    )
+    manager = MemoryManager(
+        config=MemoryConfig(storage_dir=str(tmp_path)),
+        project_key="proj",
+        workdir=tmp_path,
+        audit=audit,  # type: ignore[arg-type]
+    )
+    manager.write(
+        MemoryRecordDraft(target="project", content="Prefer append-only memory records."),
+        actor=MemoryActor(kind="agent", session_id="ses_1"),
+    )
+    manual_record = MemoryRecord(
+        id="mem_manual_dark",
+        target="user",
+        content="User prefers dark mode for UI components.",
+        created_at=datetime(2026, 5, 8, 8, 0, tzinfo=UTC),
+    )
+    MemoryStore(manager.get_memory_dir()).write_record(manual_record)
+
+    results = manager.search("用户喜欢什么界面主题？", target="user")
+
+    assert [result.id for result in results] == [manual_record.id]
+    assert results[0].why_matched.startswith("matched semantic:")
+
+
+def test_search_rebuilds_metadata_only_semantic_index_when_records_exist(
+    tmp_path: Path,
+    audit: FakeAudit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bourbon.memory.manager.FastEmbedProvider",
+        LazyDimensionProvider,
+    )
+    memory_dir = tmp_path / "proj" / "memory"
+    manual_record = MemoryRecord(
+        id="mem_manual_dark",
+        target="user",
+        content="User prefers dark mode for UI components.",
+        created_at=datetime(2026, 5, 8, 8, 0, tzinfo=UTC),
+    )
+    MemoryStore(memory_dir).write_record(manual_record)
+    MemorySearchIndex(
+        memory_dir / "search_index.sqlite",
+        LazyDimensionProvider(model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"),
+        top_k=16,
+        min_similarity=0.25,
+    ).rebuild([])
+    manager = MemoryManager(
+        config=MemoryConfig(storage_dir=str(tmp_path)),
+        project_key="proj",
+        workdir=tmp_path,
+        audit=audit,  # type: ignore[arg-type]
+    )
+
+    results = manager.search("用户喜欢什么界面主题？", target="user")
+
+    assert [result.id for result in results] == [manual_record.id]
+    assert results[0].why_matched.startswith("matched semantic:")
+
+
 def test_search_rebuilds_corrupt_semantic_index_from_records(
     tmp_path: Path,
     audit: FakeAudit,
@@ -220,6 +303,36 @@ def test_search_rebuilds_corrupt_semantic_index_from_records(
 
     assert [result.id for result in results] == [record.id]
     assert results[0].why_matched.startswith("matched semantic:")
+
+
+def test_search_falls_back_when_semantic_index_rebuild_fails(
+    tmp_path: Path,
+    audit: FakeAudit,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bourbon.memory.manager.FastEmbedProvider",
+        BrokenRebuildProvider,
+    )
+    memory_dir = tmp_path / "proj" / "memory"
+    record = MemoryRecord(
+        id="mem_dark",
+        target="user",
+        content="User prefers dark mode for UI components.",
+        created_at=datetime(2026, 5, 8, 8, 0, tzinfo=UTC),
+    )
+    MemoryStore(memory_dir).write_record(record)
+    manager = MemoryManager(
+        config=MemoryConfig(storage_dir=str(tmp_path)),
+        project_key="proj",
+        workdir=tmp_path,
+        audit=audit,  # type: ignore[arg-type]
+    )
+
+    results = manager.search("dark mode", target="user")
+
+    assert [result.id for result in results] == [record.id]
+    assert results[0].why_matched == "matched content: dark mode"
 
 
 def test_delete_removes_record_and_rejects_subagents(manager: MemoryManager) -> None:

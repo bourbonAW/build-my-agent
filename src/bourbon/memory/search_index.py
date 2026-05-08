@@ -156,17 +156,46 @@ class MemorySearchIndex:
             dimensions = len(self.provider.embed_query(probe_text))
         return dimensions is not None and meta.get("embedding_dimensions") != str(dimensions)
 
-    def needs_rebuild(self, *, probe_text: str | None = None) -> bool:
+    def _records_need_rebuild(
+        self,
+        conn: sqlite3.Connection,
+        records: list[MemoryRecord],
+        *,
+        meta: dict[str, str],
+    ) -> bool:
+        actual = {
+            (str(memory_id), str(target), str(content_hash))
+            for memory_id, target, content_hash in conn.execute(
+                "select memory_id, target, content_hash from memory_index_records"
+            ).fetchall()
+        }
+        expected = {
+            (record.id, record.target, _content_hash(render_search_text(record)))
+            for record in records
+        }
+        if actual != expected:
+            return True
+        return bool(records) and not meta.get("embedding_dimensions")
+
+    def needs_rebuild(
+        self,
+        *,
+        records: Iterable[MemoryRecord] | None = None,
+        probe_text: str | None = None,
+    ) -> bool:
         """Return whether the derived index is missing, stale, or unreadable."""
         if not self.index_path.exists():
             return True
+        record_list = list(records) if records is not None else None
         try:
             with self._connect() as conn:
                 self._ensure_schema(conn)
-                return self._metadata_needs_rebuild(
-                    self._read_meta(conn),
-                    probe_text=probe_text,
-                )
+                meta = self._read_meta(conn)
+                if self._metadata_needs_rebuild(meta, probe_text=probe_text):
+                    return True
+                if record_list is None:
+                    return False
+                return self._records_need_rebuild(conn, record_list, meta=meta)
         except sqlite3.DatabaseError:
             return True
 
