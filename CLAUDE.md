@@ -15,6 +15,9 @@ uv pip install -e ".[dev]"
 # Install with Stage B dependencies (documents, web, data tools)
 uv pip install -e ".[stage-b]"
 
+# Install with local semantic memory (fastembed)
+uv pip install -e ".[semantic]"
+
 # Run agent
 python -m bourbon
 
@@ -50,7 +53,7 @@ npx promptfoo@latest view
 
 ## Architecture
 
-Bourbon is a general-purpose AI agent platform built around a synchronous conversation loop. The agent orchestrates LLM calls, tool execution, skill loading, sandbox isolation, and MCP server connections.
+Bourbon is a general-purpose AI agent platform built around a synchronous conversation loop. The agent orchestrates LLM calls, tool execution, skill loading, sandbox isolation, MCP server connections, session persistence, memory, and observability.
 
 ### Core Flow
 
@@ -58,103 +61,95 @@ Bourbon is a general-purpose AI agent platform built around a synchronous conver
 CLI (cli.py) -> REPL (repl.py) -> Agent.step() -> LLM.chat() -> _execute_tools() -> loop
 ```
 
-`Agent.step()` in `src/bourbon/agent.py` is the main entry point: it adds user input to message history, compresses context if needed, then runs `_run_conversation_loop()` which repeatedly calls the LLM and executes tool calls until the LLM stops with a text response (no tool calls). Max rounds are capped by `config.ui.max_tool_rounds` (default 50).
+`Agent.step()` in `src/bourbon/agent.py` is the main entry point. It delegates to `_run_conversation_loop()`, which repeatedly calls the LLM and executes tool calls until the LLM stops with a text response. The entire stack is **synchronous** — no asyncio; subprocess calls use `subprocess.run()` blocking mode.
 
-### REPL (`src/bourbon/repl.py`)
+### Session System (`src/bourbon/session/`)
 
-Interactive terminal interface with Rich-based streaming markdown rendering. The REPL uses `Rich.Markdown` for final output rendering and a simple newline-split strategy for stable incremental display during streaming. Includes activity indicators for tool execution and bottom toolbar status.
+Manages the full message lifecycle with crash safety and compaction.
+
+- **`TranscriptMessage`** — core message type with `uuid`, `parent_uuid` (chain links), `session_id`, `role`, and frozen content blocks (`TextBlock`, `ToolUseBlock`, `ToolResultBlock`).
+- **`MessageChain`** — in-memory linked list; `compact()` collapses history above the token threshold into a single boundary message.
+- **`Session`** — wraps chain (in-memory) + `TranscriptStore` (JSONL file) + `ContextManager` (token tracking). `add_message()` appends to chain first, then persists — ordering guarantees crash safety.
+- **`SessionManager`** — `create_session()`, `resume_session()`, `resume_latest()`, `delete_session()`. Resume rebuilds the chain from JSONL + a compact manifest (parent UUID overrides for chain links across compaction boundaries).
+
+### Subagent System (`src/bourbon/subagent/`)
+
+Spawns isolated sub-agent instances with type-based tool access control.
+
+Six agent types with different tool access: `default`, `coder`, `explore` (read-only), `plan` (read-only), `quick_task` (time-limited), `teammate` (in-process parallel). `explore` and `plan` types are restricted to `READ_ONLY_TOOLS` at the manager level — no file writes or shell execution. `SubagentMode` enum (`NORMAL`, `TEAMMATE`, `ASYNC`) controls whether the caller waits.
+
+### Task Management (`src/bourbon/tasks/`)
+
+File-backed tracking of background/long-running tasks. `TaskService` persists `TaskCreate`/`TaskUpdate` records to disk. Used by `task_tools.py` to expose task CRUD to the agent. Not asyncio — agents poll `TaskService` for status.
+
+### Prompt System (`src/bourbon/prompt/`)
+
+Builds the system prompt from registered ordered sections.
+
+- **`PromptBuilder`** — assembles sections sorted by `order` integer, joins with newlines.
+- **Static sections** (`sections.py`) — identity (10), memory_anchors (15), task_guidelines (20), subagent_guidelines (25), error_handling (30), task_adaptability (40).
+- **Dynamic sections** (`dynamic.py`) — skills catalog (60), MCP tools (70); generated async each step.
+- The `memory_anchors` section (order 15) injects merged AGENTS.md + USER.md preferences and the MEMORY.md index with token budgets.
+
+### Memory System (`src/bourbon/memory/`)
+
+File-first immutable memory with optional local semantic indexing.
+
+**Minimal model:** Each record has `id`, `target` (scoping string, e.g. `"project"`, `"user"`), `content`, `created_at`, `cues` (extracted phrases for retrieval).
+
+Key components:
+- **`MemoryStore`** — CRUD on `~/.bourbon/memory/<project-key>/` markdown files + MEMORY.md index. Grep-based keyword fallback.
+- **`MemoryManager`** — orchestrates read/write/search; integrates semantic index with graceful fallback to keyword search. Detects stale/corrupt index and triggers rebuild.
+- **`MemoryRetriever`** — hybrid RRF (Reciprocal Rank Fusion) fusing FTS5 keyword + cosine vector channels.
+- **`MemorySearchIndex`** — SQLite FTS5 + vector storage. Stores provider/model/dimensions metadata for stale detection.
+- **`FastEmbedProvider`** (`embeddings.py`) — lazy-loaded local embeddings via optional `fastembed` dependency. Raises `EmbeddingUnavailableError` on missing dep; system degrades cleanly.
+- **`cues.py`** — deterministic phrase extraction from messages; expanded at query time for richer recall.
+- **`policy.py`** — `check_write_permission()` gates writes; subagents restricted to `"project"` target only.
+- **`files.py`** — reads AGENTS.md, merges global `~/.bourbon/USER.md` with project-local (project-local wins), reads MEMORY.md with token budgets.
+- **Pre-compact flush** — before chain compaction, agent deterministically flushes memory candidates (keyword + error detection) without an LLM turn, so critical context survives compaction.
+
+### Observability (`src/bourbon/observability/`)
+
+OpenTelemetry tracing, gracefully degraded when `opentelemetry` is not installed.
+
+- **`ObservabilityManager`** — singleton TracerProvider; exports via OTLP (endpoint from env `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` → `OTEL_EXPORTER_OTLP_ENDPOINT` → config). Uses `BatchSpanProcessor`.
+- **`BourbonTracer`** — thin facade with context managers `llm_call()`, `tool_call()`, `agent_step()`. Records token counts, model name, finish reason. **Deliberately omits message bodies** (metadata-only, privacy-conscious). Conforms to OpenTelemetry GenAI semantic conventions.
+
+### Permissions System (`src/bourbon/permissions/`)
+
+Runtime access control evaluated at each tool call boundary. `PermissionChecker` evaluates policies against the executing actor context (user, agent, or subagent type). `matching.py` implements policy rule evaluation.
 
 ### Tool System (`src/bourbon/tools/`)
 
-Tools are registered via `@register_tool()` decorator into a global `ToolRegistry` singleton. The registry lazily imports tool modules on first use (`base`, `search`, `skill_tool`). Each `Tool` has a `RiskLevel` (LOW/MEDIUM/HIGH) that drives the error-handling policy.
+Tools registered via `@register_tool()` decorator into a global `ToolRegistry` singleton (lazy module imports). Each `Tool` has a `RiskLevel` (LOW/MEDIUM/HIGH).
 
-- `base.py` - File operations, bash, todo management
-- `search.py` - Code search using ripgrep
-- `skill_tool.py` - The `skill` tool that loads skill content
-- `web.py`, `data.py`, `documents.py` - Stage B tools (conditionally available)
+Key modules:
+- `base.py` — file ops, bash, todo; `read_file()` supports `offset` (1-indexed start line) and `limit`.
+- `memory.py` — `MemorySearch`, `MemoryWrite`, `MemoryStatus`.
+- `agent_tool.py` — spawns subagents.
+- `task_tools.py` — task CRUD.
+- `skill_tool.py` — loads skill content on demand.
+- `tool_search.py` — searches available tools.
+- `web.py`, `data.py`, `documents.py` — Stage B tools (conditionally registered).
 
-High-risk operations (detected by `Tool.is_high_risk_operation()`) that return an error cause `Agent._execute_tools()` to set `self.pending_confirmation` and return early, presenting an interactive confirmation prompt to the user.
+High-risk tool failures set `Agent.pending_confirmation` and pause execution for interactive confirmation rather than auto-recovering.
 
-### Sandbox System (`src/bourbon/sandbox/`)
+### Other Subsystems
 
-Multi-provider sandbox for isolating tool execution:
+- **REPL** (`repl.py`) — Rich streaming markdown with simple newline-split buffering for incremental rendering.
+- **Skills** (`skills.py`) — [Agent Skills](https://agentskills.io/) spec with three-tier disclosure. Scanner resolves project-level over user-level in priority order: `.kimi/skills/` → `.agents/skills/` → `.bourbon/skills/`.
+- **MCP** (`mcp_client/`) — configured in `~/.bourbon/config.toml`. MCP tools registered as `{server}:{tool}` in the global registry.
+- **Sandbox** (`sandbox/`) — bubblewrap (Linux) / seatbelt (macOS) / docker / local; selected by `runtime.py`.
+- **Compression** (`compression.py`) — `ContextCompressor` triggers `microcompact()` on every step; full compact when token threshold exceeded.
+- **LLM Client** (`llm.py`) — Anthropic + OpenAI-compatible; provider selected by `config.llm.default_provider`.
 
-- `runtime.py` - Sandbox runtime manager, selects provider based on platform
-- `policy.py` - Sandbox policy engine (allow/deny rules for filesystem, network, processes)
-- `credential.py` / `credential_proxy.py` - Credential isolation and proxying
-- **Providers** (`providers/`):
-  - `bubblewrap.py` - Linux bubblewrap (bwrap) isolation
-  - `docker.py` - Docker container isolation
-  - `seatbelt.py` - macOS seatbelt sandbox
-  - `local.py` - Local (no-op) provider for development
+### Configuration
 
-### Access Control (`src/bourbon/access_control/`)
+`~/.bourbon/config.toml` — global config. Key sections: `[llm]`, `[llm.anthropic]`, `[mcp]`, `[memory]`, `[observability]`, `[sandbox]`, `[access_control]`, `[audit]`.
 
-Capability-based access control for tool operations:
+### Evaluation Framework
 
-- `capabilities.py` - Capability definitions and checking
-- `policy.py` - Access control policy evaluation
-
-### Audit System (`src/bourbon/audit/`)
-
-Event logging for security-relevant operations:
-
-- `events.py` - Audit event definitions and logging
-
-### Skill System (`src/bourbon/skills.py`)
-
-Implements the [Agent Skills](https://agentskills.io/) specification with three-tier progressive disclosure:
-
-1. **Tier 1** - Catalog shown in system prompt (name + description, ~50-100 tokens each)
-2. **Tier 2** - Full SKILL.md body loaded when agent calls the `skill` tool
-3. **Tier 3** - Resources (scripts/, references/, assets/) read on demand
-
-`SkillScanner` discovers skills by scanning directories in priority order (project-level overrides user-level):
-1. `{workdir}/.kimi/skills/*/`
-2. `{workdir}/.agents/skills/*/`
-3. `{workdir}/.bourbon/skills/*/`
-4. `~/.agents/skills/*/`, `~/.bourbon/skills/*/`, `~/.kimi/skills/*/`
-
-Each skill requires a `SKILL.md` with YAML frontmatter (`name`, `description` required).
-
-### MCP Integration (`src/bourbon/mcp_client/`)
-
-MCP servers are configured in `~/.bourbon/config.toml` under `[mcp]`. The `MCPManager` connects to servers on startup (call `Agent.initialize_mcp_sync()` before first use) and registers their tools into the global `ToolRegistry` with the naming convention `{server_name}:{tool_name}`. All MCP tools default to `RiskLevel.MEDIUM`.
-
-### LLM Client (`src/bourbon/llm.py`)
-
-Multi-provider client supporting Anthropic and OpenAI-compatible APIs. Provider is selected by `config.llm.default_provider`. Configured globally in `~/.bourbon/config.toml`:
-
-```toml
-[llm]
-default_provider = "anthropic"
-
-[llm.anthropic]
-api_key = "your-key"
-model = "claude-sonnet-4-6"
-```
-
-### Context Compression (`src/bourbon/compression.py`)
-
-`ContextCompressor` monitors token usage and compacts old messages when `config.ui.token_threshold` is exceeded. The agent also calls `microcompact()` on every step. Skills in use are protected from compaction.
-
-### Evaluation Framework (`evals/` + `promptfooconfig.yaml`)
-
-Evaluations run through [promptfoo](https://www.promptfoo.dev/). The root `promptfooconfig.yaml` is the entrypoint. Test cases are YAML files under `evals/cases/` (e.g. `skills.yaml`, `sandbox.yaml`, `security.yaml`, `calibration.yaml`).
-
-- `evals/promptfoo_provider.py` - Custom provider wrapping `Agent.step()`, returns JSON with `text`, `workdir`, and timing metadata.
-- `evals/promptfoo_artifact_provider.py` - Serves prebuilt calibration artifacts to promptfoo's `llm-rubric` assertions.
-- `evals/fixtures/` - Pre-built test fixtures (calibration artifacts, project templates).
-- File and audit assertions use promptfoo `javascript` assertions that read files from the returned `workdir`.
-- Calibration scoring uses `llm-rubric` metrics with multi-dimensional scoring plus `javascript` range checks.
-
-## Key Design Decisions
-
-- **Path safety**: All file operations sandboxed to `Agent.workdir` (defaults to `cwd`)
-- **Multi-layer security**: Sandbox isolation (bubblewrap/docker/seatbelt) + access control capabilities + audit logging
-- **Risk-based error handling**: HIGH-risk tool failures pause execution for user confirmation rather than auto-recovering
-- **Skill discovery**: Project-level skills (`.kimi/skills/`, `.bourbon/skills/`, `.agents/skills/`) override user-level skills
-- **MCP tools share the global registry**: Registered with `server:tool` prefix; no code changes needed to add new MCP servers
-- **Tool registration is lazy**: `definitions()`, `handler()`, and `get_tool_with_metadata()` import tool modules on first call to avoid circular imports
-- **Streaming markdown**: Uses Rich library with simple newline-split buffering for incremental rendering
-- **Eval via promptfoo**: Replaces custom eval runner with promptfoo for standardized evaluation, caching, and dashboards
+`evals/` + `promptfooconfig.yaml` via [promptfoo](https://www.promptfoo.dev/). Test cases in `evals/cases/` (YAML). Custom providers:
+- `evals/promptfoo_provider.py` — wraps `Agent.step()`, returns `{text, workdir, timing}`.
+- `evals/memory_retrieval_provider.py` — deterministic memory retrieval eval with hybrid semantic variant.
+- File/audit assertions use `javascript` assertions reading from the returned `workdir`.

@@ -64,18 +64,34 @@ bourbon
 │   ├── agent.py             # Core agent loop
 │   ├── repl.py              # REPL with Rich streaming markdown
 │   ├── skills.py            # Skill system (Agent Skills compatible)
-│   ├── memory/              # Memory system (minimal model)
+│   ├── llm.py               # Multi-provider LLM client (Anthropic + OpenAI-compatible)
+│   ├── compression.py       # Context compressor (microcompact + full compact)
+│   ├── prompt/              # Prompt management (ordered sections, dynamic injection)
+│   ├── session/             # Session layer (MessageChain, JSONL transcript, compact)
+│   ├── subagent/            # Subagent runtime (6 types, tool filtering, cancellation)
+│   ├── tasks/               # Persistent workflow tasks (file-backed, V2)
+│   ├── observability/       # OpenTelemetry tracing (metadata-only, graceful degradation)
+│   ├── permissions/         # Runtime permission enforcement
+│   ├── memory/              # Memory system (minimal model + local semantic index)
 │   │   ├── manager.py       # MemoryManager orchestration
 │   │   ├── store.py         # File persistence and MEMORY.md index
 │   │   ├── models.py        # MemoryRecord (id, target, content, created_at, cues)
 │   │   ├── cues.py          # Deterministic cue extraction and query expansion
 │   │   ├── embeddings.py    # Local FastEmbed provider boundary
 │   │   ├── search_index.py  # Rebuildable SQLite FTS + vector index
-│   │   ├── retriever.py     # Hybrid exact/cue/semantic retrieval
+│   │   ├── retriever.py     # Hybrid exact/cue/semantic retrieval (RRF fusion)
 │   │   ├── files.py         # Prompt anchors (AGENTS.md, USER.md, MEMORY.md)
 │   │   └── policy.py        # Write/delete permissions
-│   ├── mcp_client/          # MCP Client implementation
 │   ├── tools/               # Built-in tools
+│   │   ├── base.py          # File ops, bash, todos
+│   │   ├── agent_tool.py    # Subagent spawn tool
+│   │   ├── task_tools.py    # TaskCreate/Update/List/Get
+│   │   ├── memory.py        # MemoryWrite/Search/Delete/Status
+│   │   ├── tool_search.py   # Tool discovery
+│   │   ├── web.py           # Web fetch (Stage B)
+│   │   ├── data.py          # CSV/JSON analysis (Stage B)
+│   │   └── documents.py     # PDF/DOCX extraction (Stage B)
+│   ├── mcp_client/          # MCP Client implementation
 │   ├── sandbox/             # Sandbox isolation (bubblewrap/docker/seatbelt)
 │   ├── access_control/      # Capability-based access control
 │   └── audit/               # Security event logging
@@ -99,14 +115,16 @@ bourbon
 
 | Tool | Purpose | Safety |
 |------|---------|--------|
-| `read_file` | Read text/media files | Sandboxed to workdir |
+| `read_file` | Read text/media files (supports `offset`/`limit`) | Sandboxed to workdir |
 | `write_file` | Create/modify files | Backup before changes |
 | `shell` | Execute bash commands | Blacklist dangerous commands |
 | `search` | Code search (ripgrep) | Read-only |
-| `todo` | Task management | - |
+| `todo` / `task` | In-session todos (V1) and persistent workflow tasks (V2) | - |
+| `agent` | Spawn a subagent (6 types: default/coder/explore/plan/quick_task/teammate) | Isolated session |
 | `memory_write` | Write an immutable memory record | Sandboxed to workdir |
-| `memory_search` | Search memory records with content/cue matching and local semantic recall | Read-only |
+| `memory_search` | Search by keyword/cue with optional local semantic recall | Read-only |
 | `memory_delete` | Delete a memory record by id | File write |
+| `memory_status` | Show recent writes, file count, index capacity | Read-only |
 
 ### Stage B: General Knowledge Tools
 

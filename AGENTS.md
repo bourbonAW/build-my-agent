@@ -249,12 +249,22 @@ SubagentManager
 
 ### Agent Types
 
-Each subagent type gets a filtered tool set. Tool filtering is defined in `subagent/tools.py` via `AGENT_TYPE_CONFIGS`.
+| Type | Tool Access | Use Case |
+|------|-------------|----------|
+| `default` | All tools | General-purpose tasks |
+| `coder` | All tools | Code writing and modification |
+| `explore` | Read-only (no write/shell) | Codebase exploration and analysis |
+| `plan` | Read-only (no write/shell) | Planning and design only |
+| `quick_task` | All tools, time-limited | Short-lived focused operations |
+| `teammate` | All tools, in-process | Parallel execution alongside main agent |
 
-### Execution Modes
+Tool filtering is enforced at the manager level via `AGENT_TYPE_CONFIGS` in `subagent/tools.py`. `explore` and `plan` types are restricted to `READ_ONLY_TOOLS` — no file writes or shell execution.
 
-- **Synchronous**: Blocking execution, result returned inline
-- **Asynchronous**: Background execution via thread pool, result polled or awaited
+### Execution Modes (`SubagentMode`)
+
+- **`NORMAL`**: Blocking execution; caller waits for result.
+- **`ASYNC`**: Background execution via `ThreadPoolExecutor`; caller polls or awaits.
+- **`TEAMMATE`**: In-process parallel execution; used for collaborative work alongside the main agent session.
 
 ## Task & Todo System
 
@@ -342,8 +352,8 @@ MemoryManager
   │   ├─ delete_record()  # Remove file, rebuild index
   │   ├─ search()         # Content + cue substring matching
   │   └─ rebuild_index()  # Generate MEMORY.md from latest 200 records
-  ├─ MemorySearchIndex    # Derived SQLite FTS + dense vector index
-  ├─ MemoryRetriever      # Hybrid candidate fusion
+  ├─ MemorySearchIndex    # Derived SQLite FTS + dense vector index; stale/corrupt detection (provider/model/dimensions mismatch triggers rebuild)
+  ├─ MemoryRetriever      # Hybrid RRF candidate fusion (FTS + cosine vector channels)
   └─ cues.py              # generate_cues(), expand_query_terms(), normalize_cues()
 
 Memory Files
@@ -549,6 +559,7 @@ npx promptfoo@latest view
 
 - **Provider**: `evals/promptfoo_provider.py` wraps `Agent.step()` and returns JSON `{text, workdir, duration}`
 - **Artifact Provider**: `evals/promptfoo_artifact_provider.py` serves pre-built calibration artifacts
+- **Memory Retrieval Provider**: `evals/memory_retrieval_provider.py` runs deterministic retrieval evals with hybrid semantic variant (bypasses LLM)
 - **Cases**: YAML files in `evals/cases/` organized by category
 - **Benchmarks**: Community benchmarks in `evals/benchmarks/` (BigBench Hard, GAIA, GSM8K, HumanEval, MT-Bench)
 - **Loaders**: Dataset loaders in `evals/loaders/` for HuggingFace and other sources
