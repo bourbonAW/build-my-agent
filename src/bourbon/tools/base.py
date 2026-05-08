@@ -92,6 +92,7 @@ def read_file(
     path: str,
     workdir: Path | None = None,
     limit: int | None = None,
+    offset: int | None = None,
     max_output: int = 50000,
 ) -> str:
     """Read file contents.
@@ -100,6 +101,7 @@ def read_file(
         path: File path (relative to workdir)
         workdir: Workspace root
         limit: Maximum lines to read
+        offset: 1-indexed line number to start reading from
         max_output: Maximum characters to return
 
     Returns:
@@ -117,9 +119,17 @@ def read_file(
             return f"Error: Not a file: {path}"
 
         lines = fp.read_text().splitlines()
+        total = len(lines)
+
+        start = max((offset or 1) - 1, 0)
+        skipped = start
+        lines = lines[start:]
 
         if limit and limit < len(lines):
-            lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
+            remaining = len(lines) - limit
+            lines = lines[:limit] + [f"... ({remaining} more lines)"]
+        elif skipped:
+            lines.append(f"... (started at line {start + 1} of {total})")
 
         content = "\n".join(lines)
 
@@ -313,6 +323,10 @@ def bash_handler(command: str, *, ctx: ToolContext) -> str:
                 "type": "integer",
                 "description": "Maximum number of lines to read",
             },
+            "offset": {
+                "type": "integer",
+                "description": "1-indexed line number to start reading from",
+            },
         },
         "required": ["path"],
     },
@@ -324,11 +338,12 @@ def bash_handler(command: str, *, ctx: ToolContext) -> str:
 def read_handler(
     path: str,
     limit: int | None = None,
+    offset: int | None = None,
     *,
     ctx: ToolContext,
 ) -> str:
     """Tool handler for Read."""
-    return read_file(path, workdir=ctx.workdir, limit=limit)
+    return read_file(path, workdir=ctx.workdir, limit=limit, offset=offset)
 
 
 @register_tool(

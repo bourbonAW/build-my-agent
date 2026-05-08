@@ -91,6 +91,29 @@ class TestReadFile:
             assert "Line 9" in result
             assert "more" in result
 
+    def test_read_with_offset(self):
+        """offset is 1-indexed and skips earlier lines."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+            test_file.write_text("\n".join(f"Line {i}" for i in range(100)))
+
+            result = read_file(str(test_file), offset=36, workdir=Path(tmpdir))
+            assert "Line 35" in result
+            assert "Line 0\n" not in result
+            assert "Line 34\n" not in result
+
+    def test_read_with_offset_and_limit(self):
+        """offset + limit yields a window starting at line `offset`."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+            test_file.write_text("\n".join(f"Line {i}" for i in range(100)))
+
+            result = read_file(str(test_file), offset=36, limit=5, workdir=Path(tmpdir))
+            assert "Line 35" in result
+            assert "Line 39" in result
+            assert "Line 40" not in result
+            assert "Line 34" not in result
+
 
 class TestWriteFile:
     """Test write_file tool."""
