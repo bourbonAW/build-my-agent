@@ -32,6 +32,13 @@ class FakeEmbeddingProvider:
         return (0.0, 0.0, 1.0)
 
 
+class FailingEmbeddingProvider(FakeEmbeddingProvider):
+    def embed_passages(self, texts: list[str]) -> list[tuple[float, ...]]:
+        if any("broken" in text.casefold() for text in texts):
+            raise RuntimeError("embedding failed")
+        return super().embed_passages(texts)
+
+
 def _record(
     memory_id: str,
     *,
@@ -154,3 +161,38 @@ def test_rebuild_clears_stale_rows(tmp_path: Path) -> None:
         ]
 
     assert ids == ["mem_current"]
+
+
+def test_rebuild_failure_leaves_existing_index_unchanged(tmp_path: Path) -> None:
+    index_path = tmp_path / "search_index.sqlite"
+    old_index = MemorySearchIndex(
+        index_path,
+        FakeEmbeddingProvider(),
+        top_k=8,
+        min_similarity=0.25,
+    )
+    old_index.rebuild([_record("mem_old", content="Old append-only memory.")])
+    failing_index = MemorySearchIndex(
+        index_path,
+        FailingEmbeddingProvider(),
+        top_k=8,
+        min_similarity=0.25,
+    )
+
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        failing_index.rebuild(
+            [
+                _record("mem_new", content="New append-only memory."),
+                _record("mem_broken", content="This broken memory cannot embed."),
+            ]
+        )
+
+    with sqlite3.connect(index_path) as conn:
+        ids = [
+            row[0]
+            for row in conn.execute(
+                "select memory_id from memory_index_records order by memory_id"
+            ).fetchall()
+        ]
+
+    assert ids == ["mem_old"]

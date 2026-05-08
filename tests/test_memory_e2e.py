@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bourbon.config import MemoryConfig
+from bourbon.config import MemoryConfig, MemorySemanticConfig
 from bourbon.memory.manager import MemoryManager
 from bourbon.memory.models import MemoryActor, MemoryRecordDraft
 
@@ -17,7 +17,10 @@ class FakeAudit:
 
 def test_memory_write_search_delete_e2e(tmp_path) -> None:
     manager = MemoryManager(
-        config=MemoryConfig(storage_dir=str(tmp_path)),
+        config=MemoryConfig(
+            storage_dir=str(tmp_path),
+            semantic=MemorySemanticConfig(enabled=False),
+        ),
         project_key="proj",
         workdir=tmp_path,
         audit=FakeAudit(),  # type: ignore[arg-type]

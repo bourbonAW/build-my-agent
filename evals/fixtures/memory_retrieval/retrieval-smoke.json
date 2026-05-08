@@ -3,54 +3,62 @@
     {
       "id": "mem_dark_mode",
       "target": "user",
-      "content": "User prefers dark UI components.",
-      "cues": ["dark mode", "ui preference"]
+      "content": "User prefers dark mode for UI components.",
+      "semantic_terms": ["用户喜欢什么界面主题"]
     },
     {
       "id": "mem_append_only",
       "target": "project",
-      "content": "Prefer append-only memory records.",
-      "cues": ["minimal memory model", "record immutability"]
+      "content": "We decided append-only memory records are easier to maintain.",
+      "semantic_terms": ["memory 记录应该能不能原地修改"]
     },
     {
       "id": "mem_no_session",
       "target": "project",
-      "content": "Temporary session facts stay in active session state.",
-      "cues": ["no session memory", "target user project"]
+      "content": "No session memory: temporary session facts stay in active session state.",
+      "semantic_terms": ["临时会话事实是否进入长期记忆"]
     },
     {
       "id": "mem_audit",
       "target": "project",
       "content": "memory_write must emit an audit event.",
-      "cues": ["memory audit", "required audit"]
+      "semantic_terms": ["memory 写入是否需要审计"]
     },
     {
       "id": "mem_index",
       "target": "project",
-      "content": "MEMORY.md is rebuilt after every write and delete.",
-      "cues": ["index rebuild", "memory delete"]
+      "content": "Index rebuild: memory index updates after every write and delete.",
+      "semantic_terms": ["记忆索引什么时候重建"]
     }
   ],
   "cases": [
     {
-      "query": "where is `dark mode` preference",
+      "query": "ui preference",
       "expected_id": "mem_dark_mode"
     },
     {
-      "query": "append-only memory",
+      "query": "append-only memory records decision",
       "expected_id": "mem_append_only"
     },
     {
-      "query": "`no session memory` decision",
+      "query": "no session memory",
       "expected_id": "mem_no_session"
     },
     {
-      "query": "`memory audit` requirement",
+      "query": "memory audit",
       "expected_id": "mem_audit"
     },
     {
-      "query": "`index rebuild` on delete",
+      "query": "index rebuild",
       "expected_id": "mem_index"
+    },
+    {
+      "query": "用户喜欢什么界面主题？",
+      "expected_id": "mem_dark_mode"
+    },
+    {
+      "query": "memory 记录应该能不能原地修改？",
+      "expected_id": "mem_append_only"
     }
   ]
 }

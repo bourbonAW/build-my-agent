@@ -45,7 +45,7 @@
 - Test: `tests/test_memory_policy.py`
 - Test: `tests/test_memory_config.py`
 
-- [ ] **Step 1: Replace model tests with minimal model expectations**
+- [x] **Step 1: Replace model tests with minimal model expectations**
 
 Replace `tests/test_memory_models.py` with:
 
@@ -151,7 +151,7 @@ def test_memory_system_info_uses_targets_not_status() -> None:
     assert info.recent_writes[0].preview == "Prefer append-only memory records."
 ```
 
-- [ ] **Step 2: Replace policy tests with target permission tests**
+- [x] **Step 2: Replace policy tests with target permission tests**
 
 Replace `tests/test_memory_policy.py` with:
 
@@ -192,7 +192,7 @@ def test_delete_permission_rejects_subagents() -> None:
         check_delete_permission(MemoryActor(kind="subagent", run_id="run_1"))
 ```
 
-- [ ] **Step 3: Replace memory config tests**
+- [x] **Step 3: Replace memory config tests**
 
 Update `tests/test_memory_config.py` so the memory config assertions are:
 
@@ -239,7 +239,7 @@ def test_config_to_dict_memory_minimal_fields() -> None:
     }
 ```
 
-- [ ] **Step 4: Run tests to verify they fail**
+- [x] **Step 4: Run tests to verify they fail**
 
 Run:
 
@@ -249,7 +249,7 @@ uv run pytest tests/test_memory_models.py tests/test_memory_policy.py tests/test
 
 Expected: FAIL with import errors for removed/renamed symbols or assertions showing old config fields still exist.
 
-- [ ] **Step 5: Replace `src/bourbon/memory/models.py`**
+- [x] **Step 5: Replace `src/bourbon/memory/models.py`**
 
 Use this content:
 
@@ -334,7 +334,7 @@ class MemorySystemInfo:
     memory_file_count: int
 ```
 
-- [ ] **Step 6: Replace memory exports**
+- [x] **Step 6: Replace memory exports**
 
 Use this content for `src/bourbon/memory/__init__.py`:
 
@@ -366,7 +366,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 7: Replace memory policy**
+- [x] **Step 7: Replace memory policy**
 
 Use this content for `src/bourbon/memory/policy.py`:
 
@@ -391,7 +391,7 @@ def check_delete_permission(actor: MemoryActor) -> None:
         raise PermissionError("Subagents cannot delete memory records")
 ```
 
-- [ ] **Step 8: Simplify memory config**
+- [x] **Step 8: Simplify memory config**
 
 In `src/bourbon/config.py`, replace `MemoryConfig` with:
 
@@ -419,7 +419,7 @@ In `Config.to_dict()`, replace the `"memory"` payload with:
 },
 ```
 
-- [ ] **Step 9: Run focused tests**
+- [x] **Step 9: Run focused tests**
 
 Run:
 
@@ -429,7 +429,7 @@ uv run pytest tests/test_memory_models.py tests/test_memory_policy.py tests/test
 
 Expected: PASS.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 Run:
 
@@ -455,7 +455,7 @@ git commit -m "refactor(memory): reduce core memory models"
 - Test: `tests/test_memory_cues.py`
 - Test: `tests/test_memory_store.py`
 
-- [ ] **Step 1: Add cue helper tests**
+- [x] **Step 1: Add cue helper tests**
 
 Create `tests/test_memory_cues.py`:
 
@@ -499,7 +499,7 @@ def test_expand_query_terms_returns_normalized_query_and_extracted_terms() -> No
     )
 ```
 
-- [ ] **Step 2: Replace store tests with minimal frontmatter tests**
+- [x] **Step 2: Replace store tests with minimal frontmatter tests**
 
 Replace `tests/test_memory_store.py` with:
 
@@ -597,7 +597,7 @@ def test_search_matches_content_and_cues_with_target_filter(tmp_path) -> None:
     assert target_results == []
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run:
 
@@ -607,7 +607,7 @@ uv run pytest tests/test_memory_cues.py tests/test_memory_store.py -q
 
 Expected: FAIL because `src/bourbon/memory/cues.py` does not exist and store still expects the old model.
 
-- [ ] **Step 4: Remove old cue package and add single cue module**
+- [x] **Step 4: Remove old cue package and add single cue module**
 
 Run:
 
@@ -674,7 +674,7 @@ def expand_query_terms(query: str) -> tuple[str, ...]:
     return normalize_cues((base, *_extract_terms(query)))
 ```
 
-- [ ] **Step 5: Replace `src/bourbon/memory/store.py`**
+- [x] **Step 5: Replace `src/bourbon/memory/store.py`**
 
 Use the minimal store implementation below:
 
@@ -907,7 +907,7 @@ class MemoryStore:
         return results
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -917,7 +917,7 @@ uv run pytest tests/test_memory_cues.py tests/test_memory_store.py -q
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run:
 
@@ -937,7 +937,7 @@ git commit -m "refactor(memory): collapse cues and store format"
 - Test: `tests/test_memory_manager.py`
 - Test: `tests/test_memory_audit.py`
 
-- [ ] **Step 1: Replace manager tests with minimal orchestration tests**
+- [x] **Step 1: Replace manager tests with minimal orchestration tests**
 
 Replace `tests/test_memory_manager.py` with focused tests:
 
@@ -1054,7 +1054,7 @@ def test_get_status_returns_system_info(manager: MemoryManager) -> None:
     assert info.recent_writes[0].preview == "Status preview content."
 ```
 
-- [ ] **Step 2: Update audit event tests**
+- [x] **Step 2: Update audit event tests**
 
 Replace `tests/test_memory_audit.py` with:
 
@@ -1068,7 +1068,7 @@ def test_memory_event_types_exist() -> None:
     assert EventType.MEMORY_DELETE == "memory_delete"
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run:
 
@@ -1078,7 +1078,7 @@ uv run pytest tests/test_memory_manager.py tests/test_memory_audit.py -q
 
 Expected: FAIL because manager still exposes lifecycle/cue metadata behavior and `MEMORY_DELETE` is not defined.
 
-- [ ] **Step 4: Update audit event types**
+- [x] **Step 4: Update audit event types**
 
 In `src/bourbon/audit/events.py`, replace memory event values with:
 
@@ -1088,7 +1088,7 @@ In `src/bourbon/audit/events.py`, replace memory event values with:
     MEMORY_DELETE = "memory_delete"
 ```
 
-- [ ] **Step 5: Replace manager with minimal orchestration**
+- [x] **Step 5: Replace manager with minimal orchestration**
 
 Replace `src/bourbon/memory/manager.py` with:
 
@@ -1287,7 +1287,7 @@ class MemoryManager:
         )
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -1297,7 +1297,7 @@ uv run pytest tests/test_memory_manager.py tests/test_memory_audit.py -q
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run:
 
@@ -1316,7 +1316,7 @@ git commit -m "refactor(memory): simplify manager and audit"
 - Test: `tests/test_memory_tools.py`
 - Test: `tests/test_agent_error_policy.py`
 
-- [ ] **Step 1: Replace memory tool tests**
+- [x] **Step 1: Replace memory tool tests**
 
 Replace `tests/test_memory_tools.py` with:
 
@@ -1483,7 +1483,7 @@ def test_memory_tools_return_error_when_disabled() -> None:
     assert "error" in json.loads(memory_status(ctx=ctx))
 ```
 
-- [ ] **Step 2: Update prompt policy tests**
+- [x] **Step 2: Update prompt policy tests**
 
 In `tests/test_agent_error_policy.py`, replace `test_memory_write_operations_rule_exists` with:
 
@@ -1498,7 +1498,7 @@ In `tests/test_agent_error_policy.py`, replace `test_memory_write_operations_rul
         assert "NOT observable in the current session" in prompt
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run:
 
@@ -1508,7 +1508,7 @@ uv run pytest tests/test_memory_tools.py tests/test_agent_error_policy.py::TestA
 
 Expected: FAIL because old tools and old prompt guidance still exist.
 
-- [ ] **Step 4: Replace `src/bourbon/tools/memory.py`**
+- [x] **Step 4: Replace `src/bourbon/tools/memory.py`**
 
 Use a minimal tool module:
 
@@ -1691,7 +1691,7 @@ def memory_status(*, ctx: ToolContext, **kwargs: Any) -> str:
     )
 ```
 
-- [ ] **Step 5: Update prompt guidance**
+- [x] **Step 5: Update prompt guidance**
 
 In `src/bourbon/prompt/sections.py`, replace the memory paragraph inside `TOOL_RESULT_TRUST` with:
 
@@ -1703,7 +1703,7 @@ In `src/bourbon/prompt/sections.py`, replace the memory paragraph inside `TOOL_R
         "memory state, call memory_search with the relevant target filter.\n"
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -1713,7 +1713,7 @@ uv run pytest tests/test_memory_tools.py tests/test_agent_error_policy.py::TestA
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run:
 
@@ -1740,7 +1740,7 @@ git commit -m "refactor(memory): simplify tool surface"
 - Delete: `tests/test_memory_cue_backfill_script.py`
 - Delete: `tests/test_memory_phase2.py`
 
-- [ ] **Step 1: Update agent integration tests**
+- [x] **Step 1: Update agent integration tests**
 
 In `tests/test_memory_agent_integration.py`, remove tests that assert `cue_runtime_context_factory` exists and tests that assert `flush_before_compact` is called. Add this test:
 
@@ -1759,7 +1759,7 @@ def test_agent_tool_context_has_memory_actor_without_cue_runtime_context(tmp_pat
     assert not hasattr(ctx, "cue_runtime_context_factory")
 ```
 
-- [ ] **Step 2: Replace memory files tests with anchor/merge-only coverage**
+- [x] **Step 2: Replace memory files tests with anchor/merge-only coverage**
 
 Replace `tests/test_memory_files.py` with tests for `read_file_anchor`, `merge_user_md`, and `render_merged_user_md_for_prompt` only:
 
@@ -1807,7 +1807,7 @@ def test_render_merged_user_md_for_prompt_uses_merge_and_budget(tmp_path: Path) 
     assert "Use concise answers." not in rendered
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run:
 
@@ -1817,7 +1817,7 @@ uv run pytest tests/test_memory_agent_integration.py tests/test_memory_files.py 
 
 Expected: FAIL because agent/tool context and files helpers still expose old cue runtime and managed-block behavior.
 
-- [ ] **Step 4: Remove cue runtime context from `ToolContext`**
+- [x] **Step 4: Remove cue runtime context from `ToolContext`**
 
 `ToolContext.memory_actor` already exists and must stay. In `src/bourbon/tools/__init__.py`, remove only this field from `ToolContext`:
 
@@ -1827,7 +1827,7 @@ cue_runtime_context_factory: Callable[[], Any] | None = None
 
 Also remove the now-unused `Callable` import if it is only used by that field.
 
-- [ ] **Step 5: Remove compact flush and cue runtime methods from `Agent`**
+- [x] **Step 5: Remove compact flush and cue runtime methods from `Agent`**
 
 In `src/bourbon/agent.py`, delete the method blocks named `_make_cue_runtime_context`, `_serialize_message_for_memory_flush`, `_compactable_messages_for_flush`, and `_maybe_flush_memory_before_compact`.
 
@@ -1835,7 +1835,7 @@ In `_make_tool_context`, remove the `cue_runtime_context_factory` keyword argume
 
 Search for `_maybe_flush_memory_before_compact()` callers in `agent.py` and remove those calls. The compact flow must continue without memory flushing.
 
-- [ ] **Step 6: Reduce `memory/files.py` to anchor and USER.md merge helpers**
+- [x] **Step 6: Reduce `memory/files.py` to anchor and USER.md merge helpers**
 
 Remove managed preference block helpers and imports tied to `MemoryRecord` and `_record_to_filename`. Keep:
 
@@ -1851,7 +1851,7 @@ render_merged_user_md_for_prompt(global_path: Path | None, project_path: Path | 
 return _truncate_to_tokens(merge_user_md(global_path, project_path), token_limit)
 ```
 
-- [ ] **Step 7: Delete obsolete compact/backfill files and tests**
+- [x] **Step 7: Delete obsolete compact/backfill files and tests**
 
 Run:
 
@@ -1860,7 +1860,7 @@ git rm src/bourbon/memory/compact.py scripts/backfill_memory_cues.py
 git rm tests/test_memory_compact.py tests/test_memory_cue_runtime.py tests/test_memory_cue_backfill.py tests/test_memory_cue_backfill_script.py tests/test_memory_phase2.py
 ```
 
-- [ ] **Step 8: Run focused tests**
+- [x] **Step 8: Run focused tests**
 
 Run:
 
@@ -1870,7 +1870,7 @@ uv run pytest tests/test_memory_agent_integration.py tests/test_memory_files.py 
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 Run:
 
@@ -1899,7 +1899,7 @@ git commit -m "refactor(memory): remove compact and managed lifecycle paths"
 - Delete: `evals/cases/memory-cue-retrieval.yaml`
 - Modify: `promptfooconfig.yaml`
 
-- [ ] **Step 1: Delete obsolete cue model/query/eval tests**
+- [x] **Step 1: Delete obsolete cue model/query/eval tests**
 
 Run:
 
@@ -1907,7 +1907,7 @@ Run:
 git rm tests/test_memory_cue_models.py tests/test_memory_cue_engine.py tests/test_memory_cue_query.py tests/test_memory_cue_eval.py
 ```
 
-- [ ] **Step 2: Replace memory e2e test**
+- [x] **Step 2: Replace memory e2e test**
 
 Replace `tests/test_memory_e2e.py` with:
 
@@ -1950,7 +1950,7 @@ def test_memory_write_search_delete_e2e(tmp_path) -> None:
     assert manager.search("dark mode", target="project") == []
 ```
 
-- [ ] **Step 3: Replace prompt memory test expectations**
+- [x] **Step 3: Replace prompt memory test expectations**
 
 In `tests/test_memory_prompt.py`, keep anchor rendering tests and update expected memory index text to the new format:
 
@@ -1960,7 +1960,7 @@ assert "- [project] Prefer append-only memory records." in prompt
 
 Remove assertions that rely on promoted USER.md blocks, `kind`, `status`, or `updated_at`.
 
-- [ ] **Step 4: Replace eval provider with minimal retrieval metrics**
+- [x] **Step 4: Replace eval provider with minimal retrieval metrics**
 
 Create `evals/memory_retrieval_provider.py`:
 
@@ -2033,7 +2033,7 @@ def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> d
     return {"output": json.dumps(output)}
 ```
 
-- [ ] **Step 5: Replace memory eval fixture**
+- [x] **Step 5: Replace memory eval fixture**
 
 Create `evals/fixtures/memory_retrieval/retrieval-smoke.json`:
 
@@ -2096,7 +2096,7 @@ Create `evals/fixtures/memory_retrieval/retrieval-smoke.json`:
 }
 ```
 
-- [ ] **Step 6: Update promptfoo memory eval assertions**
+- [x] **Step 6: Update promptfoo memory eval assertions**
 
 Create `evals/cases/memory-retrieval.yaml`:
 
@@ -2142,7 +2142,7 @@ Delete the old cue-named eval files:
 git rm evals/memory_cue_retrieval_provider.py evals/fixtures/memory_cues/retrieval-smoke.json evals/cases/memory-cue-retrieval.yaml
 ```
 
-- [ ] **Step 7: Run focused tests and provider smoke**
+- [x] **Step 7: Run focused tests and provider smoke**
 
 Run:
 
@@ -2153,7 +2153,7 @@ uv run python -c "from evals.memory_retrieval_provider import call_api; print(ca
 
 Expected: tests PASS and the provider command prints JSON with `expanded_query_plus_cues`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 Run:
 
@@ -2172,7 +2172,7 @@ git commit -m "refactor(memory): simplify retrieval evals"
 - Modify any remaining imports or tests surfaced by the commands in this task.
 - Test: full memory test set and static checks.
 
-- [ ] **Step 1: Search for removed symbols**
+- [x] **Step 1: Search for removed symbols**
 
 Run:
 
@@ -2182,7 +2182,7 @@ rg -n "MemoryKind|MemoryScope|MemorySource|MemoryStatus|MemoryStatusInfo|SourceR
 
 Expected: no matches, except references inside historical design/spec/plan docs if the command is intentionally expanded to `docs`.
 
-- [ ] **Step 2: Run memory-focused tests**
+- [x] **Step 2: Run memory-focused tests**
 
 Run:
 
@@ -2192,7 +2192,7 @@ uv run pytest tests/test_memory_models.py tests/test_memory_policy.py tests/test
 
 Expected: PASS.
 
-- [ ] **Step 3: Run prompt and registry tests touched by tool names**
+- [x] **Step 3: Run prompt and registry tests touched by tool names**
 
 Run:
 
@@ -2202,7 +2202,7 @@ uv run pytest tests/test_agent_error_policy.py tests/test_tools_registry.py test
 
 Expected: PASS.
 
-- [ ] **Step 4: Run static checks**
+- [x] **Step 4: Run static checks**
 
 Run:
 
@@ -2213,7 +2213,7 @@ uv run mypy src
 
 Expected: PASS.
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run:
 
@@ -2223,7 +2223,7 @@ uv run pytest -q
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit final cleanup**
+- [x] **Step 6: Commit final cleanup**
 
 If any remaining import cleanup or test adjustment was needed, commit it:
 

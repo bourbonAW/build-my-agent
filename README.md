@@ -12,7 +12,7 @@ Bourbon is a general-purpose AI agent platform with a code-first evolution, desi
 - **Domain Expertise**: Investment analysis, note management, and more via skills
 - **External Tools**: MCP Client for databases, APIs
 - **Security**: Multi-layer sandbox isolation (bubblewrap/docker/seatbelt), access control, audit logging
-- **Memory**: File-first immutable memory with `target + content + created_at + cues`. Simple write/search/delete lifecycle, deterministic cue extraction from textual hints, no promote/archive/status complexity
+- **Memory**: File-first immutable memory with `target + content + created_at + cues`, deterministic cue extraction, and a rebuildable local semantic search index
 - **Safe Operations**: Sandboxed file operations, risk-based error handling
 
 **Architecture**:
@@ -69,6 +69,9 @@ bourbon
 │   │   ├── store.py         # File persistence and MEMORY.md index
 │   │   ├── models.py        # MemoryRecord (id, target, content, created_at, cues)
 │   │   ├── cues.py          # Deterministic cue extraction and query expansion
+│   │   ├── embeddings.py    # Local FastEmbed provider boundary
+│   │   ├── search_index.py  # Rebuildable SQLite FTS + vector index
+│   │   ├── retriever.py     # Hybrid exact/cue/semantic retrieval
 │   │   ├── files.py         # Prompt anchors (AGENTS.md, USER.md, MEMORY.md)
 │   │   └── policy.py        # Write/delete permissions
 │   ├── mcp_client/          # MCP Client implementation
@@ -102,7 +105,7 @@ bourbon
 | `search` | Code search (ripgrep) | Read-only |
 | `todo` | Task management | - |
 | `memory_write` | Write an immutable memory record | Sandboxed to workdir |
-| `memory_search` | Search memory records by keyword (with optional `debug_terms`) | Read-only |
+| `memory_search` | Search memory records with content/cue matching and local semantic recall | Read-only |
 | `memory_delete` | Delete a memory record by id | File write |
 
 ### Stage B: General Knowledge Tools
@@ -118,6 +121,9 @@ bourbon
 ```bash
 # Install Stage B dependencies
 uv pip install -e ".[stage-b]"
+
+# Install local semantic memory dependencies
+uv pip install -e ".[semantic]"
 ```
 
 ### Skill System (Agent Skills Compatible)

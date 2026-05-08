@@ -198,7 +198,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
-    { name = "fastembed" },
     { name = "httpx", extra = ["socks"] },
     { name = "mcp" },
     { name = "openai" },
@@ -215,6 +214,7 @@ all = [
     { name = "aiohttp" },
     { name = "beautifulsoup4" },
     { name = "datasets" },
+    { name = "fastembed" },
     { name = "huggingface-hub" },
     { name = "jinja2" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
@@ -240,6 +240,9 @@ observability = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
 ]
+semantic = [
+    { name = "fastembed" },
+]
 stage-b = [
     { name = "aiohttp" },
     { name = "beautifulsoup4" },
@@ -254,9 +257,9 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'stage-b'", specifier = ">=3.9.0" },
     { name = "anthropic", specifier = ">=0.49.0" },
     { name = "beautifulsoup4", marker = "extra == 'stage-b'", specifier = ">=4.12.0" },
-    { name = "bourbon", extras = ["stage-b", "observability", "loaders"], marker = "extra == 'all'" },
+    { name = "bourbon", extras = ["stage-b", "observability", "loaders", "semantic"], marker = "extra == 'all'" },
     { name = "datasets", marker = "extra == 'loaders'", specifier = ">=2.18" },
-    { name = "fastembed", specifier = ">=0.6.0" },
+    { name = "fastembed", marker = "extra == 'semantic'", specifier = ">=0.6.0" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.28.0" },
     { name = "huggingface-hub", marker = "extra == 'loaders'", specifier = ">=0.21" },
     { name = "jinja2", marker = "extra == 'stage-b'", specifier = ">=3.1.0" },
@@ -280,7 +283,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.0" },
     { name = "toml", specifier = ">=0.10.2" },
 ]
-provides-extras = ["dev", "stage-b", "observability", "loaders", "all"]
+provides-extras = ["semantic", "dev", "stage-b", "observability", "loaders", "all"]
 
 [[package]]
 name = "certifi"

@@ -19,7 +19,7 @@ Bourbon has evolved from a code specialist to a multi-agent platform with:
 - **Multi-Agent**: Subagent system with parallel execution, tool filtering, and cancellation
 - **Persistent Tasks**: File-backed workflow tasks with ownership and dependencies (Task V2)
 - **Session Management**: Structured session layer with MessageChain, ContextManager, and transcript storage
-- **Memory (Minimal Model)**: File-first immutable memory with `target + content + created_at + cues`. Simple write/search/delete lifecycle, no promote/archive/status complexity. Cues are write-time extracted textual hints (backticks, quotes, paths) for lightweight retrieval boost.
+- **Memory (Minimal Model + Local Semantic Index)**: File-first immutable memory with `target + content + created_at + cues`. Markdown records remain source of truth; `search_index.sqlite` is a rebuildable local FastEmbed/SQLite search index for semantic recall.
 - **Security**: Multi-layer sandbox isolation, permissions, access control, credential management, audit logging
 - **Observability**: OpenTelemetry tracing integration
 - **Context Management**: Long session support with compression and streaming markdown rendering
@@ -31,7 +31,7 @@ Bourbon has evolved from a code specialist to a multi-agent platform with:
 3. **Skill System**: Agent Skills compatible - progressive disclosure, multi-scope discovery
 4. **MCP Integration**: External tool servers for extended capabilities
 5. **Sandbox Isolation**: Bubblewrap, Docker, seatbelt providers for safe tool execution
-6. **Memory System**: File-first immutable memory records (`target + content + cues`) with simple write/search/delete lifecycle and lightweight cue-based retrieval
+6. **Memory System**: File-first immutable memory records (`target + content + cues`) with simple write/search/delete lifecycle, cue-based retrieval, and a rebuildable local semantic index
 7. **Eval Framework**: Promptfoo-based evaluation + community benchmarks
 
 ## Product & Interface Design Principles
@@ -131,6 +131,9 @@ Practical bar: before adding a feature, prompt section, UI element, dependency, 
 │   │   ├── store.py         # MemoryStore file persistence + MEMORY.md index rebuild
 │   │   ├── models.py        # MemoryRecord (id, target, content, created_at, cues)
 │   │   ├── cues.py          # Cue extraction/normalization from textual hints
+│   │   ├── embeddings.py    # Local FastEmbed provider boundary
+│   │   ├── search_index.py  # Rebuildable SQLite FTS + vector index
+│   │   ├── retriever.py     # Hybrid exact/cue/semantic retrieval
 │   │   ├── files.py         # Prompt anchor reading + USER.md merge
 │   │   └── policy.py        # Write/delete permissions
 │   ├── audit/               # Security event logging
@@ -181,6 +184,9 @@ uv pip install -e ".[dev]"
 # Install Stage B dependencies
 uv pip install -e ".[stage-b]"
 
+# Install local semantic memory dependencies
+uv pip install -e ".[semantic]"
+
 # Install observability dependencies
 uv pip install -e ".[observability]"
 
@@ -215,7 +221,7 @@ python -m bourbon
 8. **Eval via promptfoo**: Standardized evaluation with caching, dashboards, multi-dimensional scoring, and community benchmarks
 9. **Subagent isolation**: Each subagent gets its own session, tool set, and abort controller
 10. **Task/Todo split**: In-memory todos (V1) for quick checklists; persistent file-backed tasks (V2) for workflow management
-11. **Memory (Minimal Model)**: Immutable Markdown records with minimal YAML frontmatter (`id`, `target`, `created_at`, `cues`). Only `user`/`project` targets. No promote/archive/status lifecycle. Cues are write-time extracted from textual hints (backticks, quotes, paths). Search is simple content + cue matching with query term expansion. Prompt anchors (AGENTS.md, MEMORY.md, USER.md) remain.
+11. **Memory (Minimal Model)**: Immutable Markdown records with minimal YAML frontmatter (`id`, `target`, `created_at`, `cues`). Only `user`/`project` targets. No promote/archive/status lifecycle. Cues are write-time extracted from textual hints. Search combines exact content/cue matching with a rebuildable local semantic index. Prompt anchors (AGENTS.md, MEMORY.md, USER.md) remain.
 
 ## Session Management
 
@@ -311,20 +317,21 @@ Cues are lightweight retrieval hints, not structured metadata:
 | Tool | Purpose | Risk |
 |------|---------|------|
 | `memory_write` | Write an immutable memory record | MEDIUM |
-| `memory_search` | Search by keyword with optional `debug_terms` | LOW |
+| `memory_search` | Search by keyword/cue with optional local semantic recall and `debug_terms` | LOW |
 | `memory_delete` | Delete a record by id | MEDIUM |
 | `memory_status` | Show recent writes, file count, index capacity | LOW |
 
 ### Search
 
-Simple case-insensitive substring matching:
+Hybrid local retrieval:
 
-1. Expand query into normalized terms (`expand_query_terms`)
-2. For each term, scan records (content + cues)
-3. Deduplicate and collect until `limit` (default 8)
-4. Annotate `why_matched` as "matched content" or "matched cue: X"
+1. Expand query into normalized terms (`expand_query_terms`).
+2. Collect exact matches from Markdown records over content and cues.
+3. Query `search_index.sqlite` for FTS lexical candidates and FastEmbed dense vector candidates.
+4. Apply `target` as a hard filter and fuse candidates.
+5. Annotate `why_matched` as "matched content", "matched cue: X", "matched fts", or "matched semantic: score".
 
-No BM25, FTS, embedding, or LLM query interpretation.
+If FastEmbed, the model, or SQLite index is unavailable, search falls back to content/cue matching.
 
 ### Architecture
 
@@ -335,11 +342,14 @@ MemoryManager
   │   ├─ delete_record()  # Remove file, rebuild index
   │   ├─ search()         # Content + cue substring matching
   │   └─ rebuild_index()  # Generate MEMORY.md from latest 200 records
+  ├─ MemorySearchIndex    # Derived SQLite FTS + dense vector index
+  ├─ MemoryRetriever      # Hybrid candidate fusion
   └─ cues.py              # generate_cues(), expand_query_terms(), normalize_cues()
 
 Memory Files
   └─ ~/.bourbon/projects/{project}/memory/
        ├─ MEMORY.md        # Auto-rebuilt index (≤200 records)
+       ├─ search_index.sqlite # Rebuildable derived search index
        └─ {id}.md          # Individual immutable memory records
 ```
 
@@ -360,12 +370,13 @@ Memory Files
 - Immutable records: write once, never edit
 - Minimal surface: no status, no scope, no kind, no promote, no archive
 - Deterministic cues: no LLM for cue generation or query interpretation
-- Local first: file + substring search, no external services
-- Rebuildable index: MEMORY.md is a derivative, not source of truth
+- Local first: Markdown files + local SQLite/FastEmbed index, no external vector service
+- Rebuildable indexes: MEMORY.md and search_index.sqlite are derivatives, not source of truth
 - Less, but better: every field and lifecycle stage must earn its place
 
 **Design spec:**
 - Minimal Model Cleanup: `docs/superpowers/plans/2026-05-06-bourbon-memory-minimal-model-cleanup.md`
+- Local Semantic Index: `docs/superpowers/specs/2026-05-07-bourbon-memory-local-semantic-index-design.md`
 
 ## Skill System (Agent Skills Compatible)
 

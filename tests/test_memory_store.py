@@ -89,3 +89,48 @@ def test_search_matches_content_and_cues_with_target_filter(tmp_path) -> None:
     assert [result.id for result in cue_results] == ["mem_project1"]
     assert cue_results[0].why_matched == "matched cue: dark mode"
     assert target_results == []
+
+
+def test_legacy_frontmatter_without_target_is_readable(tmp_path) -> None:
+    """Pre-minimal-model files used `kind`/`scope` instead of `target` and must remain readable."""
+    legacy = tmp_path / "user_legacy_mem_abcd1234.md"
+    legacy.write_text(
+        "---\n"
+        "id: mem_abcd1234\n"
+        "kind: user\n"
+        "scope: user\n"
+        "status: promoted\n"
+        "created_at: '2026-04-22T07:22:35.539692+00:00'\n"
+        "---\n\n"
+        "Legacy memory body content.\n",
+        encoding="utf-8",
+    )
+
+    store = MemoryStore(tmp_path)
+    records = store.list_records()
+
+    assert len(records) == 1
+    assert records[0].id == "mem_abcd1234"
+    assert records[0].target == "user"
+    assert "Legacy memory body content." in records[0].content
+
+
+def test_legacy_frontmatter_falls_back_to_scope_when_kind_invalid(tmp_path) -> None:
+    """If `kind` is an actor type (e.g. agent), fall back to `scope` for the target."""
+    legacy = tmp_path / "project_legacy_mem_efgh5678.md"
+    legacy.write_text(
+        "---\n"
+        "id: mem_efgh5678\n"
+        "kind: agent\n"
+        "scope: project\n"
+        "created_at: '2026-04-22T07:22:35.539692+00:00'\n"
+        "---\n\n"
+        "Project-scoped legacy memory.\n",
+        encoding="utf-8",
+    )
+
+    store = MemoryStore(tmp_path)
+    records = store.list_records()
+
+    assert len(records) == 1
+    assert records[0].target == "project"

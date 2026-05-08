@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
 import re
 import tempfile
@@ -15,9 +16,18 @@ from typing import Any
 import yaml  # type: ignore[import-untyped]
 
 from bourbon.memory.cues import normalize_cues
-from bourbon.memory.models import MemoryRecord, MemorySearchResult, validate_memory_target
+from bourbon.memory.models import (
+    MEMORY_TARGETS,
+    MemoryRecord,
+    MemorySearchResult,
+    validate_memory_target,
+)
 
 _index_lock = threading.Lock()
+
+MEMORY_INDEX_LINE_LIMIT = 200
+
+logger = logging.getLogger(__name__)
 
 
 def sanitize_project_key(canonical_path: Path) -> str:
@@ -58,6 +68,18 @@ def _record_to_file_content(record: MemoryRecord) -> str:
     return f"---\n{frontmatter}---\n\n{record.content.rstrip()}\n"
 
 
+def _resolve_target(fm: dict[str, Any]) -> str:
+    """Pick the target field, tolerating legacy `scope`/`kind` frontmatter."""
+    for key in ("target", "scope", "kind"):
+        value = fm.get(key)
+        if value is None:
+            continue
+        candidate = str(value)
+        if candidate in MEMORY_TARGETS:
+            return candidate
+    raise KeyError("target")
+
+
 def _frontmatter_to_record(fm: dict[str, Any], body: str) -> MemoryRecord:
     created_at = fm["created_at"]
     if isinstance(created_at, str):
@@ -67,7 +89,7 @@ def _frontmatter_to_record(fm: dict[str, Any], body: str) -> MemoryRecord:
         cues = []
     return MemoryRecord(
         id=str(fm["id"]),
-        target=validate_memory_target(str(fm["target"])),
+        target=validate_memory_target(_resolve_target(fm)),
         content=body.strip(),
         created_at=created_at,
         cues=normalize_cues(cues),
@@ -93,6 +115,7 @@ class MemoryStore:
                 if "id" in fm:
                     self._id_to_filename[str(fm["id"])] = path.name
             except Exception:
+                logger.warning("Skipping unreadable memory file: %s", path, exc_info=True)
                 continue
 
     def _parse_file(self, path: Path) -> tuple[dict[str, Any], str]:
@@ -173,11 +196,12 @@ class MemoryStore:
                     continue
                 records.append(_frontmatter_to_record(fm, body))
             except Exception:
+                logger.warning("Skipping unreadable memory file: %s", path, exc_info=True)
                 continue
         return sorted(records, key=lambda record: record.created_at, reverse=True)
 
     def rebuild_index(self) -> bool:
-        records = self.list_records()[:200]
+        records = self.list_records()[:MEMORY_INDEX_LINE_LIMIT]
         lines = [
             f"- [{record.target}] {_record_preview(record)} "
             f"([{_record_to_filename(record)}]({_record_to_filename(record)}))"
@@ -188,7 +212,7 @@ class MemoryStore:
             content += "\n"
         with _index_lock:
             self._atomic_write(self.memory_dir / "MEMORY.md", content)
-        return len(records) >= 200
+        return len(records) >= MEMORY_INDEX_LINE_LIMIT
 
     def search(
         self,

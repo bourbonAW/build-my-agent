@@ -12,6 +12,8 @@ def test_memory_tools_registered() -> None:
     assert "memory_write" in names
     assert "memory_delete" in names
     assert "memory_status" in names
+    # String concatenation defeats grep — guards against accidental reintroduction
+    # of the removed promote/archive lifecycle without false-positive matches on this file.
     assert "memory_" + "promote" not in names
     assert "memory_" + "archive" not in names
 

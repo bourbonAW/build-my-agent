@@ -71,7 +71,7 @@ class FastEmbedProvider:
 
     def _load_model(self) -> object:
         try:
-            from fastembed import TextEmbedding  # type: ignore[import-not-found]
+            from fastembed import TextEmbedding
         except Exception as exc:  # pragma: no cover - depends on optional package state
             raise EmbeddingUnavailableError("fastembed is not available") from exc
         try:

@@ -2,13 +2,16 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
-import toml
+import toml  # type: ignore[import-untyped]
 
 from bourbon.mcp_client.config import MCPConfig
 
+ConfigDict = dict[str, Any]
 
-def _deep_merge(base: dict, override: dict) -> dict:
+
+def _deep_merge(base: ConfigDict, override: ConfigDict) -> ConfigDict:
     """Recursively merge override into base, returning a new dict."""
     result = base.copy()
     for key, value in override.items():
@@ -121,7 +124,7 @@ class MemorySemanticConfig:
     min_similarity: float = 0.25
 
     @classmethod
-    def from_dict(cls, data: dict) -> "MemorySemanticConfig":
+    def from_dict(cls, data: ConfigDict) -> "MemorySemanticConfig":
         return cls(
             enabled=bool(data.get("enabled", True)),
             provider=str(data.get("provider", "fastembed")),
@@ -132,7 +135,7 @@ class MemorySemanticConfig:
             min_similarity=float(data.get("min_similarity", 0.25)),
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> ConfigDict:
         return {
             "enabled": self.enabled,
             "provider": self.provider,
@@ -154,13 +157,14 @@ class MemoryConfig:
     semantic: MemorySemanticConfig = field(default_factory=MemorySemanticConfig)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "MemoryConfig":
+    def from_dict(cls, data: ConfigDict) -> "MemoryConfig":
         semantic_data = data.get("semantic", {})
-        semantic = (
-            semantic_data
-            if isinstance(semantic_data, MemorySemanticConfig)
-            else MemorySemanticConfig.from_dict(dict(semantic_data))
-        )
+        if isinstance(semantic_data, MemorySemanticConfig):
+            semantic = semantic_data
+        elif isinstance(semantic_data, dict):
+            semantic = MemorySemanticConfig.from_dict(semantic_data)
+        else:
+            semantic = MemorySemanticConfig()
         return cls(
             enabled=bool(data.get("enabled", True)),
             storage_dir=str(data.get("storage_dir", "~/.bourbon/projects")),
@@ -170,7 +174,7 @@ class MemoryConfig:
             semantic=semantic,
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> ConfigDict:
         return {
             "enabled": self.enabled,
             "storage_dir": self.storage_dir,
@@ -191,7 +195,7 @@ class ObservabilityConfig:
     otlp_headers: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ObservabilityConfig":
+    def from_dict(cls, data: ConfigDict) -> "ObservabilityConfig":
         return cls(
             enabled=bool(data.get("enabled", False)),
             service_name=str(data.get("service_name", "bourbon")),
@@ -211,7 +215,7 @@ class Config:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
-    access_control: dict = field(
+    access_control: ConfigDict = field(
         default_factory=lambda: {
             "default_action": "allow",
             "file": {
@@ -234,7 +238,7 @@ class Config:
             },
         }
     )
-    sandbox: dict = field(
+    sandbox: ConfigDict = field(
         default_factory=lambda: {
             "enabled": True,
             "provider": "auto",
@@ -260,7 +264,7 @@ class Config:
             },
         }
     )
-    audit: dict = field(
+    audit: ConfigDict = field(
         default_factory=lambda: {
             "enabled": True,
             "log_dir": "~/.bourbon/audit/",
@@ -269,7 +273,7 @@ class Config:
     )
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Config":
+    def from_dict(cls, data: ConfigDict) -> "Config":
         """Create Config from dictionary."""
         llm_data = data.get("llm", {})
         anthropic_data = llm_data.get("anthropic", {})
@@ -310,7 +314,7 @@ class Config:
             audit=_deep_merge(Config().audit, audit_data),
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> ConfigDict:
         """Convert Config to dictionary."""
         return {
             "llm": {

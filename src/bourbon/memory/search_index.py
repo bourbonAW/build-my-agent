@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -29,6 +30,13 @@ class IndexCandidate:
     channel: Literal["fts", "semantic"]
     score: float
     reason: str
+
+
+@dataclass(frozen=True)
+class _PreparedRecord:
+    record: MemoryRecord
+    search_text: str
+    vector: tuple[float, ...]
 
 
 def render_search_text(record: MemoryRecord) -> str:
@@ -97,10 +105,10 @@ class MemorySearchIndex:
             );
             """
         )
-        self._set_meta(conn, "schema_version", INDEX_SCHEMA_VERSION)
-        self._set_meta(conn, "search_text_version", SEARCH_TEXT_VERSION)
-        self._set_meta(conn, "embedding_provider", self.provider.name)
-        self._set_meta(conn, "embedding_model", self.provider.model)
+        self._set_meta_if_absent(conn, "schema_version", INDEX_SCHEMA_VERSION)
+        self._set_meta_if_absent(conn, "search_text_version", SEARCH_TEXT_VERSION)
+        self._set_meta_if_absent(conn, "embedding_provider", self.provider.name)
+        self._set_meta_if_absent(conn, "embedding_model", self.provider.model)
 
     def _set_meta(self, conn: sqlite3.Connection, key: str, value: object) -> None:
         conn.execute(
@@ -111,60 +119,183 @@ class MemorySearchIndex:
             (key, str(value)),
         )
 
+    def _set_meta_if_absent(self, conn: sqlite3.Connection, key: str, value: object) -> None:
+        conn.execute(
+            "insert or ignore into memory_index_meta(key, value) values (?, ?)",
+            (key, str(value)),
+        )
+
+    def _read_meta(self, conn: sqlite3.Connection) -> dict[str, str]:
+        return {
+            str(key): str(value)
+            for key, value in conn.execute("select key, value from memory_index_meta").fetchall()
+        }
+
+    def _expected_meta(self) -> dict[str, str]:
+        return {
+            "schema_version": INDEX_SCHEMA_VERSION,
+            "search_text_version": SEARCH_TEXT_VERSION,
+            "embedding_provider": self.provider.name,
+            "embedding_model": self.provider.model,
+        }
+
+    def _metadata_needs_rebuild(
+        self,
+        meta: dict[str, str],
+        *,
+        dimensions: int | None = None,
+        probe_text: str | None = None,
+    ) -> bool:
+        for key, value in self._expected_meta().items():
+            if meta.get(key) != value:
+                return True
+
+        if dimensions is None:
+            dimensions = self.provider.dimensions
+        if dimensions is None and probe_text is not None and meta.get("embedding_dimensions"):
+            dimensions = len(self.provider.embed_query(probe_text))
+        return dimensions is not None and meta.get("embedding_dimensions") != str(dimensions)
+
+    def needs_rebuild(self, *, probe_text: str | None = None) -> bool:
+        """Return whether the derived index is missing, stale, or unreadable."""
+        if not self.index_path.exists():
+            return True
+        try:
+            with self._connect() as conn:
+                self._ensure_schema(conn)
+                return self._metadata_needs_rebuild(
+                    self._read_meta(conn),
+                    probe_text=probe_text,
+                )
+        except sqlite3.DatabaseError:
+            return True
+
+    def _write_current_meta(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        dimensions: int | None,
+    ) -> None:
+        for key, value in self._expected_meta().items():
+            self._set_meta(conn, key, value)
+        if dimensions is None:
+            conn.execute("delete from memory_index_meta where key = ?", ("embedding_dimensions",))
+        else:
+            self._set_meta(conn, "embedding_dimensions", dimensions)
+
+    def _prepare_records(self, records: Iterable[MemoryRecord]) -> list[_PreparedRecord]:
+        record_list = list(records)
+        search_texts = [render_search_text(record) for record in record_list]
+        vectors = self.provider.embed_passages(search_texts)
+        if len(vectors) != len(record_list):
+            raise ValueError("Embedding provider returned the wrong number of vectors")
+        prepared = [
+            _PreparedRecord(
+                record=record,
+                search_text=search_text,
+                vector=tuple(vector),
+            )
+            for record, search_text, vector in zip(record_list, search_texts, vectors, strict=True)
+        ]
+        dimensions = {len(item.vector) for item in prepared}
+        if len(dimensions) > 1:
+            raise ValueError("Embedding provider returned mixed vector dimensions")
+        return prepared
+
+    def _upsert_prepared(self, conn: sqlite3.Connection, prepared: _PreparedRecord) -> None:
+        dimensions = len(prepared.vector)
+        record = prepared.record
+        conn.execute(
+            """
+            insert into memory_index_records(
+              memory_id,
+              target,
+              content_hash,
+              created_at,
+              search_text
+            )
+            values (?, ?, ?, ?, ?)
+            on conflict(memory_id) do update set
+              target = excluded.target,
+              content_hash = excluded.content_hash,
+              created_at = excluded.created_at,
+              search_text = excluded.search_text
+            """,
+            (
+                record.id,
+                record.target,
+                _content_hash(prepared.search_text),
+                record.created_at.isoformat(),
+                prepared.search_text,
+            ),
+        )
+        conn.execute("delete from memory_fts where memory_id = ?", (record.id,))
+        conn.execute(
+            "insert into memory_fts(memory_id, search_text) values (?, ?)",
+            (record.id, prepared.search_text),
+        )
+        conn.execute(
+            """
+            insert into memory_vectors(memory_id, provider, model, dimensions, vector)
+            values (?, ?, ?, ?, ?)
+            on conflict(memory_id) do update set
+              provider = excluded.provider,
+              model = excluded.model,
+              dimensions = excluded.dimensions,
+              vector = excluded.vector
+            """,
+            (
+                record.id,
+                self.provider.name,
+                self.provider.model,
+                dimensions,
+                pack_vector(prepared.vector),
+            ),
+        )
+
+    def _remove_index_files(self) -> None:
+        for path in (
+            self.index_path,
+            Path(f"{self.index_path}-wal"),
+            Path(f"{self.index_path}-shm"),
+        ):
+            with suppress(FileNotFoundError):
+                path.unlink()
+
+    def _should_reset_after_database_error(self, exc: sqlite3.DatabaseError) -> bool:
+        message = str(exc).casefold()
+        return (
+            "not a database" in message
+            or "database disk image is malformed" in message
+            or "file is encrypted" in message
+        )
+
+    def _replace_records(self, prepared: list[_PreparedRecord]) -> None:
+        dimensions = len(prepared[0].vector) if prepared else self.provider.dimensions
+        with self._connect() as conn:
+            self._ensure_schema(conn)
+            with conn:
+                conn.execute("delete from memory_index_records")
+                conn.execute("delete from memory_fts")
+                conn.execute("delete from memory_vectors")
+                for item in prepared:
+                    self._upsert_prepared(conn, item)
+                self._write_current_meta(conn, dimensions=dimensions)
+
     def upsert(self, record: MemoryRecord) -> None:
         search_text = render_search_text(record)
         vector = self.provider.embed_passages([search_text])[0]
         dimensions = len(vector)
+        prepared = _PreparedRecord(
+            record=record,
+            search_text=search_text,
+            vector=tuple(vector),
+        )
         with self._connect() as conn:
             self._ensure_schema(conn)
-            self._set_meta(conn, "embedding_dimensions", dimensions)
-            conn.execute(
-                """
-                insert into memory_index_records(
-                  memory_id,
-                  target,
-                  content_hash,
-                  created_at,
-                  search_text
-                )
-                values (?, ?, ?, ?, ?)
-                on conflict(memory_id) do update set
-                  target = excluded.target,
-                  content_hash = excluded.content_hash,
-                  created_at = excluded.created_at,
-                  search_text = excluded.search_text
-                """,
-                (
-                    record.id,
-                    record.target,
-                    _content_hash(search_text),
-                    record.created_at.isoformat(),
-                    search_text,
-                ),
-            )
-            conn.execute("delete from memory_fts where memory_id = ?", (record.id,))
-            conn.execute(
-                "insert into memory_fts(memory_id, search_text) values (?, ?)",
-                (record.id, search_text),
-            )
-            conn.execute(
-                """
-                insert into memory_vectors(memory_id, provider, model, dimensions, vector)
-                values (?, ?, ?, ?, ?)
-                on conflict(memory_id) do update set
-                  provider = excluded.provider,
-                  model = excluded.model,
-                  dimensions = excluded.dimensions,
-                  vector = excluded.vector
-                """,
-                (
-                    record.id,
-                    self.provider.name,
-                    self.provider.model,
-                    dimensions,
-                    pack_vector(vector),
-                ),
-            )
+            with conn:
+                self._upsert_prepared(conn, prepared)
+                self._write_current_meta(conn, dimensions=dimensions)
 
     def delete(self, memory_id: str) -> None:
         with self._connect() as conn:
@@ -174,13 +305,14 @@ class MemorySearchIndex:
             conn.execute("delete from memory_vectors where memory_id = ?", (memory_id,))
 
     def rebuild(self, records: Iterable[MemoryRecord]) -> None:
-        with self._connect() as conn:
-            self._ensure_schema(conn)
-            conn.execute("delete from memory_index_records")
-            conn.execute("delete from memory_fts")
-            conn.execute("delete from memory_vectors")
-        for record in records:
-            self.upsert(record)
+        prepared = self._prepare_records(records)
+        try:
+            self._replace_records(prepared)
+        except sqlite3.DatabaseError as exc:
+            if not self._should_reset_after_database_error(exc):
+                raise
+            self._remove_index_files()
+            self._replace_records(prepared)
 
     def search_fts(
         self,
