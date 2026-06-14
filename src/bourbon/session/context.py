@@ -38,12 +38,26 @@ class ContextManager:
         self.token_threshold = token_threshold
         self.keep_tool_results = keep_tool_results
         self.compact_preserve_count = compact_preserve_count
+        self._last_actual_input_tokens: int = 0
+
+    def record_response_tokens(self, input_tokens: int) -> None:
+        """Record actual input token count from LLM response.
+
+        Called after each LLM response so subsequent compact checks use
+        the real value rather than the len//4 estimate.
+        """
+        if input_tokens > 0:
+            self._last_actual_input_tokens = input_tokens
 
     def estimate_tokens(self) -> int:
-        """Estimate token count from active chain.
+        """Return token count for current context.
 
-        Rough estimate: 4 characters per token on average.
+        Uses actual input_tokens from the last LLM response when available
+        (exact, provider-reported). Falls back to len//4 character estimate
+        only when no response has been received yet.
         """
+        if self._last_actual_input_tokens > 0:
+            return self._last_actual_input_tokens
         messages = self.chain.get_llm_messages()
         text = json.dumps(messages, default=str)
         return len(text) // 4

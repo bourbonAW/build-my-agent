@@ -514,6 +514,7 @@ class Agent:
                             self.token_usage["total_tokens"] = (
                                 self.token_usage["input_tokens"] + self.token_usage["output_tokens"]
                             )
+                            self.session.context_manager.record_response_tokens(input_tokens)
                             debug_log(
                                 "agent.stream.event.usage",
                                 tool_round=tool_round,
@@ -699,6 +700,9 @@ class Agent:
                     self.token_usage["output_tokens"] += usage.get("output_tokens", 0)
                     self.token_usage["total_tokens"] = (
                         self.token_usage["input_tokens"] + self.token_usage["output_tokens"]
+                    )
+                    self.session.context_manager.record_response_tokens(
+                        usage.get("input_tokens", 0)
                     )
             except LLMError as e:
                 error_msg = f"LLM Error: {e}"
