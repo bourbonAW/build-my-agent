@@ -267,7 +267,7 @@ ALL_ANALYSIS_ATTRS: frozenset[str] = frozenset({
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd flywheel && pytest tests/sdk/test_schema.py -v`
-Expected: PASS (4 passed).
+Expected: PASS (5 passed).
 
 - [ ] **Step 5: Commit**
 
