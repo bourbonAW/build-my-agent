@@ -120,6 +120,59 @@ Per engine spec §15, each sub-plan tags its tasks with the phase they satisfy:
 
 ---
 
+## API Endpoint Ownership (UI §10)
+
+Every UI §10 endpoint is assigned to exactly one sub-plan. Plan 02 implements the runs and baselines endpoints and stubs all others with 501.
+
+| Endpoint | Method | Owner plan |
+|---|---|---|
+| `/api/runs` | GET, POST | 02 |
+| `/api/runs/{run_id}` | GET | 02 |
+| `/api/runs/{run_id}/scores` | POST | 02 (stub) → 04 wires taxonomy validation |
+| `/api/runs/{run_id}/sync-labels` | POST | 06 |
+| `/api/runs/{run_id}/analysis` | POST | 06 |
+| `/api/baselines` | GET, POST | 02 |
+| `/api/baselines/{generation}` | GET | 02 |
+| `/api/baselines/{generation}/revert` | POST | 02 |
+| `/api/projects` | GET | 04 |
+| `/api/datasets`, `/api/datasets/{id}` | GET | 04 |
+| `/api/datasets/{dataset_id}/cases` | POST | 04 |
+| `/api/taxonomy` | GET | 04 (aggregate of labels+migrations; UI §10) |
+| `/api/taxonomy/labels`, `/api/taxonomy/migrations` | GET, POST | 04 |
+| `/api/taxonomy/propose-update` | POST | 04 |
+| `/api/trace-pools` | GET | 04 |
+| `/api/trace-pools/{pool_id}/sample` | POST | 04 |
+| `/api/open-code-batches/{batch_id}` | GET | 04 |
+| `/api/open-code-batches/{batch_id}/codes` | POST | 04 |
+| `/api/judges`, `/api/judges/{version}` | GET | 05 |
+| `/api/judges` | POST | 05 |
+| `/api/judges/{judge_version}/validate` | POST | 05 |
+| `/api/annotations`, `/api/annotations/{id}` | GET, POST | 05 |
+| `/api/issues`, `/api/issues/{issue_id}` | GET | 06 |
+| `/api/proposals/{proposal_id}` | GET | 06 |
+| `/api/proposals/{proposal_id}/handoff` | POST | 06 |
+| `/api/proposals/{proposal_id}/implementation-link` | POST | 06 |
+| `/api/proposals/{proposal_id}/rebase` | POST | 06 |
+| `/api/proposals/{proposal_id}/approve` | POST | 07 |
+| `/api/proposals/{proposal_id}/reject` | POST | 07 |
+| `/api/proposals/{proposal_id}/defer` | POST | 07 |
+| `/api/regressions` | POST | 07 |
+| `/api/regressions/{regression_id}` | GET | 07 |
+| `/api/regressions/{regression_id}/publish` | POST | 07 |
+| `/api/regressions/{regression_id}/rollback` | POST | 07 |
+| `/api/regressions/{regression_id}/no-significant-change` | POST | 07 |
+| `/api/regressions/{regression_id}/require-judge-recheck` | POST | 07 |
+| `/api/regressions/{regression_id}/resume-after-judge-recheck` | POST | 07 |
+| `/api/regressions/{regression_id}/require-judge-migration` | POST | 07 |
+| `/api/regressions/{regression_id}/resume-after-judge-migration` | POST | 07 |
+| `/api/redaction/reports` | GET | 03 |
+| `/api/evidence/{path}`, `/api/traces/{path}` | GET | 03 (guarded by REDACTION_ENABLED) |
+
+## Dependency Notes
+
+- **Plan 05 inherits type definitions from Plan 02.** `JudgeState`, `JudgeVersionModel`, and `JudgeDriftCheckModel` are defined in plan 02 `api/lifecycle.py` and `api/schemas.py`. Plan 05 imports and extends behavior but does not redefine these types.
+- **Redaction hard gate (Engine §10, §15):** Plan 02 evidence-serving endpoints (`/api/evidence/*`, `/api/traces/*`) return 503 until `REDACTION_ENABLED` env var is set. This var must only be set after plan 03 `RedactionService` is wired into the app. Do not set `REDACTION_ENABLED=1` as part of plan 02 integration testing.
+
 ## Execution Order Note
 
 Plans 03 and 04 both depend only on 02 and can run in parallel. 05 needs both. 06 needs 03+05. 07 needs 05+06. 08 needs every API contract, but its foundation tasks (scaffold, router, API client, runs/data pages) can start once 02 is stable. Within each plan, tasks are strictly ordered.

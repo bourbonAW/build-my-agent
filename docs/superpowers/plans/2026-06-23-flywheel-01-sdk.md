@@ -123,7 +123,7 @@ git commit -m "chore(flywheel): scaffold package and test layout"
   - `RedactionState = Literal["raw", "redacted", "blocked"]`
   - `Environment = Literal["dev", "ci", "staging", "prod"]`
   - class `FlywheelAttr` with string constants for every `flywheel.*` attribute name in Engine §6.
-  - `ALL_EXECUTION_ATTRS: frozenset[str]` and `ALL_SCORE_ATTRS: frozenset[str]`.
+  - `ALL_EXECUTION_ATTRS: frozenset[str]`, `ALL_SCORE_ATTRS: frozenset[str]`, and `ALL_ANALYSIS_ATTRS: frozenset[str]`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -132,7 +132,7 @@ git commit -m "chore(flywheel): scaffold package and test layout"
 from typing import get_args
 from sdk.schema import (
     Label, AnnotationSource, FlywheelAttr,
-    ALL_EXECUTION_ATTRS, ALL_SCORE_ATTRS,
+    ALL_EXECUTION_ATTRS, ALL_SCORE_ATTRS, ALL_ANALYSIS_ATTRS,
 )
 
 
@@ -155,6 +155,13 @@ def test_execution_and_score_attrs_disjoint():
     assert ALL_EXECUTION_ATTRS.isdisjoint(ALL_SCORE_ATTRS)
     assert FlywheelAttr.CASE_ID in ALL_EXECUTION_ATTRS
     assert FlywheelAttr.LABEL in ALL_SCORE_ATTRS
+
+
+def test_analysis_attrs_complete():
+    assert FlywheelAttr.ISSUE_ID == "flywheel.issue_id"
+    assert FlywheelAttr.PROPOSAL_STATE == "flywheel.proposal_state"
+    assert all(v.startswith("flywheel.") for v in ALL_ANALYSIS_ATTRS)
+    assert len(ALL_ANALYSIS_ATTRS) == 8
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -208,6 +215,16 @@ class FlywheelAttr:
     JUDGE_VERSION = "flywheel.judge_version"
     REDACTION_STATE = "flywheel.redaction_state"
 
+    # --- analysis and proposal metadata (Engine §6) ---
+    ISSUE_ID = "flywheel.issue_id"
+    CLUSTER_ID = "flywheel.cluster_id"
+    PROPOSAL_ID = "flywheel.proposal_id"
+    PROPOSAL_STATE = "flywheel.proposal_state"
+    REGRESSION_STATUS = "flywheel.regression_status"
+    REGRESSION_OUTCOME = "flywheel.regression_outcome"
+    BASELINE_FINGERPRINT = "flywheel.baseline_fingerprint"
+    CANDIDATE_FINGERPRINT = "flywheel.candidate_fingerprint"
+
 
 ALL_EXECUTION_ATTRS: frozenset[str] = frozenset({
     FlywheelAttr.PROJECT,
@@ -233,6 +250,17 @@ ALL_SCORE_ATTRS: frozenset[str] = frozenset({
     FlywheelAttr.ANNOTATION_RUBRIC_VERSION,
     FlywheelAttr.JUDGE_VERSION,
     FlywheelAttr.REDACTION_STATE,
+})
+
+ALL_ANALYSIS_ATTRS: frozenset[str] = frozenset({
+    FlywheelAttr.ISSUE_ID,
+    FlywheelAttr.CLUSTER_ID,
+    FlywheelAttr.PROPOSAL_ID,
+    FlywheelAttr.PROPOSAL_STATE,
+    FlywheelAttr.REGRESSION_STATUS,
+    FlywheelAttr.REGRESSION_OUTCOME,
+    FlywheelAttr.BASELINE_FINGERPRINT,
+    FlywheelAttr.CANDIDATE_FINGERPRINT,
 })
 ```
 
@@ -578,6 +606,12 @@ def test_wilson_empty_is_full_uncertainty():
 def test_pass_rate_from_labels():
     ci = pass_rate(["pass", "pass", "fail", "skip"])
     assert math.isclose(ci.point, 0.5)
+
+
+def test_pass_rate_skip_uncertain_count_as_attempts():
+    # "skip" and "uncertain" are in denominator but not successes (policy locked here)
+    ci = pass_rate(["pass", "pass", "skip", "uncertain"])
+    assert math.isclose(ci.point, 0.5)  # 2/4
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -626,6 +660,7 @@ def wilson_interval(successes: int, n: int, z: float = 1.96) -> ConfidenceInterv
 
 
 def pass_rate(labels: list[str]) -> ConfidenceInterval:
+    """Pass rate CI. Denominator = len(labels); "skip" and "uncertain" count as attempts, not successes."""
     successes = sum(1 for label in labels if label == "pass")
     return wilson_interval(successes=successes, n=len(labels))
 ```
@@ -653,7 +688,7 @@ git commit -m "feat(sdk): precision/recall/F1 and Wilson confidence intervals"
 **Interfaces:**
 - Consumes: `FlywheelContext` (`sdk.context`), `Label`/`AnnotationSource` (`sdk.schema`).
 - Produces:
-  - `@dataclass(frozen=True) class ScorePayload` with `eval_run_id`, `case_id`, `sample_id`, `label: Label`, `source: AnnotationSource`, `judge_version: str | None`, `failure_labels: list[str]`, `confidence: float | None`, `critique: str | None`.
+  - `@dataclass(frozen=True) class ScorePayload` with `eval_run_id`, `case_id`, `sample_id`, `label: Label`, `source: AnnotationSource`, `judge_version: str | None`, `failure_labels: list[str]`, `confidence: float | None`, `critique: str | None`, `trace_id: str`.
   - `ScorePayload.idempotency_key() -> str` = `f"{eval_run_id}:{case_id}:{sample_id}:{source}:{judge_version or 'none'}"`.
   - `class ScoreClient` constructed with `base_url: str`, `api_token: str`, optional `client: httpx.Client`. Method `submit(payload: ScorePayload) -> dict` POSTs to `{base_url}/api/runs/{eval_run_id}/scores` with header `Idempotency-Key` and `Authorization: Bearer {token}`; returns parsed JSON. Raises `ScoreSubmitError` on non-2xx.
 
@@ -671,6 +706,7 @@ def _payload(**overrides):
     base = dict(
         eval_run_id="run_1", case_id="case_1", sample_id="s0",
         label="fail", source="judge", judge_version="jv_1",
+        trace_id="abcdef0123456789abcdef0123456789",
         failure_labels=["tool_argument_error"], confidence=0.9, critique="bad arg",
     )
     base.update(overrides)
@@ -698,6 +734,9 @@ def test_submit_posts_with_idempotency_header():
     sent = route.calls.last.request
     assert sent.headers["Idempotency-Key"] == "run_1:case_1:s0:judge:jv_1"
     assert sent.headers["Authorization"] == "Bearer tok"
+    import json
+    body = json.loads(sent.content)
+    assert body["trace_id"] == "abcdef0123456789abcdef0123456789"
 
 
 @respx.mock
@@ -740,6 +779,7 @@ class ScorePayload:
     sample_id: str
     label: Label
     source: AnnotationSource
+    trace_id: str  # W3C TraceContext trace_id; required by ScoreBridge → Langfuse (Engine §8)
     judge_version: str | None = None
     failure_labels: list[str] = field(default_factory=list)
     confidence: float | None = None
@@ -755,6 +795,7 @@ class ScorePayload:
             "sample_id": self.sample_id,
             "label": self.label,
             "source": self.source,
+            "trace_id": self.trace_id,
             "judge_version": self.judge_version,
             "failure_labels": self.failure_labels,
             "confidence": self.confidence,
@@ -806,6 +847,6 @@ git commit -m "feat(sdk): ScoreClient with idempotent score submission"
 
 ## Self-Review
 
-- **Spec coverage (Engine §6, §7):** schema.py covers execution + post-hoc attr split (§6); context.py validates eval identity and `trace_id` requirement is enforced upstream by requiring `eval_run_id` (§6); fingerprint.py implements the composite fingerprint list (§6); score_client.py implements the §9 idempotency key; metrics.py implements F1/precision/recall/CI (§7). `failure_labels` validation against the live taxonomy is enforced server-side in plan 02 (the SDK passes strings through, as §7 states the SDK is a thin layer).
+- **Spec coverage (Engine §6, §7):** schema.py covers execution + post-hoc + analysis/proposal attr split (§6); context.py validates eval identity — note that `eval_run_id` validates application-layer identity only; the **caller** must ensure OTel context is active (trace_id present on the span) before calling `for_eval_run()`, since `eval_run_id` does not substitute for trace_id (Engine §6, §4); fingerprint.py implements the composite fingerprint list (§6); score_client.py implements the §9 idempotency key; metrics.py implements F1/precision/recall/CI with locked denominator policy for skip/uncertain (§7). `failure_labels` validation against the live taxonomy is enforced server-side in plan 02 (the SDK passes strings through, as §7 states the SDK is a thin layer).
 - **Placeholder scan:** no TBD/TODO; every code step shows complete code.
 - **Type consistency:** `ScorePayload` field names (`eval_run_id`, `case_id`, `sample_id`, `source`, `judge_version`) match the idempotency key used by the API in plan 02. `ConfidenceInterval(point, low, high)` is reused by plan 07 regression stats.

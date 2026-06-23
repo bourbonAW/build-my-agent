@@ -82,6 +82,8 @@ def test_regression_status_derivation_table():
     assert derive_regression_status("rolled_back") == "complete"
     assert derive_regression_status("baseline_stale") is None
     assert derive_regression_status("deferred") is None
+    assert derive_regression_status("rejected") is None
+    assert derive_regression_status("revising") is None
 
 
 def test_legal_transition():
@@ -137,9 +139,11 @@ RunState = Literal[
 ]
 
 JudgeState = Literal[
-    "draft", "calibrating", "locked_test", "validated",
+    "draft", "calibrating", "validated",
     "validated_limited", "rejected", "recheck_required",
 ]
+# NOTE: "locked_test" is a UI-only display abstraction (UI §12 TypeScript type).
+# It is NOT a DB/API status — Engine §12 preamble: these enums are the single source of truth.
 
 
 class IllegalTransition(ValueError):
@@ -147,9 +151,10 @@ class IllegalTransition(ValueError):
 
 
 _NOT_STARTED: frozenset[str] = frozenset({
-    "draft", "under_review", "rejected", "deferred", "approved",
-    "handoff_ready", "implementing", "diff_review", "revising",
+    "draft", "under_review", "approved",
+    "handoff_ready", "implementing", "diff_review",
 })
+# "rejected", "deferred", "revising", "baseline_stale" -> return None per UI §12 derivation table
 _COMPLETE: frozenset[str] = frozenset({
     "validated", "rolled_back", "no_significant_change", "abandoned",
 })
@@ -191,7 +196,7 @@ PROPOSAL_TRANSITIONS: dict[ProposalState, frozenset[ProposalState]] = {
     }),
     "blocked_on_judge_recheck": frozenset({"regression_running"}),
     "blocked_on_judge_migration": frozenset({"regression_review"}),
-    "baseline_stale": frozenset({"under_review"}),
+    "baseline_stale": frozenset({"under_review"}),  # requires rebase_proposal() first (plan 07); transition table allows it but validator enforces precondition
     "validated": frozenset(),  # terminal
     "rolled_back": frozenset({"revising", "abandoned"}),
     "no_significant_change": frozenset({"deferred", "abandoned"}),
@@ -517,7 +522,11 @@ class IdempotencyStore:
 
     def lookup(self, key: str) -> dict | None:
         rec = self._store.get("idempotency", self._slug(key))
-        return rec["result"] if rec else None
+        if rec is None:
+            return None
+        if rec.get("key") != key:  # guard against SHA-prefix collision
+            return None
+        return rec["result"]
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -631,7 +640,7 @@ git commit -m "feat(api): roles and require_role authorization"
   - `class BaselineService(store, audit)`:
     - `current(project) -> Baseline | None`.
     - `publish(*, project, fingerprint, proposal_id, actor) -> Baseline` — creates next generation `current`, marks prior `current` → `superseded`, audits. Returns new baseline.
-    - `revert(*, project, to_generation: int, reason: str, actor) -> Baseline` — marks current `reverted`, makes `to_generation` `current` again, audits. Returns the now-current baseline. Raises `ValueError` if `to_generation` is not a prior generation.
+    - `revert(*, project, to_generation: int, reason: str, actor) -> tuple[Baseline, str]` — marks current `reverted`, makes `to_generation` `current` again, audits. Returns `(restored_baseline, audit_event_id)`. Raises `ValueError` if `to_generation` is not a prior generation.
   - Collection: `"baselines"`, id = `f"{project}:gen{generation}"`.
 
 - [ ] **Step 1: Write the failing test**
@@ -670,9 +679,10 @@ def test_revert_restores_previous_generation(tmp_path):
     svc = _service(tmp_path)
     svc.publish(project="bourbon", fingerprint="fp1", proposal_id="p1", actor="alice")
     svc.publish(project="bourbon", fingerprint="fp2", proposal_id="p2", actor="alice")
-    restored = svc.revert(project="bourbon", to_generation=1, reason="prod regression", actor="alice")
+    restored, audit_id = svc.revert(project="bourbon", to_generation=1, reason="prod regression", actor="alice")
     assert restored.generation == 1
     assert restored.status == "current"
+    assert audit_id is not None
     assert svc.current("bourbon").generation == 1
 
 
@@ -769,7 +779,8 @@ class BaselineService:
         return baseline
 
     def revert(self, *, project: str, to_generation: int, reason: str,
-               actor: str) -> Baseline:
+               actor: str) -> tuple["Baseline", str]:
+        """Returns (restored_baseline, audit_event_id) — UI §10: all mutations return audit event id."""
         target = self._store.get("baselines", self._id(project, to_generation))
         if target is None:
             raise ValueError(f"unknown baseline generation {to_generation} for {project}")
@@ -787,10 +798,12 @@ class BaselineService:
         restored = Baseline(**target)
         restored.status = "current"
         self._save(restored)
-        self._audit.record(project=project, actor=actor, action="restore",
-                           target_type="baseline", target_id=self._id(project, to_generation),
-                           before=target, after=asdict(restored))
-        return restored
+        audit_event_id = self._audit.record(
+            project=project, actor=actor, action="restore",
+            target_type="baseline", target_id=self._id(project, to_generation),
+            before=target, after=asdict(restored),
+        )
+        return restored, audit_event_id
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -814,10 +827,10 @@ git commit -m "feat(api): Baseline service with publish/supersede/revert lineage
 - Test: `flywheel/tests/api/test_score_bridge.py`
 
 **Interfaces:**
-- Consumes: `IdempotencyStore`.
+- Consumes: `IdempotencyStore`, `AuditLog`.
 - Produces:
-  - `class ScoreBridge(langfuse_url, langfuse_secret, idem: IdempotencyStore, client: httpx.Client | None)`.
-  - `write_score(*, eval_run_id, case_id, sample_id, source, judge_version, label, failure_labels, confidence, critique, trace_id) -> dict`. Computes idempotency key `eval_run_id:case_id:sample_id:source:judge_version|none`; on duplicate returns prior result without calling Langfuse; otherwise POSTs to Langfuse Score API, remembers result, returns `{"score_id":..., "deduped": False}`.
+  - `class ScoreBridge(langfuse_url, langfuse_secret, idem: IdempotencyStore, audit: AuditLog, project: str, client: httpx.Client | None)`.
+  - `write_score(*, eval_run_id, case_id, sample_id, source, judge_version, label, failure_labels, confidence, critique, trace_id) -> dict`. Computes idempotency key `eval_run_id:case_id:sample_id:source:judge_version_or_none` (literal `:none` when judge_version absent); on duplicate returns prior result without calling Langfuse; otherwise POSTs to Langfuse Score API, records audit event, remembers result, returns `{"score_id":..., "deduped": False, "audit_event_id": ...}`.
   - Raises `ScoreBridgeError` on Langfuse non-2xx.
 
 - [ ] **Step 1: Write the failing test**
@@ -827,14 +840,18 @@ git commit -m "feat(api): Baseline service with publish/supersede/revert lineage
 import httpx
 import respx
 import pytest
+from api.audit import AuditLog
 from api.store import JsonRecordStore
 from api.idempotency import IdempotencyStore
 from api.score_bridge import ScoreBridge, ScoreBridgeError
 
 
 def _bridge(tmp_path):
-    idem = IdempotencyStore(JsonRecordStore(root=tmp_path))
-    return ScoreBridge(langfuse_url="http://lf", langfuse_secret="sec", idem=idem)
+    store = JsonRecordStore(root=tmp_path)
+    idem = IdempotencyStore(store)
+    audit = AuditLog(store)
+    return ScoreBridge(langfuse_url="http://lf", langfuse_secret="sec",
+                       idem=idem, audit=audit, project="test")
 
 
 @respx.mock
@@ -849,6 +866,7 @@ def test_write_score_posts_to_langfuse(tmp_path):
     )
     assert out["deduped"] is False
     assert out["score_id"] == "score_1"
+    assert out["audit_event_id"] is not None
     assert route.called
 
 
@@ -903,11 +921,14 @@ class ScoreBridgeError(RuntimeError):
 
 class ScoreBridge:
     def __init__(self, langfuse_url: str, langfuse_secret: str,
-                 idem: IdempotencyStore, client: httpx.Client | None = None):
+                 idem: IdempotencyStore, audit: "AuditLog", project: str,
+                 client: httpx.Client | None = None):
         self._url = langfuse_url.rstrip("/")
         self._secret = langfuse_secret
         self._idem = idem
         self._client = client or httpx.Client(timeout=30.0)
+        self._audit = audit
+        self._project = project
 
     def write_score(self, *, eval_run_id: str, case_id: str, sample_id: str,
                     source: str, judge_version: str | None, label: str,
@@ -916,7 +937,7 @@ class ScoreBridge:
         key = f"{eval_run_id}:{case_id}:{sample_id}:{source}:{judge_version or 'none'}"
         prior = self._idem.lookup(key)
         if prior is not None:
-            return {"score_id": prior["score_id"], "deduped": True}
+            return {"score_id": prior["score_id"], "deduped": True, "audit_event_id": prior.get("audit_event_id")}
         body = {
             "traceId": trace_id,
             "name": "flywheel.label",
@@ -939,9 +960,14 @@ class ScoreBridge:
         if resp.status_code >= 300:
             raise ScoreBridgeError(f"langfuse score write failed {resp.status_code}: {resp.text}")
         score_id = resp.json()["id"]
-        result = {"score_id": score_id}
+        audit_event_id = self._audit.record(
+                project=self._project, actor=source, action="write_score",
+                target_type="score", target_id=score_id, before=None,
+                after={"eval_run_id": eval_run_id, "case_id": case_id, "label": label},
+            )
+        result = {"score_id": score_id, "audit_event_id": audit_event_id}
         self._idem.remember(key, result)
-        return {"score_id": score_id, "deduped": False}
+        return {"score_id": score_id, "deduped": False, "audit_event_id": audit_event_id}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1002,6 +1028,22 @@ def test_create_run_is_idempotent(tmp_path):
     assert len(runs) == 1  # deduped, not two rows
 
 
+def test_get_run_by_id(tmp_path):
+    client = _client(tmp_path)
+    body = {"project": "bourbon", "dataset_id": "ds1", "dataset_version": "v1",
+            "harness_fingerprint": "fp1", "judge_version": "jv1"}
+    r1 = client.post("/api/runs", json=body, headers={"Idempotency-Key": "k-get"})
+    run_id = r1.json()["run"]["id"]
+    r2 = client.get(f"/api/runs/{run_id}")
+    assert r2.status_code == 200
+    assert r2.json()["run"]["id"] == run_id
+
+
+def test_get_run_unknown_id_returns_404(tmp_path):
+    client = _client(tmp_path)
+    assert client.get("/api/runs/does_not_exist").status_code == 404
+
+
 def test_create_run_requires_harness_owner(tmp_path):
     client = _client(tmp_path, roles=("dataset_curator",))
     r = client.post("/api/runs", json={"project": "bourbon", "dataset_id": "ds1",
@@ -1023,6 +1065,7 @@ def test_baseline_revert_flow(tmp_path):
     assert r.status_code == 200
     assert r.json()["baseline"]["generation"] == 1
     assert r.json()["baseline"]["status"] == "current"
+    assert "audit_event_id" in r.json()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1051,7 +1094,7 @@ class CreateRunRequest(BaseModel):
 
 
 class RunOut(BaseModel):
-    id: str
+    id: str  # eval_run_id in Engine §6; field name kept as "id" for MVP, rename tracked in plan 07
     project: str
     dataset_id: str
     dataset_version: str
@@ -1059,6 +1102,8 @@ class RunOut(BaseModel):
     judge_version: str
     state: RunState
     created_at: float
+    progress: dict = {}
+    aggregate_metrics: dict = {}
 
 
 class MutationEnvelope(BaseModel):
@@ -1109,8 +1154,7 @@ def create_app(*, root: Path,
 
     @app.exception_handler(Unauthorized)
     def _unauth(_: Request, exc: Unauthorized):
-        return HTTPException(status_code=403, detail=f"requires role: {exc.required}").detail and \
-            _json(403, {"detail": f"requires role: {exc.required}"})
+        return _json(403, {"detail": f"requires role: {exc.required}"})
 
     @app.exception_handler(IllegalTransition)
     def _illegal(_: Request, exc: IllegalTransition):
@@ -1135,6 +1179,8 @@ def create_app(*, root: Path,
     @app.post("/api/runs")
     def create_run(req: CreateRunRequest, request: Request,
                    idempotency_key: str | None = Header(default=None)):
+        # NOTE: harness_owner is required for humans; L1 machine actors need a service account
+        # with harness_owner role (or a dedicated "eval_runner" role — document in infra plan).
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
 
@@ -1145,7 +1191,7 @@ def create_app(*, root: Path,
                 "dataset_version": req.dataset_version,
                 "harness_fingerprint": req.harness_fingerprint,
                 "judge_version": req.judge_version, "state": "collecting",
-                "created_at": time.time(),
+                "created_at": time.time(), "progress": {}, "aggregate_metrics": {},
             })
             aid = audit.record(project=req.project, actor=principal.actor_id,
                                action="create_run", target_type="run",
@@ -1154,10 +1200,30 @@ def create_app(*, root: Path,
 
         return _idempotent(idempotency_key, build)
 
+    @app.get("/api/runs/{run_id}")
+    def get_run(run_id: str):
+        r = store.get("runs", run_id)
+        if r is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return {"run": r}
+
+    @app.post("/api/runs/{run_id}/scores")
+    def submit_score(run_id: str, request: Request):
+        # TODO(plan-04): implement taxonomy registry validation — reject unknown stable labels with 422.
+        # Until then, this endpoint stubs as 501; L1 SDK calls ScoreBridge.write_score() directly.
+        return _json(501, {"detail": "not yet implemented — taxonomy validation wired in plan 04"})
+
     # ---- baselines ----
     @app.get("/api/baselines")
     def list_baselines(project: str):
         return {"baselines": store.list("baselines", project=project)}
+
+    @app.get("/api/baselines/{generation}")
+    def get_baseline(generation: int, project: str):
+        b = store.get("baselines", f"{project}:gen{generation}")
+        if b is None:
+            raise HTTPException(status_code=404, detail="baseline not found")
+        return {"baseline": b}
 
     @app.post("/api/baselines")
     def publish_baseline(req: PublishBaselineRequest, request: Request,
@@ -1178,9 +1244,87 @@ def create_app(*, root: Path,
         from dataclasses import asdict
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        b = baselines.revert(project=req.project, to_generation=generation,
-                             reason=req.reason, actor=principal.actor_id)
-        return {"baseline": asdict(b)}
+        b, audit_event_id = baselines.revert(project=req.project, to_generation=generation,
+                                              reason=req.reason, actor=principal.actor_id)
+        return {"baseline": asdict(b), "audit_event_id": audit_event_id}
+
+    # ---- stubs for State Store objects defined in Task 9 (owners assigned in 00-index) ----
+    # plan 04: /api/projects, /api/datasets, /api/taxonomy, /api/trace-pools, /api/open-code-batches
+    # plan 05: /api/judges, /api/annotations
+    # plan 06: /api/issues, /api/proposals (GET + handoff/implementation-link/rebase)
+    # plan 07: /api/regressions, proposal approve/reject/defer/publish/rollback
+    # Each tuple: (method, path, owner_plan)
+    _STUB_ROUTES: list[tuple[str, str, str]] = [
+        # plan 03
+        ("GET", "/api/redaction/reports", "03"),
+        # plan 04
+        ("GET", "/api/projects", "04"),
+        ("GET", "/api/datasets/{dataset_id}", "04"),
+        ("POST", "/api/datasets/{dataset_id}/cases", "04"),
+        ("GET", "/api/taxonomy", "04"),
+        ("GET", "/api/taxonomy/labels", "04"),
+        ("POST", "/api/taxonomy/labels", "04"),
+        ("GET", "/api/taxonomy/migrations", "04"),
+        ("POST", "/api/taxonomy/migrations", "04"),
+        ("POST", "/api/taxonomy/propose-update", "04"),
+        ("GET", "/api/trace-pools", "04"),
+        ("POST", "/api/trace-pools/{pool_id}/sample", "04"),
+        ("GET", "/api/open-code-batches/{batch_id}", "04"),
+        ("POST", "/api/open-code-batches/{batch_id}/codes", "04"),
+        # plan 05
+        ("GET", "/api/judges", "05"),
+        ("POST", "/api/judges", "05"),
+        ("GET", "/api/judges/{judge_version}", "05"),
+        ("POST", "/api/judges/{judge_version}/validate", "05"),
+        ("GET", "/api/annotations", "05"),
+        ("POST", "/api/annotations", "05"),
+        ("GET", "/api/annotations/{annotation_id}", "05"),
+        ("POST", "/api/annotations/{annotation_id}", "05"),
+        # plan 06
+        ("GET", "/api/issues", "06"),
+        ("GET", "/api/issues/{issue_id}", "06"),
+        ("GET", "/api/proposals/{proposal_id}", "06"),
+        ("POST", "/api/proposals/{proposal_id}/handoff", "06"),
+        ("POST", "/api/proposals/{proposal_id}/implementation-link", "06"),
+        ("POST", "/api/proposals/{proposal_id}/rebase", "06"),
+        ("POST", "/api/runs/{run_id}/sync-labels", "06"),
+        ("POST", "/api/runs/{run_id}/analysis", "06"),
+        # plan 07
+        ("GET", "/api/regressions/{regression_id}", "07"),
+        ("POST", "/api/regressions", "07"),
+        ("POST", "/api/regressions/{regression_id}/publish", "07"),
+        ("POST", "/api/regressions/{regression_id}/rollback", "07"),
+        ("POST", "/api/regressions/{regression_id}/no-significant-change", "07"),
+        ("POST", "/api/regressions/{regression_id}/require-judge-recheck", "07"),
+        ("POST", "/api/regressions/{regression_id}/resume-after-judge-recheck", "07"),
+        ("POST", "/api/regressions/{regression_id}/require-judge-migration", "07"),
+        ("POST", "/api/regressions/{regression_id}/resume-after-judge-migration", "07"),
+        ("POST", "/api/proposals/{proposal_id}/approve", "07"),
+        ("POST", "/api/proposals/{proposal_id}/reject", "07"),
+        ("POST", "/api/proposals/{proposal_id}/defer", "07"),
+    ]
+
+    def _make_stub(owner_plan: str):
+        def _stub(**_):
+            return _json(501, {"detail": f"not implemented in plan 02 — implemented in plan {owner_plan}"})
+        return _stub
+
+    for _method, _path, _plan in _STUB_ROUTES:
+        app.add_api_route(_path, _make_stub(_plan), methods=[_method])
+
+    # ---- redaction guard (Engine §10, §15 Day-1 Hard Gate) ----
+    # Evidence-serving endpoints must not be callable until plan 03 RedactionService is wired.
+    # Any route under /api/evidence or /api/traces returns 503 until REDACTION_ENABLED is set.
+    import os
+    _REDACTION_ENABLED = os.getenv("REDACTION_ENABLED", "") != ""
+
+    def _evidence_guard(**_):
+        if not _REDACTION_ENABLED:
+            return _json(503, {"detail": "evidence endpoints require redaction pipeline (plan 03); set REDACTION_ENABLED after wiring RedactionService"})
+        return _json(501, {"detail": "evidence routing implemented in plan 03"})
+
+    app.add_api_route("/api/evidence/{path:path}", _evidence_guard, methods=["GET"])
+    app.add_api_route("/api/traces/{path:path}", _evidence_guard, methods=["GET"])
 
     return app
 
@@ -1189,13 +1333,6 @@ def _json(status: int, body: dict):
     from fastapi.responses import JSONResponse
     return JSONResponse(status_code=status, content=body)
 ```
-
-> Note: simplify the two exception handlers to plain `return _json(...)` bodies (the `and` expression above is illustrative; the test asserts on status 403/409 and `detail`). Final form:
-> ```python
-> @app.exception_handler(Unauthorized)
-> def _unauth(_: Request, exc: Unauthorized):
->     return _json(403, {"detail": f"requires role: {exc.required}"})
-> ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -1287,10 +1424,20 @@ Expected: FAIL with `ImportError: cannot import name 'DatasetCaseModel'`.
 # flywheel/api/schemas.py  (append)
 from typing import Literal
 
+from .lifecycle import ProposalState
+
 Split = Literal["train", "dev", "locked_test", "regression_holdout"]
 CreatedFrom = Literal["production_trace", "synthetic", "manual"]
 LabelStatus = Literal["candidate", "active", "retired"]
 MultipleComparisonPolicy = Literal["none", "bonferroni", "fdr"]
+
+
+class TracePoolRetentionPolicyModel(BaseModel):
+    """Separate object per Engine §9 State Store — owns raw+redacted TTL and deletion/audit policy."""
+    raw_ttl_days: int
+    redacted_ttl_days: int
+    deletion_policy: Literal["auto", "manual", "audit_required"] = "manual"
+    audit_required: bool = False
 
 
 class TracePoolModel(BaseModel):
@@ -1298,8 +1445,7 @@ class TracePoolModel(BaseModel):
     id: str
     name: str
     source_trace_ids: list[str] = []
-    raw_retention_days: int
-    redacted_retention_days: int
+    retention_policy: TracePoolRetentionPolicyModel | None = None
 
 
 class OpenCodeBatchModel(BaseModel):
@@ -1319,6 +1465,14 @@ class TaxonomyLabelModel(BaseModel):
     counterexamples: list[str] = []
     status: LabelStatus
     taxonomy_version: str | None = None
+    owner_approved: bool = False
+    approved_by: str | None = None
+
+
+class TaxonomyMigrationStepModel(BaseModel):
+    from_slug: str
+    to_slug: str | list[str] | None
+    kind: Literal["rename", "split", "merge", "retire"]
 
 
 class TaxonomyMigrationModel(BaseModel):
@@ -1326,7 +1480,7 @@ class TaxonomyMigrationModel(BaseModel):
     id: str
     from_version: str
     to_version: str
-    migrations: list[dict]  # {from, to, kind}
+    migrations: list[TaxonomyMigrationStepModel]
 
 
 class DatasetCaseModel(BaseModel):
@@ -1366,8 +1520,9 @@ class JudgeVersionModel(BaseModel):
     train_dataset_id: str
     dev_dataset_id: str
     locked_test_dataset_id: str
-    status: Literal["draft", "calibrating", "locked_test", "validated",
+    status: Literal["draft", "calibrating", "validated",
                     "validated_limited", "rejected", "recheck_required"]
+    # "locked_test" is UI-only (UI §12 TypeScript display type); not a DB/API status (Engine §12)
     metrics: dict[str, float] = {}
 
 
@@ -1393,6 +1548,9 @@ class AnnotationModel(BaseModel):
     failure_labels: list[str] = []
     confidence: float | None = None
     critique: str | None = None
+    annotated_by: str | None = None
+    annotation_rubric_version: str | None = None
+    redaction_state: Literal["raw", "redacted", "blocked"] | None = None
 
 
 class FailureIssueModel(BaseModel):
@@ -1403,6 +1561,8 @@ class FailureIssueModel(BaseModel):
     open_codes: list[str] = []
     affected_case_ids: list[str] = []
     evidence_trace_ids: list[str] = []
+    counterexamples: list[str] = []
+    affected_labels: list[str] = []
     root_cause_hypothesis: str = ""
     confidence: float = 0.0
 
@@ -1434,7 +1594,8 @@ class ImprovementProposalModel(BaseModel):
     proposer_id: str
     expected_metric_delta: dict[str, float]
     rollback_plan: str
-    state: str = "draft"
+    state: ProposalState = "draft"
+    created_at: str = ""
 
 
 class HandoffModel(BaseModel):
@@ -1460,6 +1621,14 @@ class RegressionResultModel(BaseModel):
     fixed_failures: list[str] = []
     new_failures: list[str] = []
     outcome: str | None = None
+    # Holdout integrity proof fields (Engine §14 — any non-empty intersection blocks publish)
+    consumed_holdout_intersection: list[str] = []
+    holdout_train_intersection: list[str] = []
+    holdout_dev_intersection: list[str] = []
+    holdout_locked_test_intersection: list[str] = []
+    # Candidate quality fields (Engine §11, UI §9)
+    candidate_human_judge_agreement: float | None = None
+    per_label_deltas: dict[str, float] = {}
 
 
 class RegressionHoldoutLedgerModel(BaseModel):
@@ -1505,4 +1674,4 @@ git commit -m "feat(api): State Store record schemas for downstream objects"
 
 - **Spec coverage (Engine §9, §12 Baseline; UI §10/§11):** lifecycle enums + derivation (§12); JsonRecordStore covers all §9 State Store objects via collections; AuditLog satisfies "all mutations return an audit event id"; IdempotencyStore implements §9 idempotency; auth implements §11 roles; BaselineService implements the §12 Baseline rules (one current, publish supersedes, human-gated revert with lineage); ScoreBridge implements §8 routing + §9 score idempotency key; server wires idempotency + role checks + audit and maps errors. Task 9 defines schemas for every remaining §9 object so plans 03–07 share one definition.
 - **Placeholder scan:** the only prose-with-note is the Task 8 exception-handler simplification, which gives the exact final code. No TBD/TODO. All other code blocks are complete.
-- **Type consistency:** `ScoreBridge` idempotency key string matches `ScorePayload.idempotency_key()` from plan 01 (`eval_run_id:case_id:sample_id:source:judge_version|none`). `Baseline` dataclass fields match `Engine §12` and the `BaselineRevertDecisionModel`. `ProposalState`/`RegressionStatus`/`RegressionOutcome` literals match plan 01 metrics consumers and plan 07 regression logic. `RunState` used in `RunOut` matches `lifecycle.RunState`.
+- **Type consistency:** `ScoreBridge` idempotency key string matches `ScorePayload.idempotency_key()` from plan 01 (`eval_run_id:case_id:sample_id:source:judge_version_or_none` — literal `":none"` when judge_version is absent). `Baseline` dataclass fields match `Engine §12` and the `BaselineRevertDecisionModel`. `ProposalState`/`RegressionStatus`/`RegressionOutcome` literals match plan 01 metrics consumers and plan 07 regression logic. `RunState` used in `RunOut` matches `lifecycle.RunState`.
