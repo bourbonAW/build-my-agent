@@ -826,6 +826,48 @@ def test_trace_pool_sampling_creates_open_code_batch(tmp_path):
     assert r.status_code == 200
     assert len(r.json()["batch"]["trace_ids"]) == 1
     assert "audit_event_id" in r.json()
+
+
+def test_data_route_wiring_keeps_plan02_runs_list_working(tmp_path):
+    client, app = _client(tmp_path)
+    app.state.store.put("runs", "run1", {"project": "bourbon", "id": "run1",
+        "state": "collecting"})
+    r = client.get("/api/runs", params={"project": "bourbon"})
+    assert r.status_code == 200
+    assert r.json()["runs"][0]["id"] == "run1"
+
+
+def test_projects_datasets_taxonomy_trace_pools_and_open_code_routes(tmp_path):
+    client, app = _client(tmp_path)
+    app.state.store.put("datasets", "ds1", {"project": "bourbon", "id": "ds1",
+        "dataset_id": "ds1", "dataset_version": "v1"})
+    app.state.store.put("dataset_cases", "case1", {"project": "bourbon", "id": "case1",
+        "dataset_id": "ds1", "case_id": "c1"})
+    app.state.store.put("taxonomy_labels", "lab1", {"project": "bourbon", "id": "lab1",
+        "slug": "tool_argument_error", "status": "active"})
+    app.state.store.put("taxonomy_migrations", "mig1", {"project": "bourbon", "id": "mig1",
+        "from_version": "v1", "to_version": "v2", "migrations": []})
+    app.state.store.put("trace_pools", "pool1", {"project": "bourbon", "id": "pool1",
+        "traces": []})
+    app.state.store.put("open_code_batches", "batch1", {"project": "bourbon",
+        "id": "batch1", "trace_pool_id": "pool1", "trace_ids": ["t1"], "codes": []})
+
+    assert client.get("/api/projects").json()["projects"] == ["bourbon"]
+    assert client.get("/api/datasets", params={"project": "bourbon"}).json()["datasets"][0]["id"] == "ds1"
+    assert client.get("/api/datasets/ds1", params={"project": "bourbon"}).json()["cases"][0]["case_id"] == "c1"
+    assert client.get("/api/taxonomy", params={"project": "bourbon"}).json()["labels"][0]["slug"] == "tool_argument_error"
+    assert client.get("/api/taxonomy/labels", params={"project": "bourbon"}).json()["labels"][0]["slug"] == "tool_argument_error"
+    assert client.get("/api/taxonomy/migrations", params={"project": "bourbon"}).json()["migrations"][0]["to_version"] == "v2"
+    assert client.get("/api/trace-pools", params={"project": "bourbon"}).json()["trace_pools"][0]["id"] == "pool1"
+    assert client.get("/api/open-code-batches/batch1").json()["batch"]["trace_ids"] == ["t1"]
+
+    r = client.post("/api/open-code-batches/batch1/codes",
+                    json={"project": "bourbon", "trace_id": "t1",
+                          "code": "wrong tool arg shape", "author": "alice"},
+                    headers={"Idempotency-Key": "code-1"})
+    assert r.status_code == 200
+    assert r.json()["batch"]["codes"][0]["code"] == "wrong tool arg shape"
+    assert "audit_event_id" in r.json()
 ```
 
 ```python
@@ -901,6 +943,32 @@ def test_scores_reject_unknown_stable_failure_label(tmp_path: Path):
     }, headers={"Idempotency-Key": "score-1"})
     assert r.status_code == 400
     assert "unknown failure label" in r.json()["detail"]
+
+
+class FakeScoreBridge:
+    def write_score(self, **kwargs):
+        return {"score_id": "score1", "deduped": False, "audit_event_id": "audit1",
+                "kwargs": kwargs}
+
+
+def test_scores_accept_known_stable_failure_label(tmp_path: Path):
+    principal = Principal(actor_id="alice", roles=frozenset({"harness_owner"}))
+    app = create_app(root=tmp_path, principal_resolver=lambda request: principal)
+    app.state.score_bridge_factory = lambda project: FakeScoreBridge()
+    client = TestClient(app)
+    app.state.store.put("runs", "run1", {"project": "bourbon", "id": "run1",
+        "taxonomy_version": "tax1", "state": "scored"})
+    app.state.store.put("taxonomy_labels", "lab1", {"project": "bourbon", "id": "lab1",
+        "slug": "tool_argument_error", "status": "active", "taxonomy_version": "tax1"})
+    r = client.post("/api/runs/run1/scores", json={
+        "project": "bourbon", "case_id": "c1", "sample_id": "s0",
+        "source": "judge", "judge_version": "jv1", "label": "fail",
+        "failure_labels": ["tool_argument_error"], "confidence": 0.9,
+        "critique": "x", "trace_id": "trace1",
+    }, headers={"Idempotency-Key": "score-2"})
+    assert r.status_code == 200
+    assert r.json()["score"]["score_id"] == "score1"
+    assert r.json()["audit_event_id"] == "audit1"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -928,10 +996,12 @@ Add services inside `create_app`:
     app.state.store = store
 ```
 
-Add a shared idempotent mutation helper:
+Add a data-route-specific idempotent mutation helper. Do not redefine plan 02's
+`_idempotent(key, build)` helper inside the same `create_app` scope; the unique
+name avoids changing closures already registered by the plan-02 routes:
 
 ```python
-    def _idempotent(request: Request, body: dict, compute):
+    def _idempotent_data_mutation(request: Request, compute):
         key = request.headers.get("Idempotency-Key")
         if not key:
             raise HTTPException(status_code=400, detail="Idempotency-Key required")
@@ -947,8 +1017,10 @@ Add route-local request models before the route snippets:
 
 ```python
     from typing import Literal
+    import os
     from pydantic import BaseModel
     from api.schemas import DatasetCaseModel, TaxonomyMigrationStepModel
+    from api.score_bridge import ScoreBridge
 
     class TaxonomyLabelCreate(BaseModel):
         project: str
@@ -976,11 +1048,41 @@ Add route-local request models before the route snippets:
     class SampleBody(BaseModel):
         project: str
         n: int
+
+    class OpenCodeBody(BaseModel):
+        project: str
+        trace_id: str
+        code: str
+        author: str
+
+    class ScoreSubmitBody(BaseModel):
+        project: str
+        case_id: str
+        sample_id: str
+        source: Literal["human", "judge", "rule", "system"]
+        judge_version: str | None = None
+        label: Literal["pass", "fail", "skip", "uncertain"]
+        failure_labels: list[str] = []
+        confidence: float | None = None
+        critique: str | None = None
+        trace_id: str
 ```
 
-Add representative route snippets (repeat the same pattern for every endpoint listed above):
+Add complete route snippets for every endpoint listed above. The final
+`submit_score` snippet **replaces** the plan-02
+`POST /api/runs/{run_id}/scores` 501 stub in `server.py`; do not register a
+second route with the same path/method. The score taxonomy tests must assert
+the route returns validation behavior, not the plan-02 501 stub.
 
 ```python
+    def _score_bridge(project: str):
+        factory = getattr(app.state, "score_bridge_factory", None)
+        if factory is not None:
+            return factory(project)
+        return ScoreBridge(langfuse_url=os.environ["LANGFUSE_URL"],
+                           langfuse_secret=os.environ["LANGFUSE_SECRET"],
+                           idem=idem, audit=audit, project=project, client=None)
+
     @app.get("/api/projects")
     def list_projects():
         projects = sorted({r["project"] for collection in
@@ -1012,13 +1114,18 @@ Add representative route snippets (repeat the same pattern for every endpoint li
                                action="create_dataset_case", target_type="dataset_case",
                                target_id=row["id"], before=None, after=row)
             return {"case": row, "audit_event_id": aid}
-        return _idempotent(request, case.model_dump(), compute)
+        return _idempotent_data_mutation(request, compute)
 
     @app.get("/api/taxonomy")
     def get_taxonomy(project: str):
         return {"labels": store.list("taxonomy_labels", project=project),
                 "migrations": store.list("taxonomy_migrations", project=project),
                 "versions": store.list("taxonomy_versions", project=project)}
+
+    @app.get("/api/taxonomy/labels")
+    def list_taxonomy_labels(project: str, status: str | None = None):
+        where = {"status": status} if status else None
+        return {"labels": store.list("taxonomy_labels", project=project, where=where)}
 
     @app.post("/api/taxonomy/labels")
     def create_taxonomy_label(body: TaxonomyLabelCreate, request: Request):
@@ -1030,7 +1137,15 @@ Add representative route snippets (repeat the same pattern for every endpoint li
                                action="promote_taxonomy_label", target_type="taxonomy_label",
                                target_id=label["id"], before=None, after=label)
             return {"label": label, "audit_event_id": aid}
-        return _idempotent(request, body.model_dump(), compute)
+        return _idempotent_data_mutation(request, compute)
+
+    @app.get("/api/taxonomy/migrations")
+    def list_taxonomy_migrations(project: str, from_version: str | None = None,
+                                 to_version: str | None = None):
+        where = {k: v for k, v in {"from_version": from_version,
+                                   "to_version": to_version}.items() if v is not None}
+        return {"migrations": store.list("taxonomy_migrations", project=project,
+                                         where=where or None)}
 
     @app.post("/api/taxonomy/migrations")
     def create_taxonomy_migration(body: TaxonomyMigrationCreate, request: Request):
@@ -1043,7 +1158,7 @@ Add representative route snippets (repeat the same pattern for every endpoint li
                                target_type="taxonomy_migration",
                                target_id=migration["id"], before=None, after=migration)
             return {"migration": migration, "audit_event_id": aid}
-        return _idempotent(request, body.model_dump(), compute)
+        return _idempotent_data_mutation(request, compute)
 
     @app.post("/api/taxonomy/propose-update")
     def propose_taxonomy_update(body: TaxonomyUpdateBody, request: Request):
@@ -1063,7 +1178,7 @@ Add representative route snippets (repeat the same pattern for every endpoint li
                                target_type="taxonomy", target_id=body.slug or body.to_version,
                                before=None, after=after)
             return {**after, "audit_event_id": aid}
-        return _idempotent(request, body.model_dump(), compute)
+        return _idempotent_data_mutation(request, compute)
 
     @app.get("/api/trace-pools")
     def list_trace_pools(project: str):
@@ -1087,22 +1202,60 @@ Add representative route snippets (repeat the same pattern for every endpoint li
                                action="sample_trace_pool", target_type="open_code_batch",
                                target_id=batch_id, before=None, after=batch)
             return {"batch": batch, "audit_event_id": aid}
-        return _idempotent(request, body.model_dump(), compute)
-```
+        return _idempotent_data_mutation(request, compute)
 
-For score taxonomy validation, place validation before the plan-02 score write:
+    @app.get("/api/open-code-batches/{batch_id}")
+    def get_open_code_batch(batch_id: str):
+        batch = store.get("open_code_batches", batch_id)
+        if batch is None:
+            raise HTTPException(status_code=404, detail="open code batch not found")
+        return {"batch": batch}
 
-```python
+    @app.post("/api/open-code-batches/{batch_id}/codes")
+    def append_open_code(batch_id: str, body: OpenCodeBody, request: Request):
+        principal = principal_resolver(request)
+        require_role(principal, "dataset_curator")
+        def compute():
+            batch = store.get("open_code_batches", batch_id)
+            if batch is None:
+                raise HTTPException(status_code=404, detail="open code batch not found")
+            before = dict(batch)
+            codes = list(batch.get("codes", []))
+            codes.append({"trace_id": body.trace_id, "code": body.code,
+                          "author": body.author})
+            batch["codes"] = codes
+            batch = store.put("open_code_batches", batch_id, batch)
+            aid = audit.record(project=body.project, actor=principal.actor_id,
+                               action="append_open_code", target_type="open_code_batch",
+                               target_id=batch_id, before=before, after=batch)
+            return {"batch": batch, "audit_event_id": aid}
+        return _idempotent_data_mutation(request, compute)
+
     def _active_taxonomy_slugs(project: str, taxonomy_version: str | None) -> set[str]:
         return {l["slug"] for l in store.list("taxonomy_labels", project=project)
                 if l.get("status") == "active"
                 and (taxonomy_version is None or l.get("taxonomy_version") in (None, taxonomy_version))}
 
-    # inside POST /api/runs/{run_id}/scores before ScoreBridge.write_score(...)
-    unknown = set(req.failure_labels) - _active_taxonomy_slugs(req.project, run.get("taxonomy_version"))
-    if unknown:
-        raise HTTPException(status_code=400,
-                            detail=f"unknown failure label(s): {sorted(unknown)}")
+    @app.post("/api/runs/{run_id}/scores")
+    def submit_score(run_id: str, body: ScoreSubmitBody, request: Request):
+        principal = principal_resolver(request)
+        require_role(principal, "harness_owner")
+        run = store.get("runs", run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        unknown = set(body.failure_labels) - _active_taxonomy_slugs(
+            body.project, run.get("taxonomy_version"))
+        if unknown:
+            raise HTTPException(status_code=400,
+                                detail=f"unknown failure label(s): {sorted(unknown)}")
+        def compute():
+            score = _score_bridge(body.project).write_score(
+                eval_run_id=run_id, case_id=body.case_id, sample_id=body.sample_id,
+                source=body.source, judge_version=body.judge_version, label=body.label,
+                failure_labels=body.failure_labels, confidence=body.confidence,
+                critique=body.critique, trace_id=body.trace_id)
+            return {"score": score, "audit_event_id": score["audit_event_id"]}
+        return _idempotent_data_mutation(request, compute)
 ```
 
 - [ ] **Step 4: Run route tests to verify they pass**

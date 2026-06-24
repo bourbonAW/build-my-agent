@@ -374,7 +374,7 @@ git commit -m "feat(engine): statistical comparison with noise band and outcome 
       2. If `baseline_judge_version != candidate_judge_version` → outcome `judge_migration_required`, transition `regression_review → blocked_on_judge_migration`.
       3. If `candidate_human_judge_agreement` is not None and below judge threshold → trigger `judges.candidate_drift_recheck`; if it returns `recheck_required` → outcome `judge_recheck_required`, transition `→ blocked_on_judge_recheck`.
       4. Else outcome = `classify_outcome(...)`; map to transition: `published → validated`, `rolled_back → rolled_back`, `no_significant_change → no_significant_change`.
-    - `publish(*, project, proposal_id, candidate_fingerprint, actor) -> dict` — loads the proposal and current `Baseline`, verifies the proposal's `baseline_generation` and `baseline_fingerprint` match the current baseline, and blocks by moving the proposal to `baseline_stale` when they do not. On success, calls `baselines.publish(...)`, marks only non-terminal proposals from the superseded generation `baseline_stale` (Engine §13 rebase), and returns the new baseline + stale proposal ids + `audit_event_id`.
+    - `publish(*, project, proposal_id, candidate_fingerprint, actor) -> dict` — loads the proposal and current `Baseline`, verifies the proposal's `baseline_generation` and `baseline_fingerprint` match the current baseline, and blocks by moving the proposal to `baseline_stale` when they do not. On success, calls `baselines.publish(...)`, transitions and persists the publishing proposal to `validated`, marks only non-terminal proposals from the superseded generation `baseline_stale` (Engine §13 rebase), and returns the new baseline + publishing proposal + stale proposal ids + `audit_event_id`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -477,6 +477,7 @@ def test_publish_marks_other_proposals_stale(tmp_path):
         "state": "under_review", "baseline_generation": 2})
     v.publish(project="bourbon", proposal_id="p1", candidate_fingerprint="fpA",
               actor="alice")
+    assert store.get("proposals", "p1")["state"] == "validated"
     refreshed = store.get("proposals", "p_old")
     assert refreshed["state"] == "baseline_stale"
     assert store.get("proposals", "p_newer")["state"] == "under_review"
@@ -608,8 +609,12 @@ class RegressionValidator:
             return {"publish_blocked": True, "reason": "baseline stale",
                     "audit_event_id": audit_event_id, "stale_proposals": [proposal_id]}
         superseded_generation = current.generation
+        proposal_before = dict(proposal)
+        assert_transition(proposal["state"], "validated")
         baseline = self._baselines.publish(project=project,
             fingerprint=candidate_fingerprint, proposal_id=proposal_id, actor=actor)
+        proposal["state"] = "validated"
+        proposal = self._store.put("proposals", proposal_id, proposal)
         stale: list[str] = []
         terminal = {"validated", "rolled_back", "abandoned", "rejected",
                     "no_significant_change"}
@@ -633,15 +638,17 @@ class RegressionValidator:
             stale.append(prop["id"])
         audit_event_id = self._audit.record(project=project, actor=actor,
             action="publish_regression", target_type="proposal", target_id=proposal_id,
-            before=proposal, after={"baseline_generation": baseline.generation})
+            before=proposal_before,
+            after={"baseline_generation": baseline.generation, "proposal": proposal})
         return {"publish_blocked": False, "baseline_generation": baseline.generation,
-                "stale_proposals": stale, "audit_event_id": audit_event_id}
+                "proposal": proposal, "stale_proposals": stale,
+                "audit_event_id": audit_event_id}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd flywheel && pytest tests/engine/test_validator.py -v`
-Expected: PASS (6 passed).
+Expected: PASS (7 passed).
 
 - [ ] **Step 5: Commit**
 
@@ -681,6 +688,7 @@ git commit -m "feat(engine): regression validator gate and lifecycle transitions
 # flywheel/tests/api/test_regression_routes.py
 from pathlib import Path
 from fastapi.testclient import TestClient
+from api.schemas import RegressionResultModel
 from api.server import create_app
 from api.auth import Principal
 
@@ -714,6 +722,15 @@ def test_approve_transitions_state_idempotently(tmp_path):
     assert "audit_event_id" in r1.json()
 
 
+def test_regression_route_wiring_keeps_plan02_runs_list_working(tmp_path):
+    client, app = _client(tmp_path)
+    app.state.store.put("runs", "run1", {"project": "bourbon", "id": "run1",
+        "state": "collecting"})
+    r = client.get("/api/runs", params={"project": "bourbon"})
+    assert r.status_code == 200
+    assert r.json()["runs"][0]["id"] == "run1"
+
+
 def test_reject_and_defer_routes(tmp_path):
     client, app = _client(tmp_path)
     app.state.store.put("proposals", "p_reject", {"project": "bourbon", "id": "p_reject",
@@ -730,15 +747,21 @@ def test_reject_and_defer_routes(tmp_path):
 
 def test_trigger_regression_creates_result_and_state(tmp_path):
     client, app = _client(tmp_path)
+    app.state.store.put("runs", "run1", {"project": "bourbon", "id": "run1",
+        "judge_version": "jv1"})
     app.state.store.put("proposals", "p1", {"project": "bourbon", "id": "p1",
         "state": "diff_review", "baseline_fingerprint": "fp0",
-        "candidate_fingerprint": "fpA"})
+        "candidate_fingerprint": "fpA", "source_eval_run_id": "run1"})
     r = client.post("/api/regressions", json={"project": "bourbon",
         "proposal_id": "p1", "candidate_fingerprint": "fpA"},
         headers={"Idempotency-Key": "reg-1"})
     assert r.status_code == 200
     assert r.json()["proposal"]["state"] == "regression_running"
+    assert r.json()["regression"]["status"] == "running"
     assert r.json()["regression"]["proposal_id"] == "p1"
+    stored = app.state.store.get("regressions", "p1")
+    RegressionResultModel(**stored)
+    assert "status" not in stored
     assert client.get("/api/regressions/p1").json()["regression"]["id"] == "p1"
 
 
@@ -754,6 +777,7 @@ def test_publish_returns_new_generation(tmp_path):
         "candidate_fingerprint": "fpA"}, headers={"Idempotency-Key": "publish-1"})
     assert r.status_code == 200
     assert r.json()["baseline_generation"] == 2
+    assert r.json()["proposal"]["state"] == "validated"
     assert "audit_event_id" in r.json()
 ```
 
@@ -829,6 +853,7 @@ Add the routes:
 
 ```python
     from pydantic import BaseModel
+    from .lifecycle import derive_regression_status
 
     class ProjectBody(BaseModel):
         project: str
@@ -842,7 +867,8 @@ Add the routes:
         project: str
         candidate_fingerprint: str
 
-    def _idempotent(request: Request, compute):
+    # Unique name: do not shadow plan 02's _idempotent(key, build) helper.
+    def _idempotent_regression_mutation(request: Request, compute):
         key = request.headers.get("Idempotency-Key")
         if not key:
             raise HTTPException(status_code=400, detail="Idempotency-Key required")
@@ -868,25 +894,31 @@ Add the routes:
                            before=before, after=prop)
         return {"proposal": prop, "audit_event_id": aid}
 
+    def _regression_response(regression: dict) -> dict:
+        out = dict(regression)
+        prop = store.get("proposals", out["proposal_id"])
+        out["status"] = derive_regression_status(prop["state"]) if prop else None
+        return out
+
     @app.post("/api/proposals/{proposal_id}/approve")
     def approve_proposal(proposal_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             proposal_id, body.project, "approved", "approve_proposal", principal))
 
     @app.post("/api/proposals/{proposal_id}/reject")
     def reject_proposal(proposal_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             proposal_id, body.project, "rejected", "reject_proposal", principal))
 
     @app.post("/api/proposals/{proposal_id}/defer")
     def defer_proposal(proposal_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             proposal_id, body.project, "deferred", "defer_proposal", principal))
 
     @app.post("/api/regressions")
@@ -894,29 +926,46 @@ Add the routes:
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
         def compute():
+            proposal = store.get("proposals", body.proposal_id)
+            if proposal is None:
+                raise HTTPException(status_code=404, detail="proposal not found")
+            source_run = store.get("runs", proposal.get("source_eval_run_id", ""))
+            judge_version = proposal.get("judge_version") or (
+                source_run or {}).get("judge_version")
+            if not judge_version:
+                raise HTTPException(status_code=409,
+                                    detail="regression requires a comparable judge_version")
             result = _transition_proposal(body.proposal_id, body.project,
                 "regression_running", "trigger_regression", principal)
             regression = store.put("regressions", body.proposal_id, {
                 "project": body.project, "id": body.proposal_id,
                 "proposal_id": body.proposal_id,
+                "baseline_fingerprint": proposal["baseline_fingerprint"],
                 "candidate_fingerprint": body.candidate_fingerprint,
-                "status": "running",
+                "judge_version": judge_version,
+                "pass_rate_delta": 0.0,
+                "pass_rate_ci": [0.0, 0.0],
+                "expected_metric_delta": proposal.get("expected_metric_delta", {}),
+                "actual_metric_delta": {},
+                "fixed_failures": [],
+                "new_failures": [],
+                "outcome": None,
             })
-            return {**result, "regression": regression}
-        return _idempotent(request, compute)
+            return {**result, "regression": _regression_response(regression)}
+        return _idempotent_regression_mutation(request, compute)
 
     @app.get("/api/regressions/{regression_id}")
     def get_regression(regression_id: str):
         regression = store.get("regressions", regression_id)
         if regression is None:
             raise HTTPException(status_code=404, detail="regression not found")
-        return {"regression": regression}
+        return {"regression": _regression_response(regression)}
 
     @app.post("/api/regressions/{regression_id}/publish")
     def publish_regression(regression_id: str, body: PublishBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: validator.publish(
+        return _idempotent_regression_mutation(request, lambda: validator.publish(
             project=body.project, proposal_id=regression_id,
             candidate_fingerprint=body.candidate_fingerprint,
             actor=principal.actor_id))
@@ -925,14 +974,14 @@ Add the routes:
     def rollback_regression(regression_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             regression_id, body.project, "rolled_back", "rollback_regression", principal))
 
     @app.post("/api/regressions/{regression_id}/no-significant-change")
     def no_sig_change(regression_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             regression_id, body.project, "no_significant_change",
             "no_significant_change", principal))
 
@@ -940,7 +989,7 @@ Add the routes:
     def require_judge_recheck(regression_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             regression_id, body.project, "blocked_on_judge_recheck",
             "require_judge_recheck", principal))
 
@@ -948,7 +997,7 @@ Add the routes:
     def resume_after_judge_recheck(regression_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             regression_id, body.project, "regression_running",
             "resume_after_judge_recheck", principal))
 
@@ -956,7 +1005,7 @@ Add the routes:
     def require_judge_migration(regression_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             regression_id, body.project, "blocked_on_judge_migration",
             "require_judge_migration", principal))
 
@@ -964,7 +1013,7 @@ Add the routes:
     def resume_after_judge_migration(regression_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
-        return _idempotent(request, lambda: _transition_proposal(
+        return _idempotent_regression_mutation(request, lambda: _transition_proposal(
             regression_id, body.project, "regression_review",
             "resume_after_judge_migration", principal))
 ```
@@ -987,6 +1036,6 @@ git commit -m "feat(api): regression and proposal decision routes"
 
 ## Self-Review
 
-- **Spec coverage (Engine §12, §14):** `compute_holdout_integrity` implements the §14 mechanical holdout integrity and the four intersection checks (any non-empty consumed/train/dev/locked_test intersection blocks publish; consumed overlap requires fresh/rotated holdout before publish); `HoldoutLedger` implements §14 multiple-comparison accounting keyed by `candidate_hypothesis_id` (re-runs don't inflate distinct count) and Bonferroni alpha tightening; `compare_pass_rates`/`classify_outcome` implement §14 CIs, noise band, no-significant-change, safety-regression rollback; `RegressionValidator.decide` implements the §12 gate order (holdout leakage returns internal non-persisted `holdout_leakage` with unchanged proposal state → judge migration → judge recheck → statistical outcome) using `assert_transition` where the authoritative lifecycle supports it; `publish` verifies proposal baseline generation/fingerprint against the current `Baseline`, blocks stale proposals, increments the baseline generation via `BaselineService`, and marks only proposals from the superseded generation `baseline_stale` (§13 rebase). Server routes cover every plan-07 endpoint assigned by the index and are harness-owner-gated, idempotent human gates returning audit ids. Post-publish revert is already on the server from plan 02.
+- **Spec coverage (Engine §12, §14):** `compute_holdout_integrity` implements the §14 mechanical holdout integrity and the four intersection checks (any non-empty consumed/train/dev/locked_test intersection blocks publish; consumed overlap requires fresh/rotated holdout before publish); `HoldoutLedger` implements §14 multiple-comparison accounting keyed by `candidate_hypothesis_id` (re-runs don't inflate distinct count) and Bonferroni alpha tightening; `compare_pass_rates`/`classify_outcome` implement §14 CIs, noise band, no-significant-change, safety-regression rollback; `RegressionValidator.decide` implements the §12 gate order (holdout leakage returns internal non-persisted `holdout_leakage` with unchanged proposal state → judge migration → judge recheck → statistical outcome) using `assert_transition` where the authoritative lifecycle supports it; `publish` verifies proposal baseline generation/fingerprint against the current `Baseline`, blocks stale proposals, increments the baseline generation via `BaselineService`, persists the publishing proposal as `validated`, and marks only proposals from the superseded generation `baseline_stale` (§13 rebase). Server routes cover every plan-07 endpoint assigned by the index, derive `RegressionStatus` from `ProposalState` instead of persisting it on regression rows, and are harness-owner-gated, idempotent human gates returning audit ids. Post-publish revert is already on the server from plan 02.
 - **Placeholder scan:** no TODO; FDR is documented as Bonferroni-floor in MVP (Phase 1.5 stance from index doc), not a placeholder.
 - **Type consistency:** `candidate_hypothesis_id` string format matches plan 06 (`proposal_id::candidate_fingerprint`). `assert_transition`/`ProposalState` from plan 02 used unchanged; outcome→state map only targets legal transitions present in plan 02 `PROPOSAL_TRANSITIONS`. `BaselineService.publish` signature matches plan 02. `JudgeService.candidate_drift_recheck` return shape (`status` field) matches plan 05. `wilson_interval`/`ConfidenceInterval` match plan 01.

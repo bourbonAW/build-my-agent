@@ -24,7 +24,7 @@
 - Create: `flywheel/api/redaction.py` — `RedactionPolicy`, `RedactionService`, `RedactionReport`
 - Create: `flywheel/engine/__init__.py`
 - Create: `flywheel/engine/reader.py` — `EvidenceReader` (Langfuse fetch + redact + decision)
-- Modify: `flywheel/api/server.py` — add `GET /api/redaction/reports`
+- Modify: `flywheel/api/server.py` — add `GET /api/redaction/reports`, `GET /api/evidence/{path}`, `GET /api/traces/{path}`
 - Test: `flywheel/tests/api/test_redaction.py`, `flywheel/tests/engine/test_reader.py`, and a server test for the reports route
 
 **Interfaces consumed from earlier plans:**
@@ -597,8 +597,155 @@ git commit -m "feat(api): expose GET /api/redaction/reports"
 
 ---
 
+## Task 5: Wire redacted evidence and trace read endpoints
+
+**Files:**
+- Modify: `flywheel/api/server.py`
+- Test: `flywheel/tests/api/test_redaction_evidence_routes.py`
+
+**Interfaces:**
+- Consumes: `EvidenceReader`, `RedactionService`, `DEFAULT_POLICY`, and the plan-02 `REDACTION_ENABLED` hard gate.
+- Produces:
+  - `GET /api/evidence/{path:path}`
+  - `GET /api/traces/{path:path}`
+- Both routes keep returning 503 while `REDACTION_ENABLED` is unset. When enabled, they fetch only through `EvidenceReader.fetch_redacted_failed_evidence()`. They never return Langfuse raw payloads. Missing or blocked evidence is represented as an unavailable marker with no payload, so UI can keep the evidence reference visible without exposing unsafe content.
+
+- [ ] **Step 1: Write the failing route tests**
+
+```python
+# flywheel/tests/api/test_redaction_evidence_routes.py
+from pathlib import Path
+from fastapi.testclient import TestClient
+from api.auth import Principal
+from api.redaction import RedactionResult
+from api.server import create_app
+
+
+class FakeEvidenceReader:
+    def __init__(self, *, mode: str):
+        self.mode = mode
+
+    def fetch_redacted_failed_evidence(self, trace_ids):
+        trace_id = trace_ids[0]
+        if self.mode == "missing":
+            return [], [], [trace_id]
+        if self.mode == "blocked":
+            return [], [RedactionResult(state="blocked", payload=None,
+                policy_version="v1", redacted_field_count=0, coverage=0.0,
+                blocked_evidence=True)], []
+        return [{"trace_id": trace_id, "content": "safe",
+                 "credentials": "[REDACTED]"}], [
+            RedactionResult(state="redacted", payload={"trace_id": trace_id,
+                "content": "safe", "credentials": "[REDACTED]"},
+                policy_version="v1", redacted_field_count=1, coverage=1.0)
+        ], []
+
+
+def _client(tmp_path: Path, monkeypatch, *, enabled: bool, mode: str = "redacted"):
+    if enabled:
+        monkeypatch.setenv("REDACTION_ENABLED", "1")
+    else:
+        monkeypatch.delenv("REDACTION_ENABLED", raising=False)
+    principal = Principal(actor_id="alice", roles=frozenset({"harness_owner"}))
+    app = create_app(root=tmp_path, principal_resolver=lambda request: principal)
+    app.state.evidence_reader = FakeEvidenceReader(mode=mode)
+    return TestClient(app)
+
+
+def test_evidence_and_trace_routes_stay_503_until_redaction_enabled(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch, enabled=False)
+    assert client.get("/api/evidence/t1").status_code == 503
+    assert client.get("/api/traces/t1").status_code == 503
+
+
+def test_evidence_route_returns_only_redacted_payload(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch, enabled=True)
+    r = client.get("/api/evidence/t1")
+    assert r.status_code == 200
+    assert r.json()["payload"]["credentials"] == "[REDACTED]"
+    assert "raw" not in r.text.lower()
+
+
+def test_blocked_and_missing_evidence_return_unavailable_markers(tmp_path, monkeypatch):
+    blocked = _client(tmp_path, monkeypatch, enabled=True, mode="blocked").get("/api/traces/t1")
+    assert blocked.json()["unavailable"] is True
+    assert blocked.json()["payload"] is None
+    assert blocked.json()["redaction_state"] == "blocked"
+
+    missing = _client(tmp_path, monkeypatch, enabled=True, mode="missing").get("/api/evidence/t2")
+    assert missing.json()["unavailable"] is True
+    assert missing.json()["reason"] == "missing"
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd flywheel && pytest tests/api/test_redaction_evidence_routes.py -v`
+Expected: FAIL because plan 02 still returns 501 after the redaction gate is enabled.
+
+- [ ] **Step 3: Replace the plan-02 evidence guard with redacted read handlers**
+
+Keep the guard in the route handler so tests can inject `app.state.evidence_reader`
+without requiring Langfuse credentials. Only instantiate the default reader after
+the gate passes:
+
+```python
+# flywheel/api/server.py  (inside create_app, replacing the plan-02 evidence guard handlers)
+    import os
+    from .redaction import DEFAULT_POLICY, RedactionService
+    from engine.reader import EvidenceReader
+
+    def _evidence_reader():
+        injected = getattr(app.state, "evidence_reader", None)
+        if injected is not None:
+            return injected
+        return EvidenceReader(langfuse_url=os.environ["LANGFUSE_URL"],
+                              langfuse_secret=os.environ["LANGFUSE_SECRET"],
+                              redactor=RedactionService(DEFAULT_POLICY))
+
+    def _redacted_evidence_response(path: str):
+        if os.getenv("REDACTION_ENABLED", "") == "":
+            return _json(503, {"detail": "evidence endpoints require redaction pipeline (plan 03); set REDACTION_ENABLED after wiring RedactionService"})
+        payloads, results, missing_trace_ids = (
+            _evidence_reader().fetch_redacted_failed_evidence([path])
+        )
+        if path in missing_trace_ids:
+            return {"trace_id": path, "payload": None, "unavailable": True,
+                    "reason": "missing", "redaction_state": "unavailable"}
+        blocked = next((r for r in results
+                        if r.state == "blocked" or r.blocked_evidence), None)
+        if blocked is not None:
+            return {"trace_id": path, "payload": None, "unavailable": True,
+                    "reason": "redaction_blocked",
+                    "redaction_state": "blocked"}
+        return {"trace_id": path, "payload": payloads[0] if payloads else None,
+                "unavailable": False, "redaction_state": "redacted"}
+
+    @app.get("/api/evidence/{path:path}")
+    def get_evidence(path: str):
+        return _redacted_evidence_response(path)
+
+    @app.get("/api/traces/{path:path}")
+    def get_trace(path: str):
+        return _redacted_evidence_response(path)
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd flywheel && pytest tests/api/test_redaction_evidence_routes.py -v`
+Expected: PASS.
+
+- [ ] **Step 5: Run full suite + lint + types, then commit**
+
+```bash
+cd flywheel && pytest -q && ruff check api engine sdk tests && mypy api engine sdk
+git add flywheel/api/server.py flywheel/tests/api/test_redaction_evidence_routes.py
+git commit -m "feat(api): serve redacted evidence and traces"
+```
+
+---
+
 ## Self-Review
 
-- **Spec coverage (Engine §10, UI §13):** `RedactionService` is a mandatory pipeline step with versioned policy, recursive block-key scanning, fail-closed on exception and on low coverage (§10). `RedactionAnalytics` records redacted/blocked counts, missing trace count/ids, coverage, over-block review, policy version (§10 "each analysis report must include..."). `EvidenceReader` guarantees L3 never gets raw payloads and drops `blocked` items (§10 fail-closed + UI §13 "Redaction blocked → block analysis/proposal use"). Missing traces are returned as `missing_trace_ids` so UI can keep evidence refs visible and analysis can return `needs_more_data` instead of silently ignoring coverage loss.
+- **Spec coverage (Engine §10, UI §13):** `RedactionService` is a mandatory pipeline step with versioned policy, recursive block-key scanning, fail-closed on exception and on low coverage (§10). `RedactionAnalytics` records redacted/blocked counts, missing trace count/ids, coverage, over-block review, policy version (§10 "each analysis report must include..."). `EvidenceReader` guarantees L3 never gets raw payloads and drops `blocked` items (§10 fail-closed + UI §13 "Redaction blocked → block analysis/proposal use"). Missing traces are returned as `missing_trace_ids` so UI can keep evidence refs visible and analysis can return `needs_more_data` instead of silently ignoring coverage loss. `/api/evidence/{path}` and `/api/traces/{path}` preserve the `REDACTION_ENABLED` 503 hard gate and serve only redacted payloads or unavailable markers.
 - **Placeholder scan:** no TBD/TODO; every code step shows complete code.
 - **Type consistency:** `RedactionState` reused from `sdk.schema` (plan 01). `RedactionResult` fields consumed identically by analytics and the reader. `JsonRecordStore`/`create_app` signatures match plan 02. The `redaction_reports` collection name and row shape match the UI §10 `GET /api/redaction/reports` consumer (plan 08).

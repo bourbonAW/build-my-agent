@@ -437,6 +437,18 @@ def test_drift_recheck_blocks_dependent_inflight_regressions(tmp_path):
     assert svc._store.get("proposals", "p_review")["state"] == "blocked_on_judge_recheck"
     assert svc._store.get("proposals", "p_running")["state"] == "blocked_on_judge_recheck"
     assert svc._store.get("proposals", "p_other")["state"] == "regression_review"
+
+
+def test_drift_recheck_blocks_plan06_proposals_via_source_run(tmp_path):
+    svc = _validated_judge(tmp_path)
+    svc._store.put("runs", "run1", {"project": "bourbon", "id": "run1",
+        "judge_version": "jv1"})
+    svc._store.put("proposals", "p_from_run", {"project": "bourbon", "id": "p_from_run",
+        "state": "regression_review", "source_eval_run_id": "run1"})
+    out = svc.record_drift_check(project="bourbon", judge_version="jv1",
+                                 human_judge_agreement=0.5, distribution_drift=0.1)
+    assert out["blocked_regressions"] == ["p_from_run"]
+    assert svc._store.get("proposals", "p_from_run")["state"] == "blocked_on_judge_recheck"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -468,8 +480,18 @@ Expected: FAIL with `AttributeError: ... 'record_drift_check'`.
         if human_judge_agreement < agreement_floor or distribution_drift > drift_ceiling:
             judge["status"] = "recheck_required"
             self._save(judge)
+
+            def proposal_uses_judge(prop: dict) -> bool:
+                if prop.get("judge_version") == judge_version:
+                    return True
+                run_id = prop.get("source_eval_run_id")
+                if not run_id:
+                    return False
+                run = self._store.get("runs", run_id)
+                return run is not None and run.get("judge_version") == judge_version
+
             for prop in self._store.list("proposals", project=project):
-                if prop.get("judge_version") != judge_version:
+                if not proposal_uses_judge(prop):
                     continue
                 if prop.get("state") not in ("regression_running", "regression_review"):
                     continue
@@ -571,6 +593,15 @@ def test_validate_judge_returns_display_phase_without_locked_test_status(tmp_pat
     assert r.status_code == 200
     assert r.json()["judge"]["status"] == "validated"
     assert r.json()["judge"]["validation_phase"] == "validated"
+
+
+def test_judge_route_wiring_keeps_plan02_runs_list_working(tmp_path):
+    client, app = _client(tmp_path)
+    app.state.store.put("runs", "run1", {"project": "bourbon", "id": "run1",
+        "state": "collecting"})
+    r = client.get("/api/runs", params={"project": "bourbon"})
+    assert r.status_code == 200
+    assert r.json()["runs"][0]["id"] == "run1"
 ```
 
 ```python
@@ -623,7 +654,8 @@ Add services/helpers:
     from engine.judge import JudgeService
     judges = JudgeService(store, audit=audit)
 
-    def _idempotent(request: Request, compute):
+    # Unique name: do not shadow plan 02's _idempotent(key, build) helper.
+    def _idempotent_judge_mutation(request: Request, compute):
         key = request.headers.get("Idempotency-Key")
         if not key:
             raise HTTPException(status_code=400, detail="Idempotency-Key required")
@@ -694,7 +726,7 @@ Add route snippets:
                                action="create_judge", target_type="judge",
                                target_id=judge["id"], before=None, after=judge)
             return {"judge": _judge_response(judge), "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_judge_mutation(request, compute)
 
     @app.post("/api/judges/{judge_version}/validate")
     def validate_judge(judge_version: str, body: JudgeValidateBody, request: Request):
@@ -709,7 +741,7 @@ Add route snippets:
                                action="validate_judge", target_type="judge",
                                target_id=judge["id"], before=before, after=judge)
             return {"judge": _judge_response(judge), "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_judge_mutation(request, compute)
 
     @app.get("/api/annotations")
     def list_annotations(project: str, eval_run_id: str | None = None):
@@ -733,7 +765,7 @@ Add route snippets:
                                action="create_annotation", target_type="annotation",
                                target_id=body.id, before=None, after=ann)
             return {"annotation": ann, "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_judge_mutation(request, compute)
 
     @app.post("/api/annotations/{annotation_id}")
     def update_annotation(annotation_id: str, body: AnnotationModel, request: Request):
@@ -748,7 +780,7 @@ Add route snippets:
                                action="update_annotation", target_type="annotation",
                                target_id=annotation_id, before=before, after=ann)
             return {"annotation": ann, "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_judge_mutation(request, compute)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**

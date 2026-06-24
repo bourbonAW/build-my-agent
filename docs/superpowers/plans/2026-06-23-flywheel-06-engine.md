@@ -1037,6 +1037,7 @@ Expected: FAIL because the plan-06 routes are still 501 stubs or absent.
 Add services:
 
 ```python
+    import os
     from api.redaction import DEFAULT_POLICY, RedactionAnalytics, RedactionService
     from engine.handoff import generate_handoff_markdown
     from engine.orchestrator import AnalysisEngine
@@ -1045,12 +1046,19 @@ Add services:
     from engine.writer import EngineWriter
 
     writer = EngineWriter(store)
-    reader = EvidenceReader(langfuse_url=settings.langfuse_url,
-                            langfuse_secret=settings.langfuse_secret,
-                            redactor=RedactionService(DEFAULT_POLICY))
-    analysis_engine = AnalysisEngine(store, reader, writer, Proposer(),
-                                     RedactionAnalytics(store))
-    app.state.analysis_engine = analysis_engine
+    app.state.engine_writer = writer
+
+    def _analysis_engine():
+        injected = getattr(app.state, "analysis_engine", None)
+        if injected is not None:
+            return injected
+        reader = EvidenceReader(langfuse_url=os.environ["LANGFUSE_URL"],
+                                langfuse_secret=os.environ["LANGFUSE_SECRET"],
+                                redactor=RedactionService(DEFAULT_POLICY))
+        engine = AnalysisEngine(store, reader, writer, Proposer(),
+                                RedactionAnalytics(store))
+        app.state.analysis_engine = engine
+        return engine
 ```
 
 Add route-local request models/imports before the route snippets:
@@ -1068,9 +1076,21 @@ Add route-local request models/imports before the route snippets:
         diff_url: str | None = None
 ```
 
-Use the same `_idempotent()` helper style as plans 04/05. Add route snippets:
+Use a route-local idempotent helper with a unique name (do not shadow plan 02's
+`_idempotent(key, build)` helper). Add route snippets:
 
 ```python
+    def _idempotent_engine_mutation(request: Request, compute):
+        key = request.headers.get("Idempotency-Key")
+        if not key:
+            raise HTTPException(status_code=400, detail="Idempotency-Key required")
+        prior = idem.lookup(key)
+        if prior is not None:
+            return prior
+        result = compute()
+        idem.remember(key, result)
+        return result
+
     @app.post("/api/runs/{run_id}/sync-labels")
     def sync_labels(run_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
@@ -1090,20 +1110,20 @@ Use the same `_idempotent()` helper style as plans 04/05. Add route snippets:
                                action="sync_labels", target_type="run",
                                target_id=run_id, before=before, after=run)
             return {"run": run, "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_engine_mutation(request, compute)
 
     @app.post("/api/runs/{run_id}/analysis")
     def trigger_analysis(run_id: str, body: ProjectBody, request: Request):
         principal = principal_resolver(request)
         require_role(principal, "harness_owner")
         def compute():
-            result = app.state.analysis_engine.trigger_analysis(
+            result = _analysis_engine().trigger_analysis(
                 project=body.project, eval_run_id=run_id)
             aid = audit.record(project=body.project, actor=principal.actor_id,
                                action="trigger_analysis", target_type="run",
                                target_id=run_id, before=None, after=result)
             return {"analysis": result, "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_engine_mutation(request, compute)
 
     @app.get("/api/issues")
     def list_issues(project: str):
@@ -1135,7 +1155,7 @@ Use the same `_idempotent()` helper style as plans 04/05. Add route snippets:
                                action="create_handoff", target_type="handoff",
                                target_id=handoff["id"], before=None, after=handoff)
             return {"handoff": handoff, "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_engine_mutation(request, compute)
 
     @app.post("/api/proposals/{proposal_id}/implementation-link")
     def link_implementation(proposal_id: str, body: ImplementationLinkBody, request: Request):
@@ -1153,7 +1173,7 @@ Use the same `_idempotent()` helper style as plans 04/05. Add route snippets:
                                action="link_implementation", target_type="handoff",
                                target_id=handoff_id, before=before, after=handoff)
             return {"handoff": handoff, "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_engine_mutation(request, compute)
 
     @app.post("/api/proposals/{proposal_id}/rebase")
     def rebase_proposal(proposal_id: str, body: ProjectBody, request: Request):
@@ -1177,7 +1197,7 @@ Use the same `_idempotent()` helper style as plans 04/05. Add route snippets:
                                action="rebase_proposal", target_type="proposal",
                                target_id=proposal_id, before=before, after=proposal)
             return {"proposal": proposal, "audit_event_id": aid}
-        return _idempotent(request, compute)
+        return _idempotent_engine_mutation(request, compute)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
