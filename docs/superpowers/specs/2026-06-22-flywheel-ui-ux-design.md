@@ -141,6 +141,7 @@ type RunSummary = {
   runId: string;
   harness: string;          // "abc1234@claude-opus-4-8"
   judgeVersion: string | null;
+  judgeF1: number | null;   // from the judge's validation report; null → "not available" (§6)
   passRate: { point: number; low: number; high: number };  // Wilson CI
   failCount: number;
   createdAt: string;

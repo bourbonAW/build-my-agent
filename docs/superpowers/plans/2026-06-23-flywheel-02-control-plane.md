@@ -285,6 +285,7 @@ def validate(cases: list[LabeledCase], *, judge_version: str, model: str,
 **Interfaces:**
 - `write_regression_report(root, project, run_id, report: RegressionReport, *, baseline_harness, candidate_harness, judge_version, trace_urls: dict[str, str] | None = None, candidate_pr_url=None) -> Path` — writes `root/<project>/reports/regression/<run_id>.json` matching UI §7 `RegressionReport`. `fixed`/`newlyBroken`/`perLabel`/`passRateDelta` are all derived from `report` (single owner); `trace_urls` maps `case_id → Langfuse deep link` so the glue script supplies URLs without `compare()` knowing about Langfuse.
 - `write_judge_report(root, project, report: JudgeReport) -> Path` — writes `root/<project>/reports/judge/<judge_version>.json` matching UI §7 `JudgeReport`.
+- `write_regression_markdown(root, project, run_id, report: RegressionReport, *, judge_version, candidate_pr_url=None) -> Path` — writes a human-readable `root/<project>/reports/regression/<run_id>.md` (Engine §3/§7 mandate "markdown + JSON"). The JSON feeds the UI; the markdown is the artifact a human reads or pastes into the candidate PR. Same data as the JSON, no new computation.
 - `read_json(path) -> dict`.
 - **Locked decision:** report JSON uses the camelCase keys the frontend expects (UI §7), written directly here, so the read API can serve them verbatim. The CI bounds come from `report.delta_low/delta_high` (a real interval, never zero-width).
 
@@ -316,6 +317,17 @@ def test_regression_report_written_with_expected_keys(tmp_path: Path):
     d = data["passRateDelta"]
     assert d["low"] <= d["point"] <= d["high"]
     assert data["perLabel"][0]["label"] == "tool_misuse"
+
+def test_regression_markdown_written(tmp_path: Path):
+    from flywheel.report import write_regression_markdown
+    base = [CaseScore("a", "fail", "tool_misuse"), CaseScore("b", "pass")]
+    cand = [CaseScore("a", "pass"), CaseScore("b", "pass")]
+    rep = compare(base, cand, validation_case_ids=set(),
+                  baseline_judge_version="jv1", candidate_judge_version="jv1")
+    path = write_regression_markdown(tmp_path, "bourbon", "run_1", rep, judge_version="jv1")
+    text = path.read_text()
+    assert path.suffix == ".md"
+    assert "run_1" in text and rep.result in text and "tool_misuse" in text
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/report.py`
@@ -366,6 +378,30 @@ def write_regression_report(
     }
     path = _reports_dir(root, project, "regression") / f"{run_id}.json"
     path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
+def write_regression_markdown(
+    root: Path, project: str, run_id: str, report: RegressionReport, *,
+    judge_version: str, candidate_pr_url: str | None = None,
+) -> Path:
+    lines = [
+        f"# Regression report — {run_id}",
+        "",
+        f"- **Result:** {report.result}",
+        f"- **Judge:** {judge_version}",
+        f"- **Pass rate:** {report.baseline_rate:.3f} → {report.candidate_rate:.3f} "
+        f"(Δ {report.delta:+.3f}, 95% CI [{report.delta_low:+.3f}, {report.delta_high:+.3f}])",
+    ]
+    if candidate_pr_url:
+        lines.append(f"- **Candidate PR:** {candidate_pr_url}")
+    lines += ["", "## Per-label failures", "", "| label | baseline | candidate |", "|---|---|---|"]
+    lines += [f"| {r['label']} | {r['baseline']} | {r['candidate']} |" for r in report.per_label]
+    lines += ["",
+              f"**Fixed ({len(report.fixed)}):** {', '.join(report.fixed) or '—'}",
+              f"**Newly broken ({len(report.newly_broken)}):** {', '.join(report.newly_broken) or '—'}"]
+    path = _reports_dir(root, project, "regression") / f"{run_id}.md"
+    path.write_text("\n".join(lines) + "\n")
     return path
 
 
@@ -507,7 +543,7 @@ npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom @pl
 
 - [ ] **Step 3: Routes (UI §5)**
   - `/` — index: links to runs + a Langfuse deep link for traces/datasets/annotation.
-  - `/runs` — `RunSummary[]` table: run id, harness, judge version, pass rate + CI bar, #fail, Langfuse link.
+  - `/runs` — `RunSummary[]` table: run id, harness, judge version, judge F1 (or "not available" when `judgeF1` is null), pass rate + CI bar, #fail, Langfuse link.
   - `/runs/:runId` — `RegressionReport`: baseline vs candidate harness, judge version (with the "same judge" note), pass-rate delta + CI, result badge (`better` green / `no_change` amber / `worse` red), per-label delta table, fixed / newly-broken lists with Langfuse trace deep links.
   - `/judges/:judgeVersion` — `JudgeReport`: F1 vs threshold, per-label precision/recall, confusion matrix.
 
@@ -541,21 +577,32 @@ described as done.
   span attributes `eval.case_id` (the Langfuse dataset item id) and `eval.run_id`
   (the dataset run name) on the root span, alongside the `gen_ai.*` attrs Bourbon
   already emits. This is a small change in `bourbon`'s observability wiring.
-- [ ] **Step 2: `flywheel/scripts/run_judge.py`** — for a dataset run: read each
+- [ ] **Step 2: `flywheel/scripts/sample_traces.py`** — query Langfuse for ~20–50
+  recent traces, biased toward failures (low score / flagged / errored), and write
+  them into a Langfuse dataset as the error-analysis pool (Engine §5 step 1: "a
+  short script queries Langfuse"). This seeds the cases the rest of the loop scores;
+  it does no scoring itself.
+- [ ] **Step 3: `flywheel/scripts/run_judge.py`** — for a dataset run: read each
   case's input/output, call `Judge.score_case` with `complete` wired to Anthropic,
   and write `pass/fail` + critique as a Langfuse score on the case's trace. Uses
-  `Harness(git_sha, model)` for the run's harness id.
-- [ ] **Step 3: `flywheel/scripts/run_regression.py`** — load baseline + candidate
-  `CaseScore`s (with `failure_label` from the Langfuse score comment), the
+  `Harness(git_sha, model)` for the run's harness id. For nondeterministic cases,
+  score each case ≥3× when budget allows (Engine §7), writing one score per repeat.
+- [ ] **Step 4: `flywheel/scripts/run_regression.py`** — load baseline + candidate
+  `CaseScore`s (with `failure_label` from the Langfuse score comment); when a case
+  was scored ≥3× (nondeterministic, Engine §7), call `aggregate_repeats(...)` (plan
+  01 Task 4) to collapse repeats by majority vote before comparing; read the
   validation/regression split ids from the dataset, call `compare(...)`, build the
-  `case_id → Langfuse trace URL` map, and call `write_regression_report(...)`.
-- [ ] **Step 4: `runs_provider`** — implement the callable injected into the read
-  API: query Langfuse for a project's dataset runs and their score summaries, and
-  return `RunSummary[]` (UI §7). This is the only place that reads Langfuse for
-  the list view.
-- [ ] **Step 5: Smoke** — run one real dataset through `run_judge.py` →
-  `run_regression.py`, open the UI `/runs`, and confirm a trace deep link resolves
-  in Langfuse. Document the command in `flywheel/README.md`.
+  `case_id → Langfuse trace URL` map, and call both `write_regression_report(...)`
+  and `write_regression_markdown(...)`.
+- [ ] **Step 5: `runs_provider`** — implement the callable injected into the read
+  API: query Langfuse for a project's dataset runs and their score summaries, **join
+  each run's judge validation report to populate `RunSummary.judgeF1` (null when the
+  judge has no validation report → UI renders "not available", never a misleading
+  `0`)**, and return `RunSummary[]` (UI §7). This is the only place that reads
+  Langfuse for the list view.
+- [ ] **Step 6: Smoke** — run one real dataset through `sample_traces.py` →
+  `run_judge.py` → `run_regression.py`, open the UI `/runs`, and confirm a trace
+  deep link resolves in Langfuse. Document the command in `flywheel/README.md`.
 
 No commit gating here beyond "the smoke run works"; this is the seam between the
 tested core and the real Bourbon/Langfuse environment.

@@ -226,6 +226,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
   - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
   - **disjointness gate (Engine §5/§7):** raises `ValueError` if compared case ids overlap `validation_case_ids`. That set is the dataset's **judge-validation split**; the regression set is the dataset's **regression split** — the caller reads both from the Langfuse dataset metadata.
   - assigns `better`/`worse`/`no_change` by whether the pass-rate-delta Wilson CI clears zero (Engine §7 noise band).
+- `aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]` — collapses repeated scorings of the same `case_id` (Engine §7 "sample ≥3× for nondeterministic cases") into one `CaseScore` by majority vote: a case is `pass` only if a strict majority of its repeats passed (ties → not-a-pass, conservative); the kept `failure_label` is the most common one among the non-pass repeats. Single-run cases pass through unchanged, so callers that don't repeat are unaffected. `run_regression.py` (plan 02 Task 6) calls this before `compare()`.
 
 - [ ] **Step 1: failing test** `tests/test_regression.py`
 
@@ -277,6 +278,17 @@ def test_per_label_failure_counts():
     rep = _cmp(base, cand)
     row = next(r for r in rep.per_label if r["label"] == "tool_misuse")
     assert row["baseline"] == 2 and row["candidate"] == 1
+
+def test_aggregate_repeats_majority_vote():
+    from flywheel.regression import aggregate_repeats
+    runs = [
+        CaseScore("a", "pass"), CaseScore("a", "pass"), CaseScore("a", "fail", "tool_misuse"),
+        CaseScore("b", "fail", "tool_misuse"), CaseScore("b", "fail", "tool_misuse"), CaseScore("b", "pass"),
+    ]
+    agg = {s.case_id: s for s in aggregate_repeats(runs)}
+    assert agg["a"].label == "pass"          # 2/3 pass -> pass
+    assert agg["b"].label == "fail"          # 1/3 pass -> fail
+    assert agg["b"].failure_label == "tool_misuse"
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/regression.py`
@@ -331,6 +343,28 @@ def _fail_counts(scores: list[CaseScore]) -> dict[str, int]:
         if s.label != "pass" and s.failure_label:
             counts[s.failure_label] = counts.get(s.failure_label, 0) + 1
     return counts
+
+
+def aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]:
+    """Collapse repeated scorings of one case (Engine §7 "repeats ≥3×") by
+    majority vote: pass only if a strict majority of repeats passed (ties are
+    conservative non-passes). The kept failure_label is the most common among the
+    non-pass repeats. Single-run cases are returned unchanged."""
+    from collections import Counter
+
+    by_case: dict[str, list[CaseScore]] = {}
+    for s in scores:
+        by_case.setdefault(s.case_id, []).append(s)
+    out: list[CaseScore] = []
+    for case_id, runs in by_case.items():
+        passes = sum(1 for r in runs if r.label == "pass")
+        if passes * 2 > len(runs):
+            out.append(CaseScore(case_id, "pass"))
+            continue
+        fl = Counter(r.failure_label for r in runs if r.label != "pass" and r.failure_label)
+        failure_label = fl.most_common(1)[0][0] if fl else None
+        out.append(CaseScore(case_id, "fail", failure_label))
+    return sorted(out, key=lambda s: s.case_id)
 
 
 def compare(
