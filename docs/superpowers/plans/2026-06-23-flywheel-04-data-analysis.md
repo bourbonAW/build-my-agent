@@ -1,3 +1,9 @@
+> **⚠️ SUPERSEDED (lean revision 2026-06-24).** Do not implement. Data sampling,
+> labeling, and datasets live in Langfuse; failure labels are a flat editable
+> `labels.md` — see `specs/2026-06-22-flywheel-engine-design.md` §5. The taxonomy
+> registry + migration maps are deferred (§8). Live plans: `00-index`, `01-sdk`,
+> `02-control-plane`.
+
 # Flywheel 04 — Data & Error Analysis Pipeline Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

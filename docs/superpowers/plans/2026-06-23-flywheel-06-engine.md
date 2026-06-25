@@ -1,3 +1,9 @@
+> **⚠️ SUPERSEDED (lean revision 2026-06-24).** Do not implement. Automated
+> clustering / proposer / handoff is deferred — improvement proposals are git PRs
+> — see `specs/2026-06-22-flywheel-engine-design.md` §8 (add-back trigger: enough
+> labeled data to make clustering pay off). Live plans: `00-index`, `01-sdk`,
+> `02-control-plane`.
+
 # Flywheel 06 — L3 Analysis Engine Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

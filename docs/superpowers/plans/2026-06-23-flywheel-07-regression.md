@@ -1,3 +1,9 @@
+> **⚠️ SUPERSEDED (lean revision 2026-06-24).** Do not implement. The holdout
+> ledger, Bonferroni/FDR correction, and publish/rollback/revert state machine are
+> replaced by `regression.py` (3-value `better|no_change|worse` + Wilson noise
+> band) in plan `01-sdk` Task 4 — see `specs/2026-06-22-flywheel-engine-design.md`
+> §7. Live plans: `00-index`, `01-sdk`, `02-control-plane`.
+
 # Flywheel 07 — Regression Gate + Publish/Rollback/Revert Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

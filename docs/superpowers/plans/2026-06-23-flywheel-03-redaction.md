@@ -1,3 +1,8 @@
+> **⚠️ SUPERSEDED (lean revision 2026-06-24).** Do not implement. The redaction
+> pipeline is deferred — see `specs/2026-06-22-flywheel-engine-design.md` §8
+> (add-back trigger: traces exposed beyond the single trusted maintainer). The
+> live plan set is `00-index`, `01-sdk`, `02-control-plane` only.
+
 # Flywheel 03 — Redaction + Evidence Access Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

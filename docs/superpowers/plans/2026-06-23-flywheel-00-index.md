@@ -1,39 +1,62 @@
-# Flywheel Implementation Plan — Index
+# Flywheel Implementation Plan — Index (Lean Revision 2026-06-24)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement each sub-plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:test-driven-development
+> for the Python core; the frontend uses Vitest + Testing Library. Steps use
+> checkbox (`- [ ]`) syntax.
 
-**Goal:** Build the self-hosted Flywheel control plane + engine + UI described in the two parent specs: a closed-loop eval improvement system that turns real traces into datasets, calibrated judges, failure issues, human-reviewed proposals, regression decisions, and published harness baselines.
+> **⚠️ This index was rewritten for the lean MVP.** The prior version mandated a
+> control plane (State Store, 5 lifecycle enums, Score Bridge, ~45 endpoints,
+> taxonomy registry, redaction pipeline, holdout ledger) and pointed at sub-plans
+> 03–08. **All of that is superseded.** See `specs/2026-06-22-flywheel-engine-design.md`
+> §0 for why ~85% was cut. Sub-plans **03–08 are archived/superseded** (banner at
+> the top of each) and must not be implemented as written. The Chinese `-zh`
+> variants of these docs were intentionally left untouched and still describe the
+> old design — do not implement from them either.
 
-**Architecture:** New `flywheel/` repo with a Python control plane/engine (FastAPI + file/SQLite State Store, synchronous, matching Bourbon's style) and a React+TypeScript+Vite UI. Langfuse + OTel Collector are the evidence store (not built here, only integrated). The browser talks only to Flywheel API and never receives Langfuse write credentials.
+**Goal:** Make Bourbon measurably better from its own traces with the smallest
+machinery that closes the loop: real traces → look at failures → a few replayable
+cases → score them (judge) → change one thing → re-run, compare, don't regress.
 
-**Tech Stack:** Python 3.13, FastAPI, pydantic v2, httpx, SQLite (stdlib `sqlite3`), pytest; React 18 + TypeScript + Vite, React Router, TanStack Query, TanStack Table, shadcn/ui, lucide-react, Recharts, Vitest + Testing Library + Playwright.
+**Architecture:** A small `flywheel/` Python package (pure-logic core + thin
+read-only API) plus a real React+Vite frontend. **Langfuse** is the evidence
+store and owns traces, datasets, scores, and annotation (not rebuilt here).
+**OpenTelemetry `gen_ai.*`** (already emitted by Bourbon) is the trace convention;
+the only new attrs are `eval.case_id` and `eval.run_id`.
+
+**Tech Stack:** Python 3.13, pydantic v2, FastAPI (read-only), pytest; React +
+TypeScript + Vite, React Router, TanStack Query/Table, Recharts, Vitest +
+Testing Library, one Playwright happy-path.
 
 **Parent specs:**
-- `docs/superpowers/specs/2026-06-22-flywheel-engine-design.md`
-- `docs/superpowers/specs/2026-06-22-flywheel-ui-ux-design.md`
+- `docs/superpowers/specs/2026-06-22-flywheel-engine-design.md` (lean)
+- `docs/superpowers/specs/2026-06-22-flywheel-ui-ux-design.md` (lean)
 
 ---
 
 ## Global Constraints
 
-These apply to **every** sub-plan and task. Values copied verbatim from the specs.
+Apply to every task below.
 
-- **OTel required.** `trace_id` is never optional for eval runs. Every project must be OTel-capable. No JSONL fallback.
-- **No head sampling for eval traces.** Traces with `flywheel.eval_run_id` or `flywheel.trace_pool_id` must be fully exported to Langfuse.
-- **Splits are mechanically disjoint:** `train ∩ dev ∩ locked_test ∩ regression_holdout = ∅`. `locked_test` validates judges; `regression_holdout` validates harness candidates; they must never share cases.
-- **Redaction fails closed.** L3 analyzer/proposer must never receive raw trace payloads. `blocked` evidence is hidden from UI and excluded from LLM analysis. State Store records the redaction policy + version that produced each evidence view.
-- **Same-judge comparison.** Baseline and candidate regression scores must use the same `judge_version`; otherwise publish is blocked (`judge_migration_required`).
-- **Authoritative lifecycle states.** DB, API, engine, and UI use the section-12 `ProposalState`, `RegressionStatus`, `RegressionOutcome`, `RunState`, `JudgeState` enums verbatim. No parallel vocabularies. `RegressionStatus` is **derived** from `ProposalState`, never independently persisted.
-- **Human gates.** Proposal approval, diff review, publish, rollback, and post-publish revert require explicit human action. No fully-automatic approval or publish.
-- **Idempotency on all mutations.** Duplicate submits return the existing object. Keys:
-  - `POST /api/scores`: `eval_run_id + case_id + sample_id + source + judge_version`
-  - `POST /api/annotations`: `annotation_item_id + annotator_id + rubric_version`
-  - proposal approval/rejection/publish/rollback are compare-and-set transitions.
-- **Browser never receives Langfuse write credentials.** Score writes go only through Flywheel API Score Bridge.
-- **One current Baseline per project**, with queryable lineage (current/previous generation, producing proposal, publish time, revert history).
-- **Open taxonomy registry.** No hard-coded closed `FailureCategory` enum anywhere. Taxonomy versions are immutable after publication; changes create a new version + migration map.
-- **Authz roles:** Dataset curator, Judge owner, Harness owner, Platform maintainer. Publish, rollback, post-publish revert, redaction-policy changes, and proposal approval require explicit role checks.
-- **All mutations return** the updated object **and** an append-only audit event id.
+- **Reuse standards, don't reinvent.** Execution-time trace attrs = OTel
+  `gen_ai.*` + `eval.case_id`/`eval.run_id`. Datasets, scores, annotation, trace
+  browsing = Langfuse native. No private `flywheel.*` convention, no State Store
+  re-modeling of Langfuse objects.
+- **Four identity concepts only:** `case_id`, `run_id`, `label` (pass/fail), and
+  `trace_id`. Plus a minimal harness id `git_sha@model` and a plain
+  `judge_version` string. No 8-part fingerprint, no lifecycle enums.
+- **Two surviving correctness gates** (asserts, not state machines):
+  - *same-judge:* baseline and candidate must be scored by one `judge_version`;
+    `compare()` raises otherwise.
+  - *disjointness:* the regression split must not overlap the judge-validation
+    split; `compare()` raises otherwise.
+- **Judge is the one validated asset.** F1 ≥ 0.70 (recomputed by re-running
+  `validate.py`), not a 6-state lifecycle.
+- **Regression result is three-valued:** `better | no_change | worse`, decided by
+  the Wilson CI of the pass-rate delta (noise band). A proposal is a git PR; a
+  baseline is `main`; "publish" is merge.
+- **No control plane.** No auth/roles, no audit log, no idempotency layer, no
+  Score Bridge. The read API is read-only; the browser never receives Langfuse
+  write credentials.
 
 ---
 
@@ -41,138 +64,85 @@ These apply to **every** sub-plan and task. Values copied verbatim from the spec
 
 ```
 flywheel/
-├── pyproject.toml          # Python package "flywheel", deps, ruff/mypy/pytest config
-├── sdk/                    # L1 SDK (plan 01)
-├── api/                    # Control plane: server, state store, score bridge, auth, audit, redaction (plans 02, 03)
-├── engine/                 # L3: sampler, coder, taxonomy, dataset, reader, analyzer, proposer, handoff, validator, writer (plans 04–07)
-├── infra/                  # docker-compose for Langfuse + OTel Collector (referenced, not a coding plan)
-├── datasets/               # curated dataset YAML/JSON artifacts
-├── taxonomy/               # taxonomy registry YAML artifacts
-├── ui/                     # React app (plan 08)
-└── tests/                  # pytest tree mirrors package layout
+├── pyproject.toml          # package "flywheel" + sibling package "api"
+├── flywheel/               # core library (plan 01) + judge/validate/report (plan 02)
+│   ├── identity.py metrics.py regression.py
+│   └── judge.py validate.py report.py
+├── api/                    # thin read-only FastAPI (plan 02)
+├── scripts/                # Bourbon/Langfuse glue: run_judge.py, run_regression.py (plan 02 Task 6)
+├── ui/                     # React + Vite frontend (plan 02 Task 5)
+├── labels.md               # flat editable failure-label list (plan 01)
+└── tests/                  # pytest tree
 ```
 
-**Python conventions (match Bourbon):**
-- Synchronous code. No asyncio in engine/state-store logic. FastAPI route handlers may be `def` (sync) — FastAPI runs them in a threadpool.
-- `@dataclass` for engine domain objects; pydantic `BaseModel` for API request/response schemas.
-- File-first State Store: JSON/JSONL on disk under `~/.flywheel/<project>/`, with a SQLite index for queryable lists. Crash-safety = append to disk before returning.
-- Tests: `pytest`. Lint: `ruff check sdk api engine tests`. Types: `mypy sdk api engine`.
+**Conventions (match Bourbon):** synchronous code, no asyncio; `@dataclass` for
+domain objects, pydantic only where validation helps; TDD for the pure-logic
+core; report JSON is camelCase end-to-end (UI §7) so the read API serves it
+verbatim.
 
 **Test commands:**
 ```bash
 cd flywheel
 uv pip install -e ".[dev]"
-pytest                       # all
-pytest tests/sdk -v          # one subsystem
-ruff check sdk api engine tests
-mypy sdk api engine
-# UI:
-cd flywheel/ui && npm install && npm run test && npm run test:e2e
+pytest
+ruff check flywheel api tests
+mypy flywheel api
+cd ui && npm install && npm run test -- --run && npx playwright test
 ```
 
 ---
 
-## Sub-Plan DAG
-
-Execute in dependency order. Each sub-plan ends with working, independently testable software.
+## Sub-Plan DAG (8 plans → 2)
 
 ```
 00-index (this doc)
    │
    ▼
-01-sdk ──────────────► 02-control-plane ──┬──► 03-redaction ──┐
-                                          │                   │
-                                          ├──► 04-data-analysis│
-                                          │         │         │
-                                          │         ▼         ▼
-                                          │      05-judge ◄────┘
-                                          │         │
-                                          │         ▼
-                                          │      06-engine ◄── 03
-                                          │         │
-                                          │         ▼
-                                          │      07-regression
-                                          │         │
-                                          └─────────┴──► 08-ui (consumes all APIs)
+01-sdk (core library: identity, metrics, regression)
+   │
+   ▼
+02-control-plane (judge, validate, report, read API, frontend, Bourbon glue)
 ```
 
 | Plan | File | Produces | Spec coverage |
 |---|---|---|---|
-| 01 | `2026-06-23-flywheel-01-sdk.md` | repo scaffold, `flywheel.schema`, `FlywheelContext`, fingerprint, `ScoreClient`, metrics | Engine §6, §7 |
-| 02 | `2026-06-23-flywheel-02-control-plane.md` | FastAPI server, State Store objects, Score Bridge, auth/roles, audit, idempotency, Baseline object | Engine §9, §12 (Baseline), UI §10, §11 |
-| 03 | `2026-06-23-flywheel-03-redaction.md` | `RedactionService`, `EvidenceReader`, fail-closed pipeline, redaction analytics | Engine §10, UI §13 |
-| 04 | `2026-06-23-flywheel-04-data-analysis.md` | sampler, coder, taxonomy registry+migration, dataset construction + split enforcement, budgets | Engine §5, §13 (sampler/coder/taxonomy/dataset) |
-| 05 | `2026-06-23-flywheel-05-judge.md` | `JudgeVersion` lifecycle, calibration protocol, locked-test rotation, candidate drift recheck, drift sentinel | Engine §11 |
-| 06 | `2026-06-23-flywheel-06-engine.md` | reader integration, analyzer (clustering+root cause), proposer, handoff Markdown, FailureIssue/ImprovementProposal | Engine §13 (analyzer/proposer/handoff) |
-| 07 | `2026-06-23-flywheel-07-regression.md` | validator: holdout integrity, holdout ledger, stats/CI/noise band, candidate judge recheck, publish/rollback/no-sig-change/revert | Engine §12, §14 |
-| 08 | `2026-06-23-flywheel-08-ui.md` | React app: all MVP routes + Phase 2 routes, decision forms, API client, Playwright loop test | UI spec (whole) |
+| 01 | `2026-06-23-flywheel-01-sdk.md` | repo scaffold, `identity.py` (Harness, Label), `metrics.py` (P/R/F1, Wilson CI), `regression.py` (3-value compare + gates), `labels.md` | Engine §4, §5, §7 |
+| 02 | `2026-06-23-flywheel-02-control-plane.md` | `judge.py`, `validate.py`, `report.py`, thin read-only API, React frontend, Bourbon integration glue | Engine §6, §9; UI spec |
 
----
+> The file names still say "01-sdk" / "02-control-plane" for git continuity, but
+> their **content is the lean rewrite** — not an SDK and not a control plane.
 
-## Phase Mapping (coverage = full: MVP + Phase 2/3)
+### Superseded sub-plans (do not implement)
 
-Per engine spec §15, each sub-plan tags its tasks with the phase they satisfy:
-
-- **Day-1 Hard Gates** — OTel identity (01,02), Redaction (03), Dataset splits (04), Judge validity (05), Same-judge comparison (07), Regression holdout (07), Baseline object (02,07), Human gates (02,08), Authoritative lifecycle (02), Revert path (02,07).
-- **Phase 1.5 mechanisms** — multiple-comparison correction (07), drift sentinel (05), baseline rebase (07), judge migration (07), conflict detection (06,07), redaction analytics (03), cost governance (04). MVP stance = schema/API placeholder + manual; later automation noted per task.
-- **Phase 2** — coding-agent executor + PR/diff linking (06,08), custom annotation workflow (08), candidate audit workflow (05,08), richer redaction policy UI (03,08).
-- **Phase 3** — cron/threshold triggers, multi-project trend analytics, long-term taxonomy drift analysis (added as final tasks in 04, 05, 07, 08 marked Phase 3).
-
----
-
-## API Endpoint Ownership (UI §10)
-
-Every UI §10 endpoint is assigned to exactly one sub-plan. Plan 02 implements the runs and baselines endpoints and stubs all others with 501.
-
-| Endpoint | Method | Owner plan |
+| File | Was | Status |
 |---|---|---|
-| `/api/runs` | GET, POST | 02 |
+| `2026-06-23-flywheel-03-redaction.md` | Redaction pipeline | **Superseded** — deferred (Engine §8); single trusted maintainer needs no redaction. |
+| `2026-06-23-flywheel-04-data-analysis.md` | Sampler/coder/taxonomy registry/dataset splits | **Superseded** — data + labeling live in Langfuse; labels are a flat `labels.md`. |
+| `2026-06-23-flywheel-05-judge.md` | JudgeVersion lifecycle + drift sentinel | **Superseded** — replaced by `validate.py` (F1 ≥ 0.70). |
+| `2026-06-23-flywheel-06-engine.md` | Analyzer/proposer/handoff | **Superseded** — proposals are git PRs (Engine §8 add-back trigger). |
+| `2026-06-23-flywheel-07-regression.md` | Holdout ledger, Bonferroni/FDR, publish/rollback states | **Superseded** — `regression.py` 3-value result + Wilson noise band. |
+| `2026-06-23-flywheel-08-ui.md` | Full 13-route control UI | **Superseded** — UI is plan 02 Task 5 (3 routes). |
+
+---
+
+## API Surface (45 → 3, read-only)
+
+| Endpoint | Method | Owner |
+|---|---|---|
+| `/api/runs` | GET | 02 |
 | `/api/runs/{run_id}` | GET | 02 |
-| `/api/runs/{run_id}/scores` | POST | 02 (stub) → 04 wires taxonomy validation |
-| `/api/runs/{run_id}/sync-labels` | POST | 06 |
-| `/api/runs/{run_id}/analysis` | POST | 06 |
-| `/api/baselines` | GET, POST | 02 |
-| `/api/baselines/{generation}` | GET | 02 |
-| `/api/baselines/{generation}/revert` | POST | 02 |
-| `/api/projects` | GET | 04 |
-| `/api/datasets`, `/api/datasets/{id}` | GET | 04 |
-| `/api/datasets/{dataset_id}/cases` | POST | 04 |
-| `/api/taxonomy` | GET | 04 (aggregate of labels+migrations; UI §10) |
-| `/api/taxonomy/labels`, `/api/taxonomy/migrations` | GET, POST | 04 |
-| `/api/taxonomy/propose-update` | POST | 04 |
-| `/api/trace-pools` | GET | 04 |
-| `/api/trace-pools/{pool_id}/sample` | POST | 04 |
-| `/api/open-code-batches/{batch_id}` | GET | 04 |
-| `/api/open-code-batches/{batch_id}/codes` | POST | 04 |
-| `/api/judges`, `/api/judges/{version}` | GET | 05 |
-| `/api/judges` | POST | 05 |
-| `/api/judges/{judge_version}/validate` | POST | 05 |
-| `/api/annotations`, `/api/annotations/{id}` | GET, POST | 05 |
-| `/api/issues`, `/api/issues/{issue_id}` | GET | 06 |
-| `/api/proposals/{proposal_id}` | GET | 06 |
-| `/api/proposals/{proposal_id}/handoff` | POST | 06 |
-| `/api/proposals/{proposal_id}/implementation-link` | POST | 06 |
-| `/api/proposals/{proposal_id}/rebase` | POST | 06 |
-| `/api/proposals/{proposal_id}/approve` | POST | 07 |
-| `/api/proposals/{proposal_id}/reject` | POST | 07 |
-| `/api/proposals/{proposal_id}/defer` | POST | 07 |
-| `/api/regressions` | POST | 07 |
-| `/api/regressions/{regression_id}` | GET | 07 |
-| `/api/regressions/{regression_id}/publish` | POST | 07 |
-| `/api/regressions/{regression_id}/rollback` | POST | 07 |
-| `/api/regressions/{regression_id}/no-significant-change` | POST | 07 |
-| `/api/regressions/{regression_id}/require-judge-recheck` | POST | 07 |
-| `/api/regressions/{regression_id}/resume-after-judge-recheck` | POST | 07 |
-| `/api/regressions/{regression_id}/require-judge-migration` | POST | 07 |
-| `/api/regressions/{regression_id}/resume-after-judge-migration` | POST | 07 |
-| `/api/redaction/reports` | GET | 03 |
-| `/api/evidence/{path}`, `/api/traces/{path}` | GET | 03 (guarded by REDACTION_ENABLED) |
+| `/api/judges/{judge_version}` | GET | 02 |
 
-## Dependency Notes
+Everything else the old index listed (scores, annotations, datasets, taxonomy,
+trace-pools, issues, proposals, regressions, baselines, redaction) is either a
+Langfuse-native operation or a deleted concept.
 
-- **Plan 05 inherits type definitions from Plan 02.** `JudgeState`, `JudgeVersionModel`, and `JudgeDriftCheckModel` are defined in plan 02 `api/lifecycle.py` and `api/schemas.py`. Plan 05 imports and extends behavior but does not redefine these types.
-- **Redaction hard gate (Engine §10, §15):** Plan 02 evidence-serving endpoints (`/api/evidence/*`, `/api/traces/*`) return 503 until `REDACTION_ENABLED` env var is set. This var must only be set after plan 03 `RedactionService` is wired into the app. Do not set `REDACTION_ENABLED=1` as part of plan 02 integration testing.
+---
 
-## Execution Order Note
+## Execution Order
 
-Plans 03 and 04 both depend only on 02 and can run in parallel. 05 needs both. 06 needs 03+05. 07 needs 05+06. 08 needs every API contract, but its foundation tasks (scaffold, router, API client, runs/data pages) can start once 02 is stable. Within each plan, tasks are strictly ordered.
+Plan 01 (pure logic, TDD) → Plan 02 (judge/validate/report TDD, then read API,
+then frontend, then Bourbon glue in Task 6). Within each plan, tasks are strictly
+ordered. The trace→case link that justifies the repo is built in **plan 02
+Task 6** (Bourbon span attrs + `run_judge.py` + `run_regression.py` +
+`runs_provider`), not in the pure-logic tasks.

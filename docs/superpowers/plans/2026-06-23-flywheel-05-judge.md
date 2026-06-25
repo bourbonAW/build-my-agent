@@ -1,3 +1,9 @@
+> **⚠️ SUPERSEDED (lean revision 2026-06-24).** Do not implement. The
+> JudgeVersion 6-state lifecycle + drift sentinel is replaced by `validate.py`
+> (F1 ≥ 0.70, recomputed) in plan `02-control-plane` Task 2 — see
+> `specs/2026-06-22-flywheel-engine-design.md` §6. Live plans: `00-index`,
+> `01-sdk`, `02-control-plane`.
+
 # Flywheel 05 — Judge Version Lifecycle Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

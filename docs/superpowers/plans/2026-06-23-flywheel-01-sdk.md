@@ -1,70 +1,66 @@
-# Flywheel 01 — Foundation + L1 SDK Implementation Plan
+# Flywheel 01 — Core Library (lean) Implementation Plan
+**Date**: 2026-06-23 (Lean Revision 2026-06-24)
+**Status**: Lean MVP — supersedes the prior "Foundation + L1 SDK" plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:test-driven-development.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Create the `flywheel/` repo scaffold and the thin L1 SDK that validates eval identity context, builds `flywheel.*` OTel attributes, computes the harness fingerprint, submits scores to the Flywheel API, and computes local metrics with confidence intervals.
+**Goal:** Create the small `flywheel/` package and the pure-logic core: a
+minimal identity model, eval metrics (precision/recall/F1 + Wilson CI), and the
+regression comparison that returns `better | no_change | worse`. No HTTP SDK, no
+score client, no API client — those were deleted with the control plane.
 
-**Architecture:** Pure-Python package `flywheel` with a `sdk/` subpackage. No UI, no taxonomy governance, no trace storage — the SDK only validates context and talks to the Flywheel API over HTTP. Synchronous (`httpx.Client`), matching Bourbon's no-asyncio style.
+**Architecture:** Pure-Python package `flywheel`, synchronous, no asyncio.
+Engine spec §3–§7 are the contract.
 
-**Tech Stack:** Python 3.13, pydantic v2, httpx, pytest.
+**Tech stack:** Python 3.13, pydantic v2 (only where validation helps), pytest.
 
-## Global Constraints
+## What changed vs the old plan
+- **Deleted** `sdk/schema.py` (`flywheel.*` attr constants), `sdk/context.py`
+  (`FlywheelContext` with 5 eval-identity fields), `sdk/score_client.py`
+  (`ScoreClient` → Flywheel API). Reason: no `flywheel.*` convention (use
+  `gen_ai.*` + two `eval.*` strings) and no control-plane API to call.
+- **Kept** `metrics.py` essentially as-is — it is the one module with standalone
+  value.
+- **Slimmed** the fingerprint from 8 components to `git_sha + model`.
+- **Added** `regression.py` (the three-value comparison) and a flat `labels.md`.
 
-(See `2026-06-23-flywheel-00-index.md` → Global Constraints. Every task below inherits them.) Most relevant here:
-- `trace_id` is never optional for eval runs; eval identity attrs must be present.
-- `failure_labels` are strings validated against the current taxonomy — unknown labels allowed only as open codes, not stable regression categories.
-- Score idempotency key is `eval_run_id + case_id + sample_id + source + judge_version`.
-- `harness_fingerprint` is a composite of behavior-affecting inputs, not just a git SHA.
-
----
-
-## File Structure
-
+## File structure
 - Create: `flywheel/pyproject.toml`
-- Create: `flywheel/sdk/__init__.py`
-- Create: `flywheel/sdk/schema.py` — Label/AnnotationSource literals, `FlywheelAttr` attribute-name constants, type aliases
-- Create: `flywheel/sdk/context.py` — `FlywheelContext` validation + OTel attr builder
-- Create: `flywheel/sdk/fingerprint.py` — harness fingerprint helpers
-- Create: `flywheel/sdk/score_client.py` — `ScoreClient` → Flywheel API
-- Create: `flywheel/sdk/metrics.py` — F1, precision, recall, Wilson confidence intervals
-- Create: `flywheel/tests/sdk/test_schema.py`, `test_context.py`, `test_fingerprint.py`, `test_score_client.py`, `test_metrics.py`
+- Create: `flywheel/flywheel/__init__.py`
+- Create: `flywheel/flywheel/identity.py` — `Harness`, `case_id`/`run_id` helpers, `Label`
+- Create: `flywheel/flywheel/metrics.py` — precision/recall/F1, Wilson CI, pass_rate
+- Create: `flywheel/flywheel/regression.py` — `compare()` → `RegressionResult`
+- Create: `flywheel/labels.md` — flat editable failure-label list (seed)
+- Create: `flywheel/tests/__init__.py`, `flywheel/tests/test_identity.py`, `test_metrics.py`, `test_regression.py`
 
 ---
 
 ## Task 1: Repo scaffold
 
-**Files:**
-- Create: `flywheel/pyproject.toml`
-- Create: `flywheel/sdk/__init__.py`
-- Create: `flywheel/tests/__init__.py`, `flywheel/tests/sdk/__init__.py`
+**Files:** `flywheel/pyproject.toml`, `flywheel/flywheel/__init__.py`, `flywheel/tests/__init__.py`
 
-**Interfaces:**
-- Produces: an installable package `flywheel`; `pytest` discovers `flywheel/tests`.
-
-- [ ] **Step 1: Write `pyproject.toml`**
+- [ ] **Step 1: `pyproject.toml`**
 
 ```toml
-# flywheel/pyproject.toml
 [project]
 name = "flywheel"
 version = "0.1.0"
-description = "Self-hosted eval flywheel control plane, engine, and SDK"
+description = "Lean eval flywheel: identity, metrics, judge, regression, reports"
 requires-python = ">=3.13"
-dependencies = [
-    "pydantic>=2.6",
-    "httpx>=0.27",
-]
+dependencies = ["pydantic>=2.6"]
 
 [project.optional-dependencies]
-api = ["fastapi>=0.110", "uvicorn>=0.29"]
-dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9", "respx>=0.21"]
+judge = ["httpx>=0.27", "anthropic>=0.40"]   # used by plan 02 (judge.py)
+api = ["fastapi>=0.110", "uvicorn>=0.29"]      # used by plan 02 (read API)
+dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["sdk", "api", "engine"]
+packages = ["flywheel", "api"]   # "api" (read-only API, plan 02) is a sibling top-level package
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -78,551 +74,108 @@ python_version = "3.13"
 strict = true
 ```
 
-- [ ] **Step 2: Create empty package markers**
-
-```python
-# flywheel/sdk/__init__.py
-"""Flywheel L1 SDK: identity context, fingerprint, score submission, metrics."""
-```
-
-```python
-# flywheel/tests/__init__.py
-```
-
-```python
-# flywheel/tests/sdk/__init__.py
-```
-
-- [ ] **Step 3: Verify install + empty test run**
-
-Run:
-```bash
-cd flywheel && uv pip install -e ".[dev]" && pytest -q
-```
-Expected: install succeeds; pytest reports "no tests ran" (exit 5) — acceptable at this step.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add flywheel/pyproject.toml flywheel/sdk/__init__.py flywheel/tests/__init__.py flywheel/tests/sdk/__init__.py
-git commit -m "chore(flywheel): scaffold package and test layout"
-```
+- [ ] **Step 2:** create `flywheel/flywheel/__init__.py` (docstring) and `flywheel/tests/__init__.py` (empty).
+- [ ] **Step 3:** `cd flywheel && uv pip install -e ".[dev]" && pytest -q` → install ok, "no tests ran" (exit 5) acceptable.
+- [ ] **Step 4:** commit `chore(flywheel): scaffold lean package`.
 
 ---
 
-## Task 2: schema.py — labels, attribute names, type aliases
-
-**Files:**
-- Create: `flywheel/sdk/schema.py`
-- Test: `flywheel/tests/sdk/test_schema.py`
+## Task 2: identity.py — Harness, Label, id helpers
 
 **Interfaces:**
-- Produces:
-  - `Label = Literal["pass", "fail", "skip", "uncertain"]`
-  - `AnnotationSource = Literal["human", "judge", "rule", "system"]`
-  - `RedactionState = Literal["raw", "redacted", "blocked"]`
-  - `Environment = Literal["dev", "ci", "staging", "prod"]`
-  - class `FlywheelAttr` with string constants for every `flywheel.*` attribute name in Engine §6.
-  - `ALL_EXECUTION_ATTRS: frozenset[str]`, `ALL_SCORE_ATTRS: frozenset[str]`, and `ALL_ANALYSIS_ATTRS: frozenset[str]`.
+- `Label = Literal["pass", "fail", "skip", "uncertain"]`
+- `@dataclass(frozen=True) class Harness(git_sha: str, model: str)` with `id() -> str` = `f"{git_sha[:7]}@{model}"`.
+- `JudgeVersion = str` (alias, documented as "plain identifier, not a lifecycle").
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: failing test** `tests/test_identity.py`
 
 ```python
-# flywheel/tests/sdk/test_schema.py
+from flywheel.identity import Harness, Label
 from typing import get_args
-from sdk.schema import (
-    Label, AnnotationSource, FlywheelAttr,
-    ALL_EXECUTION_ATTRS, ALL_SCORE_ATTRS, ALL_ANALYSIS_ATTRS,
-)
-
 
 def test_label_values():
     assert set(get_args(Label)) == {"pass", "fail", "skip", "uncertain"}
 
+def test_harness_id_is_short_and_stable():
+    h = Harness(git_sha="abc1234def", model="claude-opus-4-8")
+    assert h.id() == "abc1234@claude-opus-4-8"
+    assert Harness(git_sha="abc1234def", model="claude-opus-4-8").id() == h.id()
 
-def test_annotation_source_values():
-    assert set(get_args(AnnotationSource)) == {"human", "judge", "rule", "system"}
-
-
-def test_attr_names_are_namespaced():
-    assert FlywheelAttr.EVAL_RUN_ID == "flywheel.eval_run_id"
-    assert FlywheelAttr.HARNESS_FINGERPRINT == "flywheel.harness_fingerprint"
-    assert all(v.startswith("flywheel.") for v in ALL_EXECUTION_ATTRS)
-
-
-def test_execution_and_score_attrs_disjoint():
-    # Engine §6 splits execution-time attrs from post-hoc score metadata.
-    assert ALL_EXECUTION_ATTRS.isdisjoint(ALL_SCORE_ATTRS)
-    assert FlywheelAttr.CASE_ID in ALL_EXECUTION_ATTRS
-    assert FlywheelAttr.LABEL in ALL_SCORE_ATTRS
-
-
-def test_analysis_attrs_complete():
-    assert FlywheelAttr.ISSUE_ID == "flywheel.issue_id"
-    assert FlywheelAttr.PROPOSAL_STATE == "flywheel.proposal_state"
-    assert all(v.startswith("flywheel.") for v in ALL_ANALYSIS_ATTRS)
-    assert len(ALL_ANALYSIS_ATTRS) == 8
+def test_harness_id_changes_with_model():
+    a = Harness(git_sha="abc1234def", model="claude-opus-4-8").id()
+    b = Harness(git_sha="abc1234def", model="claude-sonnet-4-6").id()
+    assert a != b
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd flywheel && pytest tests/sdk/test_schema.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'sdk.schema'`.
-
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 2:** run → fails (`ModuleNotFoundError`).
+- [ ] **Step 3: implement** `flywheel/flywheel/identity.py`
 
 ```python
-# flywheel/sdk/schema.py
-"""Type aliases, label literals, and flywheel.* attribute-name constants.
-
-Mirrors the Engine design spec §6 semantic contract. Execution-time attrs are
-set during agent execution; score/annotation attrs are post-hoc metadata.
-"""
+"""Minimal eval identity (Engine §4). Four concepts carry the loop:
+case_id, run_id, label, trace_id. case_id/run_id live as Langfuse dataset item
+ids and run names, mirrored on spans as eval.case_id / eval.run_id. This module
+holds the two small typed extras: the label enum and the harness fingerprint."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 Label = Literal["pass", "fail", "skip", "uncertain"]
-AnnotationSource = Literal["human", "judge", "rule", "system"]
-RedactionState = Literal["raw", "redacted", "blocked"]
-Environment = Literal["dev", "ci", "staging", "prod"]
-
-
-class FlywheelAttr:
-    """Canonical flywheel.* OTel attribute names. Use these constants, never literals."""
-
-    # --- execution-time identity (Engine §6) ---
-    PROJECT = "flywheel.project"
-    ENVIRONMENT = "flywheel.environment"
-    TRACE_POOL_ID = "flywheel.trace_pool_id"
-    EVAL_RUN_ID = "flywheel.eval_run_id"
-    DATASET_ID = "flywheel.dataset_id"
-    DATASET_VERSION = "flywheel.dataset_version"
-    CASE_ID = "flywheel.case_id"
-    SAMPLE_ID = "flywheel.sample_id"
-    HARNESS_FINGERPRINT = "flywheel.harness_fingerprint"
-    SESSION_ID = "flywheel.session_id"
-    TURN_INDEX = "flywheel.turn_index"
-
-    # --- post-hoc score / annotation metadata (Engine §6) ---
-    LABEL = "flywheel.label"
-    FAILURE_LABELS = "flywheel.failure_labels"
-    CRITIQUE = "flywheel.critique"
-    CONFIDENCE = "flywheel.confidence"
-    ANNOTATION_SOURCE = "flywheel.annotation_source"
-    ANNOTATED_BY = "flywheel.annotated_by"
-    ANNOTATION_RUBRIC_VERSION = "flywheel.annotation_rubric_version"
-    JUDGE_VERSION = "flywheel.judge_version"
-    REDACTION_STATE = "flywheel.redaction_state"
-
-    # --- analysis and proposal metadata (Engine §6) ---
-    ISSUE_ID = "flywheel.issue_id"
-    CLUSTER_ID = "flywheel.cluster_id"
-    PROPOSAL_ID = "flywheel.proposal_id"
-    PROPOSAL_STATE = "flywheel.proposal_state"
-    REGRESSION_STATUS = "flywheel.regression_status"
-    REGRESSION_OUTCOME = "flywheel.regression_outcome"
-    BASELINE_FINGERPRINT = "flywheel.baseline_fingerprint"
-    CANDIDATE_FINGERPRINT = "flywheel.candidate_fingerprint"
-
-
-ALL_EXECUTION_ATTRS: frozenset[str] = frozenset({
-    FlywheelAttr.PROJECT,
-    FlywheelAttr.ENVIRONMENT,
-    FlywheelAttr.TRACE_POOL_ID,
-    FlywheelAttr.EVAL_RUN_ID,
-    FlywheelAttr.DATASET_ID,
-    FlywheelAttr.DATASET_VERSION,
-    FlywheelAttr.CASE_ID,
-    FlywheelAttr.SAMPLE_ID,
-    FlywheelAttr.HARNESS_FINGERPRINT,
-    FlywheelAttr.SESSION_ID,
-    FlywheelAttr.TURN_INDEX,
-})
-
-ALL_SCORE_ATTRS: frozenset[str] = frozenset({
-    FlywheelAttr.LABEL,
-    FlywheelAttr.FAILURE_LABELS,
-    FlywheelAttr.CRITIQUE,
-    FlywheelAttr.CONFIDENCE,
-    FlywheelAttr.ANNOTATION_SOURCE,
-    FlywheelAttr.ANNOTATED_BY,
-    FlywheelAttr.ANNOTATION_RUBRIC_VERSION,
-    FlywheelAttr.JUDGE_VERSION,
-    FlywheelAttr.REDACTION_STATE,
-})
-
-ALL_ANALYSIS_ATTRS: frozenset[str] = frozenset({
-    FlywheelAttr.ISSUE_ID,
-    FlywheelAttr.CLUSTER_ID,
-    FlywheelAttr.PROPOSAL_ID,
-    FlywheelAttr.PROPOSAL_STATE,
-    FlywheelAttr.REGRESSION_STATUS,
-    FlywheelAttr.REGRESSION_OUTCOME,
-    FlywheelAttr.BASELINE_FINGERPRINT,
-    FlywheelAttr.CANDIDATE_FINGERPRINT,
-})
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd flywheel && pytest tests/sdk/test_schema.py -v`
-Expected: PASS (5 passed).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add flywheel/sdk/schema.py flywheel/tests/sdk/test_schema.py
-git commit -m "feat(sdk): flywheel.* attribute names and label literals"
-```
-
----
-
-## Task 3: context.py — FlywheelContext validation + OTel attr builder
-
-**Files:**
-- Create: `flywheel/sdk/context.py`
-- Test: `flywheel/tests/sdk/test_context.py`
-
-**Interfaces:**
-- Consumes: `FlywheelAttr`, `Environment` from `sdk.schema`.
-- Produces:
-  - `class FlywheelContext(BaseModel)` with fields: `project: str`, `environment: Environment`, `harness_fingerprint: str`, and optionals `trace_pool_id`, `eval_run_id`, `dataset_id`, `dataset_version`, `case_id`, `sample_id`, `session_id`, `turn_index: int = 0`.
-  - `FlywheelContext.for_eval_run(...)` classmethod that **requires** eval identity fields and raises `ValueError` if any of `eval_run_id`/`dataset_id`/`dataset_version`/`case_id`/`sample_id` is missing.
-  - `FlywheelContext.to_otel_attrs() -> dict[str, str | int]` — only non-None fields, keyed by `FlywheelAttr` names.
-  - `class ContextError(ValueError)`.
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# flywheel/tests/sdk/test_context.py
-import pytest
-from sdk.context import FlywheelContext, ContextError
-from sdk.schema import FlywheelAttr
-
-
-def test_eval_run_context_builds_attrs():
-    ctx = FlywheelContext.for_eval_run(
-        project="bourbon", environment="ci",
-        harness_fingerprint="fp_abc",
-        eval_run_id="run_1", dataset_id="ds_1", dataset_version="2026-06-22.1",
-        case_id="case_1", sample_id="s0",
-    )
-    attrs = ctx.to_otel_attrs()
-    assert attrs[FlywheelAttr.EVAL_RUN_ID] == "run_1"
-    assert attrs[FlywheelAttr.CASE_ID] == "case_1"
-    assert attrs[FlywheelAttr.HARNESS_FINGERPRINT] == "fp_abc"
-    assert attrs[FlywheelAttr.TURN_INDEX] == 0
-
-
-def test_eval_run_requires_identity():
-    with pytest.raises(ContextError, match="case_id"):
-        FlywheelContext.for_eval_run(
-            project="bourbon", environment="ci", harness_fingerprint="fp",
-            eval_run_id="run_1", dataset_id="ds_1", dataset_version="v1",
-            case_id="", sample_id="s0",
-        )
-
-
-def test_attrs_omit_none_fields():
-    ctx = FlywheelContext(
-        project="bourbon", environment="dev", harness_fingerprint="fp",
-        trace_pool_id="pool_1",
-    )
-    attrs = ctx.to_otel_attrs()
-    assert attrs[FlywheelAttr.TRACE_POOL_ID] == "pool_1"
-    assert FlywheelAttr.EVAL_RUN_ID not in attrs
-    assert FlywheelAttr.CASE_ID not in attrs
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd flywheel && pytest tests/sdk/test_context.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'sdk.context'`.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```python
-# flywheel/sdk/context.py
-"""FlywheelContext: validates eval identity and builds flywheel.* OTel attrs."""
-from __future__ import annotations
-
-from pydantic import BaseModel
-
-from .schema import Environment, FlywheelAttr
-
-
-class ContextError(ValueError):
-    """Raised when required identity context is missing or invalid."""
-
-
-class FlywheelContext(BaseModel):
-    project: str
-    environment: Environment
-    harness_fingerprint: str
-    trace_pool_id: str | None = None
-    eval_run_id: str | None = None
-    dataset_id: str | None = None
-    dataset_version: str | None = None
-    case_id: str | None = None
-    sample_id: str | None = None
-    session_id: str | None = None
-    turn_index: int = 0
-
-    @classmethod
-    def for_eval_run(
-        cls,
-        *,
-        project: str,
-        environment: Environment,
-        harness_fingerprint: str,
-        eval_run_id: str,
-        dataset_id: str,
-        dataset_version: str,
-        case_id: str,
-        sample_id: str,
-        session_id: str | None = None,
-        turn_index: int = 0,
-    ) -> "FlywheelContext":
-        required = {
-            "eval_run_id": eval_run_id,
-            "dataset_id": dataset_id,
-            "dataset_version": dataset_version,
-            "case_id": case_id,
-            "sample_id": sample_id,
-            "harness_fingerprint": harness_fingerprint,
-        }
-        missing = [name for name, value in required.items() if not value]
-        if missing:
-            raise ContextError(f"eval run context missing required fields: {missing}")
-        return cls(
-            project=project,
-            environment=environment,
-            harness_fingerprint=harness_fingerprint,
-            eval_run_id=eval_run_id,
-            dataset_id=dataset_id,
-            dataset_version=dataset_version,
-            case_id=case_id,
-            sample_id=sample_id,
-            session_id=session_id,
-            turn_index=turn_index,
-        )
-
-    def to_otel_attrs(self) -> dict[str, str | int]:
-        candidates: dict[str, str | int | None] = {
-            FlywheelAttr.PROJECT: self.project,
-            FlywheelAttr.ENVIRONMENT: self.environment,
-            FlywheelAttr.HARNESS_FINGERPRINT: self.harness_fingerprint,
-            FlywheelAttr.TRACE_POOL_ID: self.trace_pool_id,
-            FlywheelAttr.EVAL_RUN_ID: self.eval_run_id,
-            FlywheelAttr.DATASET_ID: self.dataset_id,
-            FlywheelAttr.DATASET_VERSION: self.dataset_version,
-            FlywheelAttr.CASE_ID: self.case_id,
-            FlywheelAttr.SAMPLE_ID: self.sample_id,
-            FlywheelAttr.SESSION_ID: self.session_id,
-            FlywheelAttr.TURN_INDEX: self.turn_index,
-        }
-        return {k: v for k, v in candidates.items() if v is not None}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd flywheel && pytest tests/sdk/test_context.py -v`
-Expected: PASS (3 passed).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add flywheel/sdk/context.py flywheel/tests/sdk/test_context.py
-git commit -m "feat(sdk): FlywheelContext identity validation and OTel attr builder"
-```
-
----
-
-## Task 4: fingerprint.py — composite harness fingerprint
-
-**Files:**
-- Create: `flywheel/sdk/fingerprint.py`
-- Test: `flywheel/tests/sdk/test_fingerprint.py`
-
-**Interfaces:**
-- Produces:
-  - `@dataclass(frozen=True) class HarnessComponents` with fields: `git_sha`, `prompt_version`, `skill_versions: tuple[str, ...]`, `tool_schema_version`, `memory_config_hash`, `model_provider`, `model_snapshot`, `decoding_params: tuple[tuple[str, str], ...]`, `dependency_lock_hash`, `env_config_hash`.
-  - `compute_fingerprint(components: HarnessComponents) -> str` — deterministic, order-independent for unordered fields, returns `"fp_" + sha256[:16]`.
-  - Same components → same fingerprint; any change → different fingerprint.
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# flywheel/tests/sdk/test_fingerprint.py
-from sdk.fingerprint import HarnessComponents, compute_fingerprint
-
-
-def _components(**overrides):
-    base = dict(
-        git_sha="abc123",
-        prompt_version="p1",
-        skill_versions=("skill-a@1", "skill-b@2"),
-        tool_schema_version="t1",
-        memory_config_hash="m1",
-        model_provider="anthropic",
-        model_snapshot="claude-opus-4-8",
-        decoding_params=(("temperature", "0.0"),),
-        dependency_lock_hash="lock1",
-        env_config_hash="env1",
-    )
-    base.update(overrides)
-    return HarnessComponents(**base)
-
-
-def test_fingerprint_is_deterministic():
-    a = compute_fingerprint(_components())
-    b = compute_fingerprint(_components())
-    assert a == b
-    assert a.startswith("fp_")
-
-
-def test_skill_order_does_not_matter():
-    a = compute_fingerprint(_components(skill_versions=("skill-a@1", "skill-b@2")))
-    b = compute_fingerprint(_components(skill_versions=("skill-b@2", "skill-a@1")))
-    assert a == b
-
-
-def test_any_behavior_change_changes_fingerprint():
-    base = compute_fingerprint(_components())
-    assert compute_fingerprint(_components(model_snapshot="claude-sonnet-4-6")) != base
-    assert compute_fingerprint(_components(prompt_version="p2")) != base
-    assert compute_fingerprint(_components(decoding_params=(("temperature", "0.7"),))) != base
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd flywheel && pytest tests/sdk/test_fingerprint.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'sdk.fingerprint'`.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```python
-# flywheel/sdk/fingerprint.py
-"""Composite harness fingerprint (Engine §6). Behavior identity, not just git SHA."""
-from __future__ import annotations
-
-import hashlib
-import json
-from dataclasses import asdict, dataclass
+JudgeVersion = str  # a plain identifier, e.g. "judge-v2" — not a lifecycle
 
 
 @dataclass(frozen=True)
-class HarnessComponents:
+class Harness:
     git_sha: str
-    prompt_version: str
-    skill_versions: tuple[str, ...]
-    tool_schema_version: str
-    memory_config_hash: str
-    model_provider: str
-    model_snapshot: str
-    decoding_params: tuple[tuple[str, str], ...]
-    dependency_lock_hash: str
-    env_config_hash: str
+    model: str
 
-
-def compute_fingerprint(components: HarnessComponents) -> str:
-    """Stable, order-independent fingerprint. Sets/maps are sorted before hashing."""
-    raw = asdict(components)
-    normalized = {
-        "git_sha": raw["git_sha"],
-        "prompt_version": raw["prompt_version"],
-        "skill_versions": sorted(raw["skill_versions"]),
-        "tool_schema_version": raw["tool_schema_version"],
-        "memory_config_hash": raw["memory_config_hash"],
-        "model_provider": raw["model_provider"],
-        "model_snapshot": raw["model_snapshot"],
-        "decoding_params": sorted(raw["decoding_params"]),
-        "dependency_lock_hash": raw["dependency_lock_hash"],
-        "env_config_hash": raw["env_config_hash"],
-    }
-    payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return f"fp_{digest[:16]}"
+    def id(self) -> str:
+        return f"{self.git_sha[:7]}@{self.model}"
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd flywheel && pytest tests/sdk/test_fingerprint.py -v`
-Expected: PASS (3 passed).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add flywheel/sdk/fingerprint.py flywheel/tests/sdk/test_fingerprint.py
-git commit -m "feat(sdk): composite harness fingerprint helpers"
-```
+- [ ] **Step 4:** run → pass. **Step 5:** commit `feat(flywheel): minimal identity (Harness + Label)`.
 
 ---
 
-## Task 5: metrics.py — F1, precision, recall, Wilson CI
+## Task 3: metrics.py — precision/recall/F1, Wilson CI
 
-**Files:**
-- Create: `flywheel/sdk/metrics.py`
-- Test: `flywheel/tests/sdk/test_metrics.py`
+(Carried over from the old plan — the one module that survives unchanged.)
 
 **Interfaces:**
-- Produces:
-  - `precision_recall_f1(tp: int, fp: int, fn: int) -> tuple[float, float, float]`.
-  - `@dataclass(frozen=True) class ConfidenceInterval` with `point: float`, `low: float`, `high: float`.
-  - `wilson_interval(successes: int, n: int, z: float = 1.96) -> ConfidenceInterval` — pass-rate CI; `n == 0` returns `(0.0, 0.0, 1.0)`.
-  - `pass_rate(labels: list[str]) -> ConfidenceInterval` — treats `"pass"` as success.
+- `precision_recall_f1(tp, fp, fn) -> tuple[float, float, float]`
+- `@dataclass(frozen=True) ConfidenceInterval(point, low, high)`
+- `wilson_interval(successes, n, z=1.96) -> ConfidenceInterval` (n==0 → (0,0,1))
+- `pass_rate(labels: list[str]) -> ConfidenceInterval` ("pass" = success; skip/uncertain count as attempts)
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: failing test** `tests/test_metrics.py`
 
 ```python
-# flywheel/tests/sdk/test_metrics.py
 import math
-from sdk.metrics import precision_recall_f1, wilson_interval, pass_rate
+from flywheel.metrics import precision_recall_f1, wilson_interval, pass_rate
 
-
-def test_precision_recall_f1_basic():
+def test_prf1_basic():
     p, r, f1 = precision_recall_f1(tp=8, fp=2, fn=2)
-    assert math.isclose(p, 0.8)
-    assert math.isclose(r, 0.8)
-    assert math.isclose(f1, 0.8)
+    assert math.isclose(p, 0.8) and math.isclose(r, 0.8) and math.isclose(f1, 0.8)
 
+def test_zero_division_safe():
+    assert precision_recall_f1(0, 0, 0) == (0.0, 0.0, 0.0)
 
-def test_zero_division_is_safe():
-    assert precision_recall_f1(tp=0, fp=0, fn=0) == (0.0, 0.0, 0.0)
-
-
-def test_wilson_interval_brackets_point():
+def test_wilson_brackets_point():
     ci = wilson_interval(successes=9, n=10)
     assert 0.0 <= ci.low < ci.point < ci.high <= 1.0
     assert math.isclose(ci.point, 0.9)
 
-
-def test_wilson_empty_is_full_uncertainty():
-    ci = wilson_interval(successes=0, n=0)
+def test_wilson_empty_full_uncertainty():
+    ci = wilson_interval(0, 0)
     assert (ci.point, ci.low, ci.high) == (0.0, 0.0, 1.0)
 
-
-def test_pass_rate_from_labels():
-    ci = pass_rate(["pass", "pass", "fail", "skip"])
-    assert math.isclose(ci.point, 0.5)
-
-
-def test_pass_rate_skip_uncertain_count_as_attempts():
-    # "skip" and "uncertain" are in denominator but not successes (policy locked here)
-    ci = pass_rate(["pass", "pass", "skip", "uncertain"])
-    assert math.isclose(ci.point, 0.5)  # 2/4
+def test_pass_rate_counts_skip_as_attempt():
+    assert math.isclose(pass_rate(["pass", "pass", "skip", "uncertain"]).point, 0.5)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd flywheel && pytest tests/sdk/test_metrics.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'sdk.metrics'`.
-
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/metrics.py`
 
 ```python
-# flywheel/sdk/metrics.py
 """Local eval metrics: precision/recall/F1 and Wilson-score pass-rate CIs."""
 from __future__ import annotations
 
@@ -645,208 +198,204 @@ class ConfidenceInterval:
 
 
 def wilson_interval(successes: int, n: int, z: float = 1.96) -> ConfidenceInterval:
-    """Wilson score interval. n==0 -> maximal uncertainty (0, 0, 1)."""
     if n == 0:
-        return ConfidenceInterval(point=0.0, low=0.0, high=1.0)
+        return ConfidenceInterval(0.0, 0.0, 1.0)
     phat = successes / n
     denom = 1 + z * z / n
     center = (phat + z * z / (2 * n)) / denom
     margin = (z * math.sqrt((phat * (1 - phat) + z * z / (4 * n)) / n)) / denom
-    return ConfidenceInterval(
-        point=phat,
-        low=max(0.0, center - margin),
-        high=min(1.0, center + margin),
-    )
+    return ConfidenceInterval(phat, max(0.0, center - margin), min(1.0, center + margin))
 
 
 def pass_rate(labels: list[str]) -> ConfidenceInterval:
-    """Pass rate CI. Denominator = len(labels); "skip" and "uncertain" count as attempts, not successes."""
     successes = sum(1 for label in labels if label == "pass")
     return wilson_interval(successes=successes, n=len(labels))
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd flywheel && pytest tests/sdk/test_metrics.py -v`
-Expected: PASS (5 passed).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add flywheel/sdk/metrics.py flywheel/tests/sdk/test_metrics.py
-git commit -m "feat(sdk): precision/recall/F1 and Wilson confidence intervals"
-```
+- [ ] **Step 4:** run → pass. **Step 5:** commit `feat(flywheel): precision/recall/F1 and Wilson CI`.
 
 ---
 
-## Task 6: score_client.py — submit scores to Flywheel API
-
-**Files:**
-- Create: `flywheel/sdk/score_client.py`
-- Test: `flywheel/tests/sdk/test_score_client.py`
+## Task 4: regression.py — three-value comparison
 
 **Interfaces:**
-- Consumes: `FlywheelContext` (`sdk.context`), `Label`/`AnnotationSource` (`sdk.schema`).
-- Produces:
-  - `@dataclass(frozen=True) class ScorePayload` with `eval_run_id`, `case_id`, `sample_id`, `label: Label`, `source: AnnotationSource`, `judge_version: str | None`, `failure_labels: list[str]`, `confidence: float | None`, `critique: str | None`, `trace_id: str`.
-  - `ScorePayload.idempotency_key() -> str` = `f"{eval_run_id}:{case_id}:{sample_id}:{source}:{judge_version or 'none'}"`.
-  - `class ScoreClient` constructed with `base_url: str`, `api_token: str`, optional `client: httpx.Client`. Method `submit(payload: ScorePayload) -> dict` POSTs to `{base_url}/api/runs/{eval_run_id}/scores` with header `Idempotency-Key` and `Authorization: Bearer {token}`; returns parsed JSON. Raises `ScoreSubmitError` on non-2xx.
+- `RegressionResult = Literal["better", "no_change", "worse"]`
+- `@dataclass(frozen=True) class CaseScore(case_id: str, label: str, failure_label: str | None = None)` — `failure_label` is a free string from `labels.md` / a Langfuse score comment, used for per-label deltas (Engine §7).
+- `@dataclass(frozen=True) class RegressionReport(result, baseline_rate, candidate_rate, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
+- `compare(baseline, candidate, *, validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
+  - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
+  - **disjointness gate (Engine §5/§7):** raises `ValueError` if compared case ids overlap `validation_case_ids`. That set is the dataset's **judge-validation split**; the regression set is the dataset's **regression split** — the caller reads both from the Langfuse dataset metadata.
+  - assigns `better`/`worse`/`no_change` by whether the pass-rate-delta Wilson CI clears zero (Engine §7 noise band).
 
-- [ ] **Step 1: Write the failing test** (uses `respx` to mock httpx)
+- [ ] **Step 1: failing test** `tests/test_regression.py`
 
 ```python
-# flywheel/tests/sdk/test_score_client.py
-import httpx
-import respx
 import pytest
-from sdk.score_client import ScoreClient, ScorePayload, ScoreSubmitError
+from flywheel.regression import compare, CaseScore
 
+def _scores(passes, fails):
+    return [CaseScore(f"c{i}", "pass") for i in range(passes)] + \
+           [CaseScore(f"d{i}", "fail") for i in range(fails)]
 
-def _payload(**overrides):
-    base = dict(
-        eval_run_id="run_1", case_id="case_1", sample_id="s0",
-        label="fail", source="judge", judge_version="jv_1",
-        trace_id="abcdef0123456789abcdef0123456789",
-        failure_labels=["tool_argument_error"], confidence=0.9, critique="bad arg",
-    )
-    base.update(overrides)
-    return ScorePayload(**base)
+def _cmp(base, cand, validation_case_ids=frozenset()):
+    return compare(base, cand, validation_case_ids=set(validation_case_ids),
+                   baseline_judge_version="jv1", candidate_judge_version="jv1")
 
+def test_clear_improvement_is_better():
+    rep = _cmp(_scores(2, 18), _scores(18, 2))   # 10% -> 90%
+    assert rep.result == "better"
+    assert rep.delta > 0
+    assert rep.delta_low <= rep.delta <= rep.delta_high
 
-def test_idempotency_key_shape():
-    key = _payload().idempotency_key()
-    assert key == "run_1:case_1:s0:judge:jv_1"
+def test_tiny_delta_is_no_change():
+    base = [CaseScore(f"c{i}", "pass" if i < 10 else "fail") for i in range(20)]
+    cand = [CaseScore(f"c{i}", "pass" if i < 11 else "fail") for i in range(20)]
+    assert _cmp(base, cand).result == "no_change"
 
+def test_regression_is_worse():
+    assert _cmp(_scores(18, 2), _scores(2, 18)).result == "worse"
 
-def test_idempotency_key_handles_missing_judge():
-    assert _payload(judge_version=None, source="human").idempotency_key() == \
-        "run_1:case_1:s0:human:none"
+def test_mismatched_judge_raises():
+    with pytest.raises(ValueError, match="same-judge"):
+        compare(_scores(5, 5), _scores(5, 5), validation_case_ids=set(),
+                baseline_judge_version="jv1", candidate_judge_version="jv2")
 
+def test_disjointness_violation_raises():
+    base = _scores(5, 5)
+    with pytest.raises(ValueError, match="disjoint"):
+        _cmp(base, base, validation_case_ids={"c0"})
 
-@respx.mock
-def test_submit_posts_with_idempotency_header():
-    route = respx.post("http://api/api/runs/run_1/scores").mock(
-        return_value=httpx.Response(200, json={"ok": True, "audit_event_id": "ae_1"})
-    )
-    client = ScoreClient(base_url="http://api", api_token="tok")
-    result = client.submit(_payload())
-    assert result["audit_event_id"] == "ae_1"
-    sent = route.calls.last.request
-    assert sent.headers["Idempotency-Key"] == "run_1:case_1:s0:judge:jv_1"
-    assert sent.headers["Authorization"] == "Bearer tok"
-    import json
-    body = json.loads(sent.content)
-    assert body["trace_id"] == "abcdef0123456789abcdef0123456789"
+def test_fixed_and_newly_broken_tracked():
+    base = [CaseScore("a", "fail"), CaseScore("b", "pass")]
+    cand = [CaseScore("a", "pass"), CaseScore("b", "fail")]
+    rep = _cmp(base, cand)
+    assert "a" in rep.fixed and "b" in rep.newly_broken
 
-
-@respx.mock
-def test_submit_raises_on_error():
-    respx.post("http://api/api/runs/run_1/scores").mock(
-        return_value=httpx.Response(422, json={"detail": "bad label"})
-    )
-    client = ScoreClient(base_url="http://api", api_token="tok")
-    with pytest.raises(ScoreSubmitError, match="422"):
-        client.submit(_payload())
+def test_per_label_failure_counts():
+    base = [CaseScore("a", "fail", "tool_misuse"), CaseScore("b", "fail", "tool_misuse")]
+    cand = [CaseScore("a", "pass"), CaseScore("b", "fail", "tool_misuse")]
+    rep = _cmp(base, cand)
+    row = next(r for r in rep.per_label if r["label"] == "tool_misuse")
+    assert row["baseline"] == 2 and row["candidate"] == 1
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd flywheel && pytest tests/sdk/test_score_client.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'sdk.score_client'`.
-
-- [ ] **Step 3: Write minimal implementation**
+- [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/regression.py`
 
 ```python
-# flywheel/sdk/score_client.py
-"""ScoreClient: submit judge/rule/human scores to the Flywheel API Score Bridge."""
+"""Baseline vs candidate regression (Engine §7): better | no_change | worse.
+Decision uses the Wilson CI of the pass-rate delta as the noise band. Enforces
+two surviving correctness gates:
+  1. same-judge: baseline and candidate must be scored by the same judge_version.
+  2. disjointness: compared cases must not overlap the judge-validation set.
+`validation_case_ids` is the dataset's judge-validation split; the regression set
+is the dataset's regression split. The caller reads both from Langfuse dataset
+metadata. Any non-"pass" label (fail/skip/uncertain) counts as not-a-success,
+consistent with metrics.pass_rate."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Literal
 
-import httpx
+from .metrics import pass_rate
 
-from .schema import AnnotationSource, Label
-
-
-class ScoreSubmitError(RuntimeError):
-    """Raised when the Flywheel API rejects a score submission."""
+RegressionResult = Literal["better", "no_change", "worse"]
 
 
 @dataclass(frozen=True)
-class ScorePayload:
-    eval_run_id: str
+class CaseScore:
     case_id: str
-    sample_id: str
-    label: Label
-    source: AnnotationSource
-    trace_id: str  # W3C TraceContext trace_id; required by ScoreBridge → Langfuse (Engine §8)
-    judge_version: str | None = None
-    failure_labels: list[str] = field(default_factory=list)
-    confidence: float | None = None
-    critique: str | None = None
-
-    def idempotency_key(self) -> str:
-        # Engine §9: eval_run_id + case_id + sample_id + source + judge_version
-        return f"{self.eval_run_id}:{self.case_id}:{self.sample_id}:{self.source}:{self.judge_version or 'none'}"
-
-    def to_body(self) -> dict:
-        return {
-            "case_id": self.case_id,
-            "sample_id": self.sample_id,
-            "label": self.label,
-            "source": self.source,
-            "trace_id": self.trace_id,
-            "judge_version": self.judge_version,
-            "failure_labels": self.failure_labels,
-            "confidence": self.confidence,
-            "critique": self.critique,
-        }
+    label: str
+    failure_label: str | None = None  # taxonomy string for per-label deltas (Engine §7)
 
 
-class ScoreClient:
-    def __init__(self, base_url: str, api_token: str, client: httpx.Client | None = None):
-        self._base_url = base_url.rstrip("/")
-        self._token = api_token
-        self._client = client or httpx.Client(timeout=30.0)
+@dataclass(frozen=True)
+class RegressionReport:
+    result: RegressionResult
+    baseline_rate: float
+    candidate_rate: float
+    delta: float
+    delta_low: float        # Wilson-CI lower bound of the delta (noise band)
+    delta_high: float       # Wilson-CI upper bound of the delta
+    fixed: list[str]        # case ids the candidate fixed
+    newly_broken: list[str] # case ids the candidate broke
+    per_label: list[dict]   # [{label, baseline, candidate}] failure counts
 
-    def submit(self, payload: ScorePayload) -> dict:
-        url = f"{self._base_url}/api/runs/{payload.eval_run_id}/scores"
-        headers = {
-            "Authorization": f"Bearer {self._token}",
-            "Idempotency-Key": payload.idempotency_key(),
-        }
-        response = self._client.post(url, json=payload.to_body(), headers=headers)
-        if response.status_code >= 300:
-            raise ScoreSubmitError(
-                f"score submit failed {response.status_code}: {response.text}"
-            )
-        return response.json()
+
+def _labels_by_case(scores: list[CaseScore]) -> dict[str, str]:
+    return {s.case_id: s.label for s in scores}
+
+
+def _fail_counts(scores: list[CaseScore]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for s in scores:
+        if s.label != "pass" and s.failure_label:
+            counts[s.failure_label] = counts.get(s.failure_label, 0) + 1
+    return counts
+
+
+def compare(
+    baseline: list[CaseScore],
+    candidate: list[CaseScore],
+    *,
+    validation_case_ids: set[str],
+    baseline_judge_version: str,
+    candidate_judge_version: str,
+) -> RegressionReport:
+    if baseline_judge_version != candidate_judge_version:
+        raise ValueError(
+            "same-judge gate: baseline and candidate must use one judge_version "
+            f"({baseline_judge_version!r} != {candidate_judge_version!r}); re-score first"
+        )
+    case_ids = {s.case_id for s in baseline} | {s.case_id for s in candidate}
+    overlap = case_ids & validation_case_ids
+    if overlap:
+        raise ValueError(f"regression set must be disjoint from validation set; overlap={overlap}")
+
+    b = _labels_by_case(baseline)
+    c = _labels_by_case(candidate)
+    fixed = sorted(k for k in b if b[k] != "pass" and c.get(k) == "pass")
+    newly_broken = sorted(k for k in b if b[k] == "pass" and c.get(k) not in (None, "pass"))
+
+    base_ci = pass_rate([s.label for s in baseline])
+    cand_ci = pass_rate([s.label for s in candidate])
+    delta = cand_ci.point - base_ci.point
+    # Noise band: delta CI via difference of two Wilson intervals (conservative).
+    delta_low = cand_ci.low - base_ci.high
+    delta_high = cand_ci.high - base_ci.low
+    if delta_low > 0:
+        result: RegressionResult = "better"
+    elif delta_high < 0:
+        result = "worse"
+    else:
+        result = "no_change"
+
+    base_fails = _fail_counts(baseline)
+    cand_fails = _fail_counts(candidate)
+    per_label = [
+        {"label": label, "baseline": base_fails.get(label, 0), "candidate": cand_fails.get(label, 0)}
+        for label in sorted(set(base_fails) | set(cand_fails))
+    ]
+
+    return RegressionReport(
+        result=result, baseline_rate=base_ci.point, candidate_rate=cand_ci.point,
+        delta=delta, delta_low=delta_low, delta_high=delta_high,
+        fixed=fixed, newly_broken=newly_broken, per_label=per_label,
+    )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd flywheel && pytest tests/sdk/test_score_client.py -v`
-Expected: PASS (4 passed).
-
-- [ ] **Step 5: Run full SDK suite + lint + types**
-
-Run:
-```bash
-cd flywheel && pytest tests/sdk -q && ruff check sdk tests && mypy sdk
-```
-Expected: all tests pass; ruff clean; mypy clean.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add flywheel/sdk/score_client.py flywheel/tests/sdk/test_score_client.py
-git commit -m "feat(sdk): ScoreClient with idempotent score submission"
-```
+- [ ] **Step 4:** run → pass.
+- [ ] **Step 5:** seed `flywheel/labels.md` with a flat list (one label + one-line definition per row).
+- [ ] **Step 6:** full suite + lint + types: `pytest -q && ruff check flywheel tests && mypy flywheel`.
+- [ ] **Step 7:** commit `feat(flywheel): three-value regression comparison + seed labels`.
 
 ---
 
-## Self-Review
-
-- **Spec coverage (Engine §6, §7):** schema.py covers execution + post-hoc + analysis/proposal attr split (§6); context.py validates eval identity — note that `eval_run_id` validates application-layer identity only; the **caller** must ensure OTel context is active (trace_id present on the span) before calling `for_eval_run()`, since `eval_run_id` does not substitute for trace_id (Engine §6, §4); fingerprint.py implements the composite fingerprint list (§6); score_client.py implements the §9 idempotency key; metrics.py implements F1/precision/recall/CI with locked denominator policy for skip/uncertain (§7). `failure_labels` validation against the live taxonomy is enforced server-side in plan 02 (the SDK passes strings through, as §7 states the SDK is a thin layer).
-- **Placeholder scan:** no TBD/TODO; every code step shows complete code.
-- **Type consistency:** `ScorePayload` field names (`eval_run_id`, `case_id`, `sample_id`, `source`, `judge_version`) match the idempotency key used by the API in plan 02. `ConfidenceInterval(point, low, high)` is reused by plan 07 regression stats.
+## Self-review
+- **Engine spec coverage:** identity.py = §4 (four ids + minimal fingerprint);
+  metrics.py = the math §6/§7 depend on; regression.py = §7 (three outcomes,
+  Wilson noise band, disjointness assert).
+- **Deleted-on-purpose:** no `flywheel.*` constants, no context validator, no
+  score HTTP client — see "What changed" above; the engine spec §0/§8 record why.
+- **Type handoff to plan 02:** `ConfidenceInterval`, `RegressionReport`,
+  `CaseScore`, `Label`, `Harness` are imported by `judge.py`/`validate.py`/
+  `report.py` and serialized by the read API.
