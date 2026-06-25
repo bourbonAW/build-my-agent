@@ -8,10 +8,12 @@
 > control plane (State Store, 5 lifecycle enums, Score Bridge, ~45 endpoints,
 > taxonomy registry, redaction pipeline, holdout ledger) and pointed at sub-plans
 > 03–08. **All of that is superseded.** See `specs/2026-06-22-flywheel-engine-design.md`
-> §0 for why ~85% was cut. Sub-plans **03–08 are archived/superseded** (banner at
-> the top of each) and must not be implemented as written. The Chinese `-zh`
-> variants of these docs were intentionally left untouched and still describe the
-> old design — do not implement from them either.
+> §0 for why ~85% was cut. Sub-plans **03–08 were deleted** — their surviving
+> content is folded into plans 01/02 and the rest is deferred per engine spec §8.
+> The table below records what each was (git history preserves the originals); do
+> not recreate or implement them. The Chinese `-zh` variants of these docs were
+> intentionally left untouched and still describe the old design — do not
+> implement from them either.
 
 **Goal:** Make Bourbon measurably better from its own traces with the smallest
 machinery that closes the loop: real traces → look at failures → a few replayable
@@ -112,16 +114,19 @@ cd ui && npm install && npm run test -- --run && npx playwright test
 > The file names still say "01-sdk" / "02-control-plane" for git continuity, but
 > their **content is the lean rewrite** — not an SDK and not a control plane.
 
-### Superseded sub-plans (do not implement)
+### Deleted sub-plans (do not recreate)
 
-| File | Was | Status |
+These files were **deleted** in the lean revision (recoverable from git history).
+Each row records what the plan was and where its surviving scope went.
+
+| File (deleted) | Was | Disposition |
 |---|---|---|
-| `2026-06-23-flywheel-03-redaction.md` | Redaction pipeline | **Superseded** — deferred (Engine §8); single trusted maintainer needs no redaction. |
-| `2026-06-23-flywheel-04-data-analysis.md` | Sampler/coder/taxonomy registry/dataset splits | **Superseded** — data + labeling live in Langfuse; labels are a flat `labels.md`. |
-| `2026-06-23-flywheel-05-judge.md` | JudgeVersion lifecycle + drift sentinel | **Superseded** — replaced by `validate.py` (F1 ≥ 0.70). |
-| `2026-06-23-flywheel-06-engine.md` | Analyzer/proposer/handoff | **Superseded** — proposals are git PRs (Engine §8 add-back trigger). |
-| `2026-06-23-flywheel-07-regression.md` | Holdout ledger, Bonferroni/FDR, publish/rollback states | **Superseded** — `regression.py` 3-value result + Wilson noise band. |
-| `2026-06-23-flywheel-08-ui.md` | Full 13-route control UI | **Superseded** — UI is plan 02 Task 5 (3 routes). |
+| `2026-06-23-flywheel-03-redaction.md` | Redaction pipeline | Deferred (Engine §8); single trusted maintainer needs no redaction. |
+| `2026-06-23-flywheel-04-data-analysis.md` | Sampler/coder/taxonomy registry/dataset splits | Data + labeling live in Langfuse; labels are a flat `labels.md`. |
+| `2026-06-23-flywheel-05-judge.md` | JudgeVersion lifecycle + drift sentinel | Replaced by `validate.py` (F1 ≥ 0.70). |
+| `2026-06-23-flywheel-06-engine.md` | Analyzer/proposer/handoff | Proposals are git PRs (Engine §8 add-back trigger). |
+| `2026-06-23-flywheel-07-regression.md` | Holdout ledger, Bonferroni/FDR, publish/rollback states | `regression.py` 3-value result + Wilson noise band. |
+| `2026-06-23-flywheel-08-ui.md` | Full 13-route control UI | UI is plan 02 Task 5 (3 routes). |
 
 ---
 
