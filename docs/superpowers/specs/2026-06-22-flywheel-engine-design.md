@@ -78,7 +78,7 @@ flywheel/  (a small Python package + scripts)
   - identity.py   : case_id, run_id, label, minimal harness fingerprint, judge_version
   - metrics.py    : precision / recall / F1 / Wilson CI
   - judge.py      : run an LLM judge over a dataset, write scores to Langfuse
-  - validate.py   : 60/20/20 judge validation report (F1 > 0.70)
+  - validate.py   : 60/20/20 judge validation report (F1 ≥ 0.70)
   - regression.py : baseline vs candidate -> better | no_change | worse
   - report.py     : emit markdown / JSON report (consumed by the UI read API)
       |
@@ -101,7 +101,7 @@ second judge or second harness appears.
 |---|---|---|
 | `case_id` | Langfuse dataset item id; mirrored as `eval.case_id` span attr | Which replayable case. |
 | `run_id` | Langfuse dataset run name; span attr `eval.run_id` | Which eval run / which harness version. |
-| `label` | Langfuse score (`pass` / `fail`) + free-text critique | The verdict on one case attempt. |
+| `label` | Langfuse score (`pass` / `fail`) + free-text critique | The verdict on one case attempt. The persisted score is `pass`/`fail`; the internal `Label` type also carries `skip` (case not run) and `uncertain` (judge abstained) — both count as non-successes, never as a pass. |
 | `trace_id` | W3C trace id (OTel) | Pointer to the evidence. |
 
 The only new OTel attributes are `eval.case_id` and `eval.run_id`. Everything
@@ -157,9 +157,15 @@ The judge is the one asset worth real rigor (per `llm-eval` stages 4–5).
 - `judge.py` runs an LLM judge over a dataset run and writes `pass`/`fail`
   scores back to Langfuse. Few-shot labeled examples carry the signal; the
   system prompt stays neutral.
-- `validate.py` does a 60/20/20 split against human labels and emits a report:
-  overall **F1 ≥ 0.70** to use the judge for gating, plus per-label precision /
-  recall and a confusion matrix. Below threshold → refine prompt/examples and
+- The human-labeled cases are partitioned **60/20/20** as a data-prep step:
+  `train` supplies the judge's few-shot examples, `dev` is used while iterating
+  the prompt, and the disjoint `test` split is the held-out validation set.
+- `validate.py` scores the judge **on that held-out validation split only** (never
+  the few-shot/train cases — that would leak) and emits a report: overall
+  **F1 ≥ 0.70** to use the judge for gating, plus per-label precision / recall and
+  a confusion matrix. The positive class is `fail` (the judge's job is to catch
+  failures); an `uncertain` verdict is an abstention, never a true positive, so a
+  hedging judge cannot pass the gate. Below threshold → refine prompt/examples and
   re-run.
 
 That's the lifecycle. No `draft → calibrating → locked_test → validated →
@@ -185,9 +191,13 @@ Mechanics that survived because they are correctness, not ceremony:
   replacing `judge_migration_required` / `blocked_on_judge_migration`.)
 - **Disjointness**: assert the regression set shares no cases with the
   judge-validation set. (One assert, replacing the holdout ledger.)
-- **Noise band**: report pass-rate delta with a **Wilson confidence interval**;
-  if the interval crosses zero, the result is `no_change`, not a win.
-  (Replaces `no_significant_change` as a first-class lifecycle state.)
+- **Noise band**: baseline and candidate are scored on the **same** regression
+  cases (a paired design), so report the pass-rate delta with a **paired
+  (McNemar) Wilson confidence interval** computed from the discordant pairs
+  (fixed vs newly-broken) — an unpaired difference of two independent Wilson
+  intervals would ignore the pairing and hide real one-directional changes. If
+  the interval crosses zero, the result is `no_change`, not a win. (Replaces
+  `no_significant_change` as a first-class lifecycle state.)
 - **Repeats**: for nondeterministic cases, sample ≥3× when budget allows.
 
 Output is a report (markdown + JSON): pass-rate delta + CI, per-label delta,

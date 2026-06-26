@@ -51,16 +51,19 @@ requires-python = ">=3.13"
 dependencies = ["pydantic>=2.6"]
 
 [project.optional-dependencies]
-judge = ["httpx>=0.27", "anthropic>=0.40"]   # used by plan 02 (judge.py)
+judge = ["httpx>=0.27", "anthropic>=0.40"]   # used by plan 02 (judge.py glue)
 api = ["fastapi>=0.110", "uvicorn>=0.29"]      # used by plan 02 (read API)
-dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9"]
+# dev is a superset so a single `.[dev]` install runs the whole suite, incl.
+# plan 02's api tests (fastapi + httpx TestClient) and mypy over api/.
+dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9",
+       "fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27", "anthropic>=0.40"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["flywheel", "api"]   # "api" (read-only API, plan 02) is a sibling top-level package
+packages = ["flywheel"]   # plan 02 Task 4 adds the sibling "api" package here when api/ is created
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -238,12 +241,17 @@ def _scores(passes, fails):
     return [CaseScore(f"c{i}", "pass") for i in range(passes)] + \
            [CaseScore(f"d{i}", "fail") for i in range(fails)]
 
+def _run(labels):
+    """One score per case c0..c{n-1}; `labels` are the verdicts in order. Baseline
+    and candidate built this way share the same case-id set (required by compare)."""
+    return [CaseScore(f"c{i}", lab) for i, lab in enumerate(labels)]
+
 def _cmp(base, cand, validation_case_ids=frozenset()):
     return compare(base, cand, validation_case_ids=set(validation_case_ids),
                    baseline_judge_version="jv1", candidate_judge_version="jv1")
 
 def test_clear_improvement_is_better():
-    rep = _cmp(_scores(2, 18), _scores(18, 2))   # 10% -> 90%
+    rep = _cmp(_run(["fail"] * 18 + ["pass"] * 2), _run(["pass"] * 18 + ["fail"] * 2))  # 10% -> 90%
     assert rep.result == "better"
     assert rep.delta > 0
     assert rep.delta_low <= rep.delta <= rep.delta_high
@@ -254,7 +262,7 @@ def test_tiny_delta_is_no_change():
     assert _cmp(base, cand).result == "no_change"
 
 def test_regression_is_worse():
-    assert _cmp(_scores(18, 2), _scores(2, 18)).result == "worse"
+    assert _cmp(_run(["pass"] * 18 + ["fail"] * 2), _run(["fail"] * 18 + ["pass"] * 2)).result == "worse"
 
 def test_mismatched_judge_raises():
     with pytest.raises(ValueError, match="same-judge"):
@@ -265,6 +273,19 @@ def test_disjointness_violation_raises():
     base = _scores(5, 5)
     with pytest.raises(ValueError, match="disjoint"):
         _cmp(base, base, validation_case_ids={"c0"})
+
+def test_mismatched_case_set_raises():
+    with pytest.raises(ValueError, match="same regression case set"):
+        _cmp([CaseScore("a", "pass")], [CaseScore("b", "pass")])
+
+def test_duplicate_case_id_raises():
+    dup = [CaseScore("a", "pass"), CaseScore("a", "fail")]
+    with pytest.raises(ValueError, match="duplicate case_id"):
+        _cmp(dup, dup)
+
+def test_empty_regression_set_raises():
+    with pytest.raises(ValueError, match="must not be empty"):
+        _cmp([], [])
 
 def test_fixed_and_newly_broken_tracked():
     base = [CaseScore("a", "fail"), CaseScore("b", "pass")]
@@ -284,11 +305,13 @@ def test_aggregate_repeats_majority_vote():
     runs = [
         CaseScore("a", "pass"), CaseScore("a", "pass"), CaseScore("a", "fail", "tool_misuse"),
         CaseScore("b", "fail", "tool_misuse"), CaseScore("b", "fail", "tool_misuse"), CaseScore("b", "pass"),
+        CaseScore("c", "uncertain"),  # single run
     ]
     agg = {s.case_id: s for s in aggregate_repeats(runs)}
     assert agg["a"].label == "pass"          # 2/3 pass -> pass
     assert agg["b"].label == "fail"          # 1/3 pass -> fail
     assert agg["b"].failure_label == "tool_misuse"
+    assert agg["c"].label == "uncertain"     # single run preserved, not coerced to fail
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/regression.py`
@@ -330,7 +353,7 @@ class RegressionReport:
     delta_high: float       # Wilson-CI upper bound of the delta
     fixed: list[str]        # case ids the candidate fixed
     newly_broken: list[str] # case ids the candidate broke
-    per_label: list[dict]   # [{label, baseline, candidate}] failure counts
+    per_label: list[dict[str, object]]  # [{label, baseline, candidate}] failure counts
 
 
 def _labels_by_case(scores: list[CaseScore]) -> dict[str, str]:
@@ -357,6 +380,9 @@ def aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]:
         by_case.setdefault(s.case_id, []).append(s)
     out: list[CaseScore] = []
     for case_id, runs in by_case.items():
+        if len(runs) == 1:
+            out.append(runs[0])  # single run: preserve the original label (incl. skip/uncertain)
+            continue
         passes = sum(1 for r in runs if r.label == "pass")
         if passes * 2 > len(runs):
             out.append(CaseScore(case_id, "pass"))
@@ -380,7 +406,20 @@ def compare(
             "same-judge gate: baseline and candidate must use one judge_version "
             f"({baseline_judge_version!r} != {candidate_judge_version!r}); re-score first"
         )
-    case_ids = {s.case_id for s in baseline} | {s.case_id for s in candidate}
+    base_ids = [s.case_id for s in baseline]
+    cand_ids = [s.case_id for s in candidate]
+    if not base_ids or not cand_ids:
+        raise ValueError("regression set must not be empty")
+    if len(set(base_ids)) != len(base_ids) or len(set(cand_ids)) != len(cand_ids):
+        raise ValueError("duplicate case_id within baseline or candidate scores; "
+                         "aggregate repeats first (see aggregate_repeats)")
+    if set(base_ids) != set(cand_ids):
+        raise ValueError(
+            "same-population gate: baseline and candidate must cover the same "
+            "regression case set (compare on identical case_ids, not different "
+            "populations); re-run the missing cases first"
+        )
+    case_ids = set(base_ids) | set(cand_ids)
     overlap = case_ids & validation_case_ids
     if overlap:
         raise ValueError(f"regression set must be disjoint from validation set; overlap={overlap}")
@@ -390,12 +429,23 @@ def compare(
     fixed = sorted(k for k in b if b[k] != "pass" and c.get(k) == "pass")
     newly_broken = sorted(k for k in b if b[k] == "pass" and c.get(k) not in (None, "pass"))
 
-    base_ci = pass_rate([s.label for s in baseline])
-    cand_ci = pass_rate([s.label for s in candidate])
-    delta = cand_ci.point - base_ci.point
-    # Noise band: delta CI via difference of two Wilson intervals (conservative).
-    delta_low = cand_ci.low - base_ci.high
-    delta_high = cand_ci.high - base_ci.low
+    base_rate = pass_rate([s.label for s in baseline]).point
+    cand_rate = pass_rate([s.label for s in candidate]).point
+    delta = cand_rate - base_rate
+    # Paired (McNemar) noise band. The case sets are identical, so the delta is
+    # driven entirely by discordant pairs (fixed vs newly-broken); concordant pairs
+    # cancel. A difference of two *independent* Wilson intervals would ignore the
+    # pairing and call a real one-directional change "no_change". Instead put a
+    # Wilson CI on the fraction of discordant pairs that improved, then map it back
+    # to a pass-rate delta: delta = (2p - 1) * disc / n.
+    n = len(base_ids)
+    disc = len(fixed) + len(newly_broken)
+    if disc == 0:
+        delta_low = delta_high = 0.0
+    else:
+        p_ci = pass_rate(["pass"] * len(fixed) + ["fail"] * len(newly_broken))
+        delta_low = (2 * p_ci.low - 1) * disc / n
+        delta_high = (2 * p_ci.high - 1) * disc / n
     if delta_low > 0:
         result: RegressionResult = "better"
     elif delta_high < 0:
@@ -411,7 +461,7 @@ def compare(
     ]
 
     return RegressionReport(
-        result=result, baseline_rate=base_ci.point, candidate_rate=cand_ci.point,
+        result=result, baseline_rate=base_rate, candidate_rate=cand_rate,
         delta=delta, delta_low=delta_low, delta_high=delta_high,
         fixed=fixed, newly_broken=newly_broken, per_label=per_label,
     )
