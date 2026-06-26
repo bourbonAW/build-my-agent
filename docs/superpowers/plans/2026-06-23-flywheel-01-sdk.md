@@ -86,18 +86,22 @@ strict = true
 ## Task 2: identity.py — Harness, Label, id helpers
 
 **Interfaces:**
-- `Label = Literal["pass", "fail", "skip", "uncertain"]`
+- `Label = Literal["pass", "fail", "skip", "uncertain"]` — any verdict: human, judge, or operational. `pass`/`fail` are the gating classes; `skip` (case not run) and `uncertain` (judge abstained) are non-successes, never a pass.
+- `HumanLabel = Literal["pass", "fail"]` — a **human** annotation is gold and binary (no `skip`/`uncertain`). A judge verdict may be `uncertain`; a human verdict may not.
 - `@dataclass(frozen=True) class Harness(git_sha: str, model: str)` with `id() -> str` = `f"{git_sha[:7]}@{model}"`.
 - `JudgeVersion = str` (alias, documented as "plain identifier, not a lifecycle").
 
 - [ ] **Step 1: failing test** `tests/test_identity.py`
 
 ```python
-from flywheel.identity import Harness, Label
+from flywheel.identity import Harness, Label, HumanLabel
 from typing import get_args
 
 def test_label_values():
     assert set(get_args(Label)) == {"pass", "fail", "skip", "uncertain"}
+
+def test_human_label_is_binary():
+    assert set(get_args(HumanLabel)) == {"pass", "fail"}
 
 def test_harness_id_is_short_and_stable():
     h = Harness(git_sha="abc1234def", model="claude-opus-4-8")
@@ -123,7 +127,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-Label = Literal["pass", "fail", "skip", "uncertain"]
+Label = Literal["pass", "fail", "skip", "uncertain"]  # any verdict (human/judge/operational)
+HumanLabel = Literal["pass", "fail"]  # a human annotation is gold and binary
 JudgeVersion = str  # a plain identifier, e.g. "judge-v2" — not a lifecycle
 
 
@@ -306,12 +311,18 @@ def test_aggregate_repeats_majority_vote():
         CaseScore("a", "pass"), CaseScore("a", "pass"), CaseScore("a", "fail", "tool_misuse"),
         CaseScore("b", "fail", "tool_misuse"), CaseScore("b", "fail", "tool_misuse"), CaseScore("b", "pass"),
         CaseScore("c", "uncertain"),  # single run
+        CaseScore("u", "uncertain"), CaseScore("u", "uncertain"), CaseScore("u", "pass"),
+        CaseScore("k", "skip"), CaseScore("k", "skip"), CaseScore("k", "fail", "x"),
+        CaseScore("t", "fail", "y"), CaseScore("t", "uncertain"),  # tie -> fail
     ]
     agg = {s.case_id: s for s in aggregate_repeats(runs)}
     assert agg["a"].label == "pass"          # 2/3 pass -> pass
     assert agg["b"].label == "fail"          # 1/3 pass -> fail
     assert agg["b"].failure_label == "tool_misuse"
     assert agg["c"].label == "uncertain"     # single run preserved, not coerced to fail
+    assert agg["u"].label == "uncertain"     # majority non-pass label kept, not rewritten to fail
+    assert agg["k"].label == "skip"          # all-skip majority kept
+    assert agg["t"].label == "fail"          # 1 fail / 1 uncertain tie -> fail (priority)
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/regression.py`
@@ -370,8 +381,10 @@ def _fail_counts(scores: list[CaseScore]) -> dict[str, int]:
 
 def aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]:
     """Collapse repeated scorings of one case (Engine §7 "repeats ≥3×") by
-    majority vote: pass only if a strict majority of repeats passed (ties are
-    conservative non-passes). The kept failure_label is the most common among the
+    majority vote: "pass" only if a strict majority of repeats passed; otherwise
+    keep the most common non-pass label (all-"uncertain" -> "uncertain",
+    all-"skip" -> "skip"), ties broken toward the most safety-relevant label
+    (fail > uncertain > skip). The kept failure_label is the most common among the
     non-pass repeats. Single-run cases are returned unchanged."""
     from collections import Counter
 
@@ -387,9 +400,15 @@ def aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]:
         if passes * 2 > len(runs):
             out.append(CaseScore(case_id, "pass"))
             continue
+        # Not a pass-majority: keep the most common non-pass label, so all-"uncertain"
+        # stays "uncertain" and all-"skip" stays "skip" (the label model distinguishes
+        # them). Ties resolve toward the most safety-relevant label: fail > uncertain > skip.
+        _priority = {"fail": 0, "uncertain": 1, "skip": 2}
+        non_pass = Counter(r.label for r in runs if r.label != "pass")
+        label = max(non_pass, key=lambda lbl: (non_pass[lbl], -_priority.get(lbl, 3)))
         fl = Counter(r.failure_label for r in runs if r.label != "pass" and r.failure_label)
         failure_label = fl.most_common(1)[0][0] if fl else None
-        out.append(CaseScore(case_id, "fail", failure_label))
+        out.append(CaseScore(case_id, label, failure_label))
     return sorted(out, key=lambda s: s.case_id)
 
 

@@ -44,7 +44,10 @@ human annotation — is a **deep link into Langfuse**, not a cloned page.
 3. **Noise is a result**: `no_change` is rendered distinctly from `better` /
    `worse` — never dressed up as a win.
 4. **No hidden automation**: judge-generated labels show the `judge_version` and
-   confidence.
+   deep-link to the judge's verdict + one-line critique in Langfuse (the score
+   comment), so a machine verdict is never anonymous. The judge emits
+   `pass`/`fail`/`uncertain` (+ critique), not a numeric confidence; the critique
+   lives in Langfuse and is reached by deep link, not re-stored in our report JSON.
 
 ---
 

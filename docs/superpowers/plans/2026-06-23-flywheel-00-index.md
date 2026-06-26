@@ -43,9 +43,10 @@ Apply to every task below.
   `gen_ai.*` + `eval.case_id`/`eval.run_id`. Datasets, scores, annotation, trace
   browsing = Langfuse native. No private `flywheel.*` convention, no State Store
   re-modeling of Langfuse objects.
-- **Four identity concepts only:** `case_id`, `run_id`, `label` (persisted score is
-  `pass`/`fail`; the `Label` type also carries `skip`/`uncertain` as non-success
-  operational values), and `trace_id`. Plus a minimal harness id `git_sha@model` and a plain
+- **Four identity concepts only:** `case_id`, `run_id`, `label` (a human annotation
+  is `pass`/`fail`; a judge verdict is persisted categorically and may also be
+  `uncertain`; the `Label` type also carries `skip` — `skip`/`uncertain` are
+  non-successes), and `trace_id`. Plus a minimal harness id `git_sha@model` and a plain
   `judge_version` string. No 8-part fingerprint, no lifecycle enums.
 - **Two surviving correctness gates** (asserts, not state machines):
   - *same-judge:* baseline and candidate must be scored by one `judge_version`;

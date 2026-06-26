@@ -101,7 +101,7 @@ second judge or second harness appears.
 |---|---|---|
 | `case_id` | Langfuse dataset item id; mirrored as `eval.case_id` span attr | Which replayable case. |
 | `run_id` | Langfuse dataset run name; span attr `eval.run_id` | Which eval run / which harness version. |
-| `label` | Langfuse score (`pass` / `fail`) + free-text critique | The verdict on one case attempt. The persisted score is `pass`/`fail`; the internal `Label` type also carries `skip` (case not run) and `uncertain` (judge abstained) — both count as non-successes, never as a pass. |
+| `label` | Langfuse score + free-text critique | The verdict on one case attempt. A **human** annotation is `pass`/`fail` (gold, binary). A **judge** verdict is persisted as a categorical score and may also be `uncertain` (the judge abstained); `skip` marks a case not run. `uncertain`/`skip` are non-successes, never a pass. |
 | `trace_id` | W3C trace id (OTel) | Pointer to the evidence. |
 
 The only new OTel attributes are `eval.case_id` and `eval.run_id`. Everything
