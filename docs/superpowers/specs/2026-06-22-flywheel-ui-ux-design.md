@@ -129,8 +129,9 @@ Show:
 - result badge: `better` (green) / `no_change` (amber) / `worse` (red)
 - per-label delta table
 - fixed failures and newly-broken failures, each linking to its Langfuse trace
-- a disjointness note: regression set ∩ judge-validation set = ∅. This is a
-  **static invariant**, not a data field: `compare()` raises on any overlap, so a
+- a disjointness note: regression set ∩ **judge case pool** (`judge_train ∪
+  judge_dev ∪ judge_test`) = ∅. This is a **static invariant**, not a data field:
+  `compare()` raises on any overlap with the *whole* judge pool, so a
   `RegressionReport` only exists when the gate held — the UI renders the note as a
   guaranteed fact, so `RegressionReport` carries no `disjoint`/overlap field.
 
@@ -173,6 +174,8 @@ type RegressionReport = {
   baselineHarness: string;
   candidateHarness: string;
   judgeVersion: string;     // same for both, asserted server-side
+  passRate: { point: number; low: number; high: number };  // candidate case-level Wilson CI (post-aggregation); runs_provider serves RunSummary.passRate from this
+  nonPassCount: number;     // candidate case-level non-pass count (same source) — never the attempt-level raw Langfuse count
   passRateDelta: { point: number; low: number; high: number };
   result: RegressionResult;
   perLabel: LabelDelta[];
@@ -180,7 +183,8 @@ type RegressionReport = {
   newlyBroken: { caseId: string; traceUrl: string }[];
   candidatePrUrl?: string;
   // No `disjoint` field: disjointness is a gate invariant (compare() raises on
-  // overlap), so a report's existence already proves regression ∩ validation = ∅ (§6).
+  // overlap with the whole judge pool), so a report's existence already proves
+  // regression ∩ (judge_train ∪ judge_dev ∪ judge_test) = ∅ (§6).
 };
 
 type JudgeReport = {

@@ -229,7 +229,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
 **Interfaces:**
 - `RegressionResult = Literal["better", "no_change", "worse"]`
 - `@dataclass(frozen=True) class CaseScore(case_id: str, label: Label, failure_label: str | None = None)` — `label` is the typed `Label` (`pass`/`fail`/`skip`/`uncertain`); `__post_init__` rejects any other value so a malformed Langfuse score (`"PASS"`, `"error"`, `""`) raises at ingestion instead of being silently miscounted as a failure. `failure_label` is a free string from `labels.md` / a Langfuse score comment, used for per-label deltas (Engine §7).
-- `@dataclass(frozen=True) class RegressionReport(result, baseline_rate, candidate_rate, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
+- `@dataclass(frozen=True) class RegressionReport(result, baseline_rate, candidate_rate, candidate_rate_low, candidate_rate_high, candidate_non_pass_count, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `candidate_rate` + `candidate_rate_low/high` are the candidate run's **case-level** Wilson CI and `candidate_non_pass_count` its case-level non-pass count, computed from the **same aggregated scores `compare()` gates on** — so `RunSummary.passRate`/`nonPassCount` (served from the report) can never disagree with the regression report on a run with repeats; `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
 - `compare(baseline, candidate, *, regression_case_ids: set[str], validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
   - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
   - **completeness gate:** raises `ValueError` unless the compared cases are **exactly** `regression_case_ids` (the full declared regression split read from the dataset). A silently dropped case (harness error, missing score) must not let a candidate pass the gate on an easier subset; "same scored ids on both sides" alone can't catch a case both runs skipped.
@@ -273,6 +273,13 @@ def test_tiny_delta_is_no_change():
 
 def test_regression_is_worse():
     assert _cmp(_run(["pass"] * 18 + ["fail"] * 2), _run(["fail"] * 18 + ["pass"] * 2)).result == "worse"
+
+def test_no_discordance_reports_finite_band_not_certainty():
+    base = _run(["pass", "fail", "pass"])
+    rep = _cmp(base, base)                       # identical runs → 0 discordant pairs
+    assert rep.result == "no_change"
+    assert rep.delta == 0.0
+    assert rep.delta_low < 0 < rep.delta_high    # honest finite-sample band, never [0, 0]
 
 def test_mismatched_judge_raises():
     s = _scores(5, 5)
@@ -384,7 +391,10 @@ class CaseScore:
 class RegressionReport:
     result: RegressionResult
     baseline_rate: float
-    candidate_rate: float
+    candidate_rate: float          # candidate case-level pass-rate point
+    candidate_rate_low: float      # candidate case-level Wilson CI bounds — same
+    candidate_rate_high: float     # aggregated scores compare() gates on, so the
+    candidate_non_pass_count: int  # runs list (served from this) can't disagree
     delta: float
     delta_low: float        # Wilson-CI lower bound of the delta (noise band)
     delta_high: float       # Wilson-CI upper bound of the delta
@@ -411,7 +421,13 @@ def aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]:
     keep the most common non-pass label (all-"uncertain" -> "uncertain",
     all-"skip" -> "skip"), ties broken toward the most safety-relevant label
     (fail > uncertain > skip). The kept failure_label is the most common among the
-    non-pass repeats. Single-run cases are returned unchanged."""
+    non-pass repeats. Single-run cases are returned unchanged.
+
+    Collapsing drops the repeat count, so this assumes the caller already ensured a
+    **fair, equal repeat budget per case across the two runs** being compared (an
+    unequal budget would make the majority vote unfair). `run_regression.py` (plan 02
+    Task 6 Step 7) validates that cardinality on baseline and candidate before
+    calling this."""
     from collections import Counter
 
     by_case: dict[str, list[CaseScore]] = {}
@@ -486,8 +502,11 @@ def compare(
     fixed = sorted(k for k in b if b[k] != "pass" and c.get(k) == "pass")
     newly_broken = sorted(k for k in b if b[k] == "pass" and c.get(k) not in (None, "pass"))
 
+    cand_labels = [s.label for s in candidate]
     base_rate = pass_rate([s.label for s in baseline]).point
-    cand_rate = pass_rate([s.label for s in candidate]).point
+    cand_ci = pass_rate(cand_labels)  # candidate case-level Wilson CI (post-aggregation)
+    cand_rate = cand_ci.point
+    cand_non_pass = sum(1 for label in cand_labels if label != "pass")
     delta = cand_rate - base_rate
     # Paired (McNemar) noise band. The case sets are identical, so the delta is
     # driven entirely by discordant pairs (fixed vs newly-broken); concordant pairs
@@ -498,7 +517,14 @@ def compare(
     n = len(base_ids)
     disc = len(fixed) + len(newly_broken)
     if disc == 0:
-        delta_low = delta_high = 0.0
+        # No discordant pairs observed. The point delta is 0, but a finite paired
+        # sample can't *prove* the true difference is 0 — a zero-width CI would
+        # falsely claim certainty (badly so on small sets). Rule of three: with 0
+        # discordant pairs in n, up to ~3 could plausibly occur, in either
+        # direction, so report a symmetric ±3/n band (clamped to the [-1, 1] range
+        # of a rate difference). It still straddles 0 → "no_change".
+        bound = min(3.0 / n, 1.0)
+        delta_low, delta_high = -bound, bound
     else:
         p_ci = pass_rate(["pass"] * len(fixed) + ["fail"] * len(newly_broken))
         delta_low = (2 * p_ci.low - 1) * disc / n
@@ -519,6 +545,8 @@ def compare(
 
     return RegressionReport(
         result=result, baseline_rate=base_rate, candidate_rate=cand_rate,
+        candidate_rate_low=cand_ci.low, candidate_rate_high=cand_ci.high,
+        candidate_non_pass_count=cand_non_pass,
         delta=delta, delta_low=delta_low, delta_high=delta_high,
         fixed=fixed, newly_broken=newly_broken, per_label=per_label,
     )

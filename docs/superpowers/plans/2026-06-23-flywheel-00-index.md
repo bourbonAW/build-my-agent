@@ -60,7 +60,8 @@ Apply to every task below.
     case ids; `validate()` raises on a **duplicate** case id, but treats an
     **undersized/imbalanced** validation split as *not validated* (`passes=false`,
     not a raise — too little evidence is a non-validation, not a usage error).
-- **Judge is the one validated asset.** macro-F1 ≥ 0.70 + per-class gold support
+- **Judge is the one validated asset.** macro-F1 ≥ 0.70 **and** fail-class F1 ≥ 0.70
+  (a high-macro but failure-blind judge must not validate) + per-class gold support
   (recomputed by re-running `validate.py`), not a 6-state lifecycle.
 - **Regression result is three-valued:** `better | no_change | worse`, decided by
   the Wilson CI of the pass-rate delta (noise band). A proposal is a git PR; a
