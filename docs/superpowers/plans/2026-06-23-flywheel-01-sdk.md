@@ -89,7 +89,7 @@ strict = true
 - `Label = Literal["pass", "fail", "skip", "uncertain"]` — any verdict: human, judge, or operational. `pass`/`fail` are the gating classes; `skip` (case not run) and `uncertain` (judge abstained) are non-successes, never a pass.
 - `HumanLabel = Literal["pass", "fail"]` — a **human** annotation is gold and binary (no `skip`/`uncertain`). A judge verdict may be `uncertain`; a human verdict may not.
 - `@dataclass(frozen=True) class Harness(git_sha: str, model: str)` with `id() -> str` = `f"{git_sha[:7]}@{model}"`.
-- `JudgeVersion = str` (alias, documented as "plain identifier, not a lifecycle").
+- `JudgeVersion = str` (alias; a **URL-safe slug** `^[A-Za-z0-9._@-]+$` since it is a report filename / `/api/judges/{judge_version}` segment — not a lifecycle).
 
 - [ ] **Step 1: failing test** `tests/test_identity.py`
 
@@ -129,7 +129,8 @@ from typing import Literal
 
 Label = Literal["pass", "fail", "skip", "uncertain"]  # any verdict (human/judge/operational)
 HumanLabel = Literal["pass", "fail"]  # a human annotation is gold and binary
-JudgeVersion = str  # a plain identifier, e.g. "judge-v2" — not a lifecycle
+JudgeVersion = str  # a URL-safe slug ^[A-Za-z0-9._@-]+$ (it is a report filename /
+# /api/judges/{judge_version} segment), e.g. "judge-v2" — not a lifecycle
 
 
 @dataclass(frozen=True)
@@ -236,6 +237,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
   - **disjointness gate (Engine §5/§7):** raises `ValueError` if compared case ids overlap `validation_case_ids`. That set is the **entire judge-validation set** — the union of all human-labeled judge cases (`judge_train ∪ judge_dev ∪ judge_test`), not just the held-out `judge_test` split, because a regression case that was a few-shot (`train`) or prompt-tuning (`dev`) case is leaked too. The regression set is the dataset's **regression split**; the caller reads both from the Langfuse dataset metadata.
   - assigns `better`/`worse`/`no_change` by an **exact two-sided paired sign test** (McNemar exact) on the discordant pairs (Engine §7); the Wilson delta CI is kept only as the descriptive interval (it is anti-conservative on tiny discordant counts).
 - `aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]` — collapses repeated scorings of the same `case_id` (Engine §7 "sample ≥3× for nondeterministic cases") into one `CaseScore` by majority vote: a case is `pass` only if a strict majority of its repeats passed (ties → not-a-pass, conservative); the kept `failure_label` is the most common one among the non-pass repeats. Single-run cases pass through unchanged, so callers that don't repeat are unaffected. `run_regression.py` (plan 02 Task 6) calls this before `compare()`.
+- `check_repeat_budgets(baseline, candidate, *, min_repeats=3) -> None` — pure, unit-tested guard run **before** `aggregate_repeats` (which discards counts): raises `ValueError` if any case has an **unequal** score count across baseline/candidate (unfair majority vote) or is sampled `>1` but `< min_repeats` (under-powered half-sample). `compare()` can't see this post-aggregation, so the check lives here rather than in I/O glue; `run_regression.py` calls it first.
 
 - [ ] **Step 1: failing test** `tests/test_regression.py`
 
@@ -354,6 +356,22 @@ def test_aggregate_repeats_majority_vote():
     assert agg["u"].label == "uncertain"     # majority non-pass label kept, not rewritten to fail
     assert agg["k"].label == "skip"          # all-skip majority kept
     assert agg["t"].label == "fail"          # 1 fail / 1 uncertain tie -> fail (priority)
+
+def test_repeat_budget_equal_ok():
+    from flywheel.regression import check_repeat_budgets
+    base = [CaseScore("a", "pass")] * 3 + [CaseScore("b", "pass")]
+    cand = [CaseScore("a", "fail")] * 3 + [CaseScore("b", "pass")]
+    check_repeat_budgets(base, cand)         # 3x both sides for a, 1x for b → ok (no raise)
+
+def test_repeat_budget_unequal_raises():
+    from flywheel.regression import check_repeat_budgets
+    with pytest.raises(ValueError, match="unequal repeat budget"):
+        check_repeat_budgets([CaseScore("a", "pass")] * 3, [CaseScore("a", "pass")])
+
+def test_repeat_budget_under_min_raises():
+    from flywheel.regression import check_repeat_budgets
+    with pytest.raises(ValueError, match="repeat once or >="):
+        check_repeat_budgets([CaseScore("a", "pass")] * 2, [CaseScore("a", "pass")] * 2)
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/regression.py`
@@ -478,6 +496,34 @@ def aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]:
         failure_label = fl.most_common(1)[0][0] if fl else None
         out.append(CaseScore(case_id, label, failure_label))
     return sorted(out, key=lambda s: s.case_id)
+
+
+def check_repeat_budgets(
+    baseline: list[CaseScore], candidate: list[CaseScore], *, min_repeats: int = 3
+) -> None:
+    """Pure, tested guard run **before** `aggregate_repeats` (which discards counts).
+    For every case id, baseline and candidate must have the **same number of scores**
+    (an unequal budget — e.g. 5x vs 1x — makes the per-case majority vote unfair), and
+    any case sampled more than once must reach `min_repeats` on both sides (a 2x
+    half-sample is under-powered; Engine §7 says repeat once or ≥3x). Single-run cases
+    (count == 1) are fine. Raises `ValueError` on violation. `run_regression.py`
+    (plan 02 Task 6 Step 7) calls this before aggregating; `compare()` can't see it
+    post-aggregation, so it lives here as a unit-tested function, not in I/O glue."""
+    from collections import Counter
+
+    bc = Counter(s.case_id for s in baseline)
+    cc = Counter(s.case_id for s in candidate)
+    if set(bc) != set(cc):
+        raise ValueError("baseline and candidate cover different case ids before aggregation")
+    for cid in bc:
+        if bc[cid] != cc[cid]:
+            raise ValueError(
+                f"unequal repeat budget for {cid!r}: baseline {bc[cid]}x vs candidate {cc[cid]}x"
+            )
+        if bc[cid] != 1 and bc[cid] < min_repeats:
+            raise ValueError(
+                f"case {cid!r} sampled {bc[cid]}x: repeat once or >= {min_repeats}x (Engine §7)"
+            )
 
 
 def compare(

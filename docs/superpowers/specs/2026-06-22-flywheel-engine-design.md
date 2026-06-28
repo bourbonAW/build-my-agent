@@ -119,9 +119,13 @@ class Harness:
         return f"{self.git_sha[:7]}@{self.model}"
 ```
 
-**Judge version**: a plain string, e.g. `"judge-v2"`. Not a 6-state lifecycle —
-just an identifier so two runs scored by different judge prompts are not
-compared. (Same-judge comparison is enforced in §7 as a one-line assert.)
+**Judge version**: a **URL-safe slug** string matching `^[A-Za-z0-9._@-]+$`, e.g.
+`"judge-v2"` (so `"judge:v1"` / `"judge/v1"` are invalid). It is used directly as a
+report filename and the `/api/judges/{judge_version}` path segment, so it must be
+slug-safe at creation; `report._safe_segment` rejects a non-slug value loudly. Not
+a 6-state lifecycle — just an identifier so two runs scored by different judge
+prompts are not compared. (Same-judge comparison is enforced in §7 as a one-line
+assert.)
 
 ---
 
@@ -169,6 +173,15 @@ The judge is the one asset worth real rigor (per `llm-eval` stages 4–5).
 - The human-labeled cases are partitioned **60/20/20** as a data-prep step:
   `train` supplies the judge's few-shot examples, `dev` is used while iterating
   the prompt, and the disjoint `test` split is the held-out validation set.
+- **Pool sizing is separate from the §5 error-analysis sample.** The "~20–50 traces"
+  in §5 is the *error-analysis* sample (enough to cluster failure labels). The
+  *judge-validation pool* must be **larger and stratified**: the held-out 20% `test`
+  split has to clear the per-class support floor (≥ ~5 gold `pass` **and** ≥ ~5 gold
+  `fail`), which needs roughly **≥25 gold of each class (~50+ labeled judge cases),
+  stratified** so the split isn't all one outcome. If the pool is too small or
+  one-sided, the judge is simply *not yet validatable* — label more of the scarce
+  class before trusting the gate (this is why `validate()` returns `passes=false`
+  rather than a confident number on a thin split).
 - `validate.py` scores the judge **on that held-out validation split only** (never
   the few-shot/train cases — that would leak) and emits a report. The gate is
   **macro-F1 ≥ 0.70** — the mean of the `pass`-class and `fail`-class F1, *not* the

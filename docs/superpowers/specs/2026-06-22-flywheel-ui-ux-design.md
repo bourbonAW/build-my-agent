@@ -230,7 +230,7 @@ no audit log in MVP.
 | No runs yet | Show how to run the eval script; link to Langfuse to sample traces. |
 | Judge not validated | Run badge shows `judge: not validated`; link to `/judges/:v`. |
 | Trace missing in Langfuse | Keep the case row, mark trace `unavailable`, keep the link. |
-| Delta inside noise band | Render `no_change` (amber); do not imply a win. |
+| Change not significant | Render `no_change` (amber) when the exact paired sign test isn't significant (not "the Wilson band crosses zero"); the delta + descriptive CI are still shown, but do not imply a win. |
 | Report not generated yet | Show "run regression.py to produce this report." |
 
 ---

@@ -713,6 +713,16 @@ def test_missing_report_404(tmp_path):
 def test_path_traversal_is_rejected(tmp_path):
     # a resolved id that escapes the reports dir must 404, never read outside it
     assert _client(tmp_path).get("/api/runs/..%2f..%2fsecret").status_code == 404
+
+def test_contained_path_guards_traversal_directly(tmp_path):
+    # exercise the resolver guard directly — the route test above may be short-
+    # circuited by FastAPI's own path handling before _report_path runs
+    from api.read_api import _contained_path
+    base = tmp_path / "reports" / "regression"
+    base.mkdir(parents=True)
+    assert _contained_path(base, "../../escape") is None        # parent escapes base
+    assert _contained_path(base, "a/b") is None                 # nested, not directly under base
+    assert _contained_path(base, "run_1") == (base / "run_1.json").resolve()  # ok
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/api/read_api.py`
@@ -729,6 +739,16 @@ from fastapi import FastAPI, HTTPException
 from flywheel.report import read_json
 
 
+def _contained_path(base: Path, name: str) -> Path | None:
+    """Resolve base/<name>.json and return it only if it stays **directly under**
+    base; else None. Module-level + pure so the traversal guard is unit-testable
+    independent of the HTTP route (FastAPI may reject some encodings before the
+    handler runs, so a route-level test can pass without exercising this)."""
+    base = base.resolve()
+    p = (base / f"{name}.json").resolve()
+    return p if p.parent == base else None
+
+
 def create_app(root: Path, *, project: str,
                runs_provider: Callable[[str], list[dict[str, object]]]) -> FastAPI:
     app = FastAPI(title="Flywheel Read API")
@@ -741,13 +761,10 @@ def create_app(root: Path, *, project: str,
         return runs_provider(project)
 
     def _report_path(kind: str, name: str) -> Path | None:
-        # Resolve and confirm the file stays directly under the reports dir, so a
-        # run_id/judge_version with separators or `..` can't read outside it.
-        base = (root / project / "reports" / kind).resolve()
-        p = (base / f"{name}.json").resolve()
-        if p.parent != base or not p.exists():
-            return None
-        return p
+        # Containment (a run_id/judge_version with separators or `..` can't read
+        # outside the reports dir) is delegated to the unit-tested _contained_path.
+        p = _contained_path(root / project / "reports" / kind, name)
+        return p if p is not None and p.exists() else None
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, object]:
@@ -877,16 +894,20 @@ described as done.
   Nondeterministic cases are run ≥3× (Engine §7), one dataset-run output per repeat.
   **Judge-validation items (`judge_test`) are *not* rerun here** — they keep the
   frozen annotated output from Step 3 so their gold labels stay valid.
-- [ ] **Step 5: `flywheel/scripts/run_judge.py --split <judge_test|regression> [--run <name>]`** —
+- [ ] **Step 5: `flywheel/scripts/run_judge.py --split <judge_dev|judge_test|regression> [--run <name>]`** —
   score the judge over **one target split**, reading each case's `input`/`output` and
   the dataset item's `expected`/acceptance note. The `output` source differs by split:
-  for **`judge_test`** there is **no harness dataset run** (Step 4 deliberately skips
-  it), so read the **frozen annotated output straight from each item's metadata**
-  (Step 3) — the judge grades the exact output the human labeled — and write the
-  verdict as a Langfuse **categorical score keyed to that item** (which
+  for **`judge_dev`** and **`judge_test`** there is **no harness dataset run** (Step 4
+  deliberately skips them), so read the **frozen annotated output straight from each
+  item's metadata** (Step 3) — the judge grades the exact output the human labeled —
+  and write the verdict as a Langfuse **categorical score keyed to that item** (which
   `validate_judge.py` reads back); for a **`regression`** run, read the **Step-4
   harness output** of the named baseline/candidate dataset run and write the verdict
-  as a score on that run's item. Build
+  as a score on that run's item. **`judge_dev` is the split you iterate the prompt
+  against** (score `judge_dev` → `validate` → tweak prompt/examples → repeat, as
+  often as you like); **`judge_test` is reserved for the final gate, scored once** —
+  iterating against `judge_test` would tune on the held-out set and inflate the gate.
+  Build
   the judge's few-shot examples **only from `judge_train` items** (never `judge_dev`
   / `judge_test` / `regression` — that would leak the validation set), call
   `Judge.score_case(case_input, case_output, acceptance)` with `complete` wired to
@@ -910,16 +931,22 @@ described as done.
   only — score those nondeterministic cases ≥3× when budget allows, one score per
   repeat. The **`judge_test`** run is scored **once per case**, so each validation
   case has a single judge verdict to compare against its human label.
-- [ ] **Step 6: `flywheel/scripts/validate_judge.py`** — load the **held-out
-  `judge_test` split** as `LabeledCase`s — `human` from the gold annotation
-  (`pass`/`fail`), `judge` read back from the Step 5 categorical score on the
+- [ ] **Step 6: `flywheel/scripts/validate_judge.py [--split <judge_dev|judge_test>]`** —
+  during prompt iteration, run it on **`judge_dev`** (cheap, repeatable — that's the
+  feedback signal for tuning); the **gating** run loads the **held-out `judge_test`
+  split** (default), scored once. Load the chosen split as `LabeledCase`s — `human`
+  from the gold annotation (`pass`/`fail`), `judge` read back from the Step 5
+  categorical score on the
   **same frozen output the human annotated** (Step 3 — no harness rerun for
   `judge_test`, so the gold label is never stale). `judge_test` is scored **once per
   case** (Step 5), so each `LabeledCase` has exactly one judge verdict — do **not**
   run `aggregate_repeats(...)` here (it operates on `CaseScore` and has no human
   label to preserve); `validate(...)` rejects any duplicate `case_id` loudly, so a
   stray repeat surfaces as an error instead of being silently collapsed. Call
-  `validate(...)`, and `write_judge_report(...)`. **Exit non-zero when `not
+  `validate(...)`. **Only the `judge_test` (gate) run calls `write_judge_report(...)`**
+  — the canonical report that `runs_provider`/the UI read; a `judge_dev` iteration run
+  just prints its `JudgeReport` to stdout and does **not** write (so dev runs can't
+  clobber the gating report at the same `judge_version` filename). **Exit non-zero when `not
   report.passes()` (macro-F1 < 0.70, fail-class F1 < 0.70, or too few gold
   `pass`/`fail` cases to trust it)** so CI cannot gate a change with an unvalidated
   judge (Engine §6). This wires the full judge gate into the real workflow, not just
@@ -935,12 +962,11 @@ described as done.
   `compare(...)` (which enforces the same-judge gate — never pass one run-level
   string for both sides)**; take each case's `failure_label` from the **dataset-item metadata**
   (Step 3), not the judge critique; when a case was scored ≥3× (nondeterministic,
-  Engine §7), **first assert each repeated case has the same number of scores on
-  baseline and candidate (equal repeat budget) and met the intended ≥3×** — an
-  unequal budget (e.g. baseline 5× vs candidate 1×) makes the per-case majority vote
-  unfair, so refuse rather than silently bias — then call `aggregate_repeats(...)`
-  (plan 01 Task 4) to collapse repeats by majority vote before comparing; read
-  **both** the full `regression` split ids **and
+  Engine §7), **first call `check_repeat_budgets(baseline, candidate)` (plan 01
+  Task 4)** — it raises on an unequal per-case score count (e.g. baseline 5× vs
+  candidate 1×, which would bias the majority vote) or an under-powered 2× half-
+  sample — then call `aggregate_repeats(...)` to collapse repeats by majority vote
+  before comparing; read **both** the full `regression` split ids **and
   the full judge-validation set (`judge_train ∪ judge_dev ∪ judge_test`)** from the
   dataset, and pass the former as `compare(...)`'s `regression_case_ids` (so a case
   the harness silently dropped fails the completeness gate, not slips through) and

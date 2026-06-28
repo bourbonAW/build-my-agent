@@ -64,8 +64,10 @@ Apply to every task below.
   (a high-macro but failure-blind judge must not validate) + per-class gold support
   (recomputed by re-running `validate.py`), not a 6-state lifecycle.
 - **Regression result is three-valued:** `better | no_change | worse`, decided by
-  the Wilson CI of the pass-rate delta (noise band). A proposal is a git PR; a
-  baseline is `main`; "publish" is merge.
+  an **exact two-sided paired sign test** (McNemar exact) on the discordant pairs;
+  the Wilson delta CI is reported as the descriptive noise band only (it is
+  anti-conservative on tiny discordant counts). A proposal is a git PR; a baseline
+  is `main`; "publish" is merge.
 - **No control plane.** No auth/roles, no audit log, no idempotency layer, no
   Score Bridge. The read API is read-only; the browser never receives Langfuse
   write credentials.
