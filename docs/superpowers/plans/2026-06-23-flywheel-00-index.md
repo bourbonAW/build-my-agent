@@ -53,8 +53,8 @@ Apply to every task below.
     `compare()` raises otherwise.
   - *disjointness:* the regression split must not overlap the judge-validation
     split; `compare()` raises otherwise.
-- **Judge is the one validated asset.** F1 ≥ 0.70 (recomputed by re-running
-  `validate.py`), not a 6-state lifecycle.
+- **Judge is the one validated asset.** macro-F1 ≥ 0.70 + per-class gold support
+  (recomputed by re-running `validate.py`), not a 6-state lifecycle.
 - **Regression result is three-valued:** `better | no_change | worse`, decided by
   the Wilson CI of the pass-rate delta (noise band). A proposal is a git PR; a
   baseline is `main`; "publish" is merge.
@@ -125,7 +125,7 @@ Each row records what the plan was and where its surviving scope went.
 |---|---|---|
 | `2026-06-23-flywheel-03-redaction.md` | Redaction pipeline | Deferred (Engine §8); single trusted maintainer needs no redaction. |
 | `2026-06-23-flywheel-04-data-analysis.md` | Sampler/coder/taxonomy registry/dataset splits | Data + labeling live in Langfuse; labels are a flat `labels.md`. |
-| `2026-06-23-flywheel-05-judge.md` | JudgeVersion lifecycle + drift sentinel | Replaced by `validate.py` (F1 ≥ 0.70). |
+| `2026-06-23-flywheel-05-judge.md` | JudgeVersion lifecycle + drift sentinel | Replaced by `validate.py` (macro-F1 ≥ 0.70). |
 | `2026-06-23-flywheel-06-engine.md` | Analyzer/proposer/handoff | Proposals are git PRs (Engine §8 add-back trigger). |
 | `2026-06-23-flywheel-07-regression.md` | Holdout ledger, Bonferroni/FDR, publish/rollback states | `regression.py` 3-value result + Wilson noise band. |
 | `2026-06-23-flywheel-08-ui.md` | Full 13-route control UI | UI is plan 02 Task 5 (3 routes). |

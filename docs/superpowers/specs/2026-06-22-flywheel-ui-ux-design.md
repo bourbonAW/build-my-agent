@@ -107,8 +107,15 @@ state machines; a "proposal" is a git PR, a "baseline" is `main`).
 Columns: run id · harness (`git_sha@model`) · judge version · pass rate **with
 confidence interval** · #fail · created at · link to Langfuse run.
 
-`judge F1` shows only when the run's judge has a validation report; otherwise
-`not available` (never a misleading `0`).
+The list shows only **report-backed regression runs** (the candidate runs a
+regression report was written for), so every row opens to a real `/runs/:runId`
+report — never a Langfuse run that 404s.
+
+`judge F1` (macro-F1) shows only when the run's judge has a validation report;
+otherwise `not available` (`judgeValidated=null`, never a misleading `0`). When a
+report **exists but the judge failed the gate** (low macro-F1 or too few gold
+cases), the badge reads `judge: not validated` (`judgeValidated=false`) — a state
+distinct from `not available` (§9).
 
 ### `/runs/:runId` — regression report (the core page)
 
@@ -130,8 +137,10 @@ taken in git. The page may show the candidate's branch/PR URL if provided.
 
 Primary question: *"Can this judge be trusted to gate changes?"*
 
-Show: model + prompt version · overall F1 vs the 0.70 threshold · per-label
-precision/recall · confusion matrix · validation set size.
+Show: model + prompt version · overall **macro-F1** vs the 0.70 threshold ·
+whether it passed the gate (`passes` → validated badge) · gold pass/fail counts
+vs the support floor · per-label precision/recall · confusion matrix ·
+validation set size.
 
 ---
 
@@ -144,7 +153,8 @@ type RunSummary = {
   runId: string;
   harness: string;          // "abc1234@claude-opus-4-8"
   judgeVersion: string | null;
-  judgeF1: number | null;   // from the judge's validation report; null → "not available" (§6)
+  judgeF1: number | null;   // macro-F1 from the judge's validation report; null → "not available" (§6)
+  judgeValidated: boolean | null;  // report's `passes`; null → no report ("not available"); false → "not validated" badge (§6/§9)
   passRate: { point: number; low: number; high: number };  // Wilson CI
   failCount: number;
   createdAt: string;
@@ -170,8 +180,12 @@ type JudgeReport = {
   judgeVersion: string;
   model: string;
   promptVersion: string;
-  f1: number;
+  f1: number;               // macro-F1 (mean of pass-class and fail-class F1)
   threshold: number;        // 0.70
+  passes: boolean;          // the gate decision (macro-F1 ≥ threshold AND both support floors met)
+  goldFailCount: number;    // human "fail" cases in the split (tp + fn)
+  goldPassCount: number;    // human "pass" cases in the split (fp + tn)
+  minClassSupport: number;  // per-class gold floor used by the gate
   perLabel: { label: string; precision: number; recall: number }[];
   confusion: { tp: number; fp: number; fn: number; tn: number };
   validationSetSize: number;

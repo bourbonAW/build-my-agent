@@ -228,7 +228,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
 
 **Interfaces:**
 - `RegressionResult = Literal["better", "no_change", "worse"]`
-- `@dataclass(frozen=True) class CaseScore(case_id: str, label: str, failure_label: str | None = None)` — `failure_label` is a free string from `labels.md` / a Langfuse score comment, used for per-label deltas (Engine §7).
+- `@dataclass(frozen=True) class CaseScore(case_id: str, label: Label, failure_label: str | None = None)` — `label` is the typed `Label` (`pass`/`fail`/`skip`/`uncertain`); `__post_init__` rejects any other value so a malformed Langfuse score (`"PASS"`, `"error"`, `""`) raises at ingestion instead of being silently miscounted as a failure. `failure_label` is a free string from `labels.md` / a Langfuse score comment, used for per-label deltas (Engine §7).
 - `@dataclass(frozen=True) class RegressionReport(result, baseline_rate, candidate_rate, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
 - `compare(baseline, candidate, *, validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
   - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
@@ -288,6 +288,11 @@ def test_duplicate_case_id_raises():
     with pytest.raises(ValueError, match="duplicate case_id"):
         _cmp(dup, dup)
 
+def test_invalid_label_raises():
+    # a malformed Langfuse value must fail loudly at construction, not be miscounted
+    with pytest.raises(ValueError, match="invalid label"):
+        CaseScore("a", "PASS")  # not a canonical Label ("pass"/"fail"/"skip"/"uncertain")
+
 def test_empty_regression_set_raises():
     with pytest.raises(ValueError, match="must not be empty"):
         _cmp([], [])
@@ -342,8 +347,9 @@ consistent with metrics.pass_rate."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 
+from .identity import Label
 from .metrics import pass_rate
 
 RegressionResult = Literal["better", "no_change", "worse"]
@@ -352,8 +358,14 @@ RegressionResult = Literal["better", "no_change", "worse"]
 @dataclass(frozen=True)
 class CaseScore:
     case_id: str
-    label: str
+    label: Label
     failure_label: str | None = None  # taxonomy string for per-label deltas (Engine §7)
+
+    def __post_init__(self) -> None:
+        # Reject malformed Langfuse score values ("PASS", "error", "") at ingestion
+        # instead of silently counting them as a non-"pass" failure.
+        if self.label not in get_args(Label):
+            raise ValueError(f"invalid label {self.label!r}; expected one of {get_args(Label)}")
 
 
 @dataclass(frozen=True)

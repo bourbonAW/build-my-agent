@@ -78,7 +78,7 @@ flywheel/  (a small Python package + scripts)
   - identity.py   : case_id, run_id, label, minimal harness fingerprint, judge_version
   - metrics.py    : precision / recall / F1 / Wilson CI
   - judge.py      : run an LLM judge over a dataset, write scores to Langfuse
-  - validate.py   : 60/20/20 judge validation report (F1 ≥ 0.70)
+  - validate.py   : 60/20/20 judge validation report (macro-F1 ≥ 0.70 + per-class support)
   - regression.py : baseline vs candidate -> better | no_change | worse
   - report.py     : emit markdown / JSON report (consumed by the UI read API)
       |
@@ -162,16 +162,22 @@ The judge is the one asset worth real rigor (per `llm-eval` stages 4–5).
   `train` supplies the judge's few-shot examples, `dev` is used while iterating
   the prompt, and the disjoint `test` split is the held-out validation set.
 - `validate.py` scores the judge **on that held-out validation split only** (never
-  the few-shot/train cases — that would leak) and emits a report: overall
-  **F1 ≥ 0.70** to use the judge for gating, plus per-label precision / recall and
-  a confusion matrix. The positive class is `fail` (the judge's job is to catch
-  failures); an `uncertain` verdict is an abstention, never a true positive, so a
-  hedging judge cannot pass the gate. The gate also requires a **minimum of ~5
-  gold `fail` cases** in the held-out split: F1 over a handful of positives swings
-  by >0.2 per single case, so below that floor the judge is treated as *not yet
-  validated* (gate fails) rather than trusted on noise. Sample enough failures
-  (§5) that the 20% `test` split clears that floor. Below threshold (or below the
-  support floor) → refine prompt/examples or label more failures, and re-run.
+  the few-shot/train cases — that would leak) and emits a report. The gate is
+  **macro-F1 ≥ 0.70** — the mean of the `pass`-class and `fail`-class F1, *not* the
+  `fail`-class F1 alone. `fail` is the class we care about (the judge's job is to
+  catch failures), but with the failure-biased sampling in §5 a degenerate
+  always-`fail` judge would score a high *fail-only* F1 (perfect recall, base-rate
+  precision) while being unable to recognize success; averaging both classes' F1
+  forces the judge to get passes right too, so an always-`fail` (or always-`pass`)
+  judge fails the gate. An `uncertain` verdict is an abstention — never a true
+  positive for either class — so a hedging judge cannot pass either. The gate also
+  requires a **per-class support floor (~5 gold cases of *each* of `pass` and
+  `fail`)** in the held-out split: F1 over a handful of cases swings by >0.2 per
+  single case, and a one-class split lets a degenerate judge through. Sample enough
+  of **both** outcomes (§5) that the 20% `test` split clears the floor on each
+  class. The report also carries per-label precision/recall and a confusion matrix.
+  Below threshold (or below either support floor) → refine prompt/examples or label
+  more cases, and re-run.
 
 That's the lifecycle. No `draft → calibrating → locked_test → validated →
 validated_limited → recheck_required` machine. A judge is "good enough to gate"
@@ -254,7 +260,7 @@ free string drawn from `labels.md` / the Langfuse score comment.
 | Trace attrs | `gen_ai.*` + two `eval.*` strings | Reuse the real standard, don't invent `flywheel.*`. |
 | Data / scores / datasets | Langfuse native | It already models these; mirroring them is double bookkeeping. |
 | Failure taxonomy | A flat editable markdown list | Versioned registries are for stable cross-team contracts. |
-| Judge lifecycle | Re-run `validate.py`; F1 ≥ 0.70 | "Trustworthy" is recomputed, not a persisted 6-state machine. |
+| Judge lifecycle | Re-run `validate.py`; macro-F1 ≥ 0.70 (+ per-class support) | "Trustworthy" is recomputed, not a persisted 6-state machine. |
 | Regression result | `better` / `no_change` / `worse` + Wilson CI | A proposal is a PR; its outcome is a merge decision. |
 | Control plane | None (scripts + thin read API) | No users, no roles, no concurrency to govern yet. |
 | UI | A real frontend (per owner), lean surface | See ui spec — kept as a project, slimmed to ~3 routes. |

@@ -36,7 +36,7 @@ regression reporting, and a frontend to read them.
 
 ## File structure
 - Create: `flywheel/flywheel/judge.py` — run an LLM judge over a dataset run
-- Create: `flywheel/flywheel/validate.py` — 60/20/20 validation report (F1 ≥ 0.70)
+- Create: `flywheel/flywheel/validate.py` — 60/20/20 validation report (macro-F1 ≥ 0.70 + per-class support)
 - Create: `flywheel/flywheel/report.py` — write `RegressionReport`/`JudgeReport` JSON
 - Create: `flywheel/api/__init__.py`, `flywheel/api/read_api.py` — thin read-only FastAPI
 - Create: `flywheel/tests/test_judge.py`, `test_validate.py`, `test_report.py`, `tests/api/test_read_api.py`
@@ -175,9 +175,9 @@ class Judge:
 
 **Interfaces:**
 - `@dataclass(frozen=True) class LabeledCase(case_id: str, human: HumanLabel, judge: Label)` — `human` is gold and binary (`pass`/`fail`); `judge` may be `uncertain` (abstention).
-- `@dataclass(frozen=True) class JudgeReport(judge_version, model, prompt_version, f1, threshold, per_label, confusion, validation_set_size, min_positive_support)` — the first eight fields are the UI §7 `JudgeReport` contract (the only ones serialized, camelCase); `min_positive_support` is a server-side gate input, not part of the UI shape.
-- `validate(cases, *, judge_version, model, prompt_version, threshold=0.70, min_positive_support=5) -> JudgeReport` — `cases` is the **held-out validation split** (the `test` 20% of the 60/20/20 partition; Engine §6). The caller is responsible for the split — the judge's few-shot examples come from `train` and must not appear here (leakage), and `dev` is used while iterating the prompt. `fail` is the positive class (we detect failures). Only a literal judge `fail` is a positive prediction; `pass`/`skip`/`uncertain` are non-positive, so a hedging judge earns no true positives. Computes tp/fp/fn/tn, overall F1, per-label precision/recall.
-- `JudgeReport.passes() -> bool` = `f1 >= threshold` **and** the split holds at least `min_positive_support` gold `fail` cases (`tp + fn`). F1 over a handful of positives swings by >0.2 per single case, so an undersized validation split is treated as *not yet validated* and cannot gate (Engine §6), instead of passing on noise.
+- `@dataclass(frozen=True) class JudgeReport(judge_version, model, prompt_version, f1, threshold, per_label, confusion, validation_set_size, min_class_support)` — `f1` is **macro-F1** (mean of pass-class and fail-class F1). `report.py` serializes the UI §7 `JudgeReport` shape including the gate decision (`passes`) and gold support counts so consumers never re-derive private gate logic; `min_class_support` is the gate's per-class floor.
+- `validate(cases, *, judge_version, model, prompt_version, threshold=0.70, min_class_support=5) -> JudgeReport` — `cases` is the **held-out validation split** (the `test` 20% of the 60/20/20 partition; Engine §6). The caller is responsible for the split — the judge's few-shot examples come from `train` and must not appear here (leakage), and `dev` is used while iterating the prompt. Confusion is fail-positive (`fail` is the class we detect); an `uncertain`/`skip` verdict is non-`fail` (and non-`pass`), so a hedging judge earns no true positive in either class. The headline metric is **macro-F1** — the mean of pass-class and fail-class F1 — so a degenerate always-`fail` judge (high fail-recall, base-rate precision) can't pass on a failure-biased split. Computes tp/fp/fn/tn, per-class precision/recall, macro-F1.
+- `JudgeReport.passes() -> bool` = `f1 >= threshold` **and** the split holds at least `min_class_support` gold cases of **each** class — gold `fail` (`tp + fn`) **and** gold `pass` (`fp + tn`). Macro-F1 over a handful of cases swings by >0.2 per single case, and a one-class split lets a degenerate judge through, so an undersized/imbalanced split is *not yet validated* and cannot gate (Engine §6) instead of passing on noise.
 
 - [ ] **Step 1: failing test** `tests/test_validate.py`
 
@@ -232,20 +232,34 @@ def test_all_uncertain_judge_fails_gate():
     rep = validate(cases, judge_version="jv1", model="m", prompt_version="p")
     assert rep.f1 == 0.0
     assert not rep.passes()
+
+def test_always_fail_judge_fails_gate():
+    # flagging everything "fail" gives a high fail-only F1 on a failure-biased split,
+    # but macro-F1 (averaging in the pass class it gets wrong) fails the gate.
+    # Balanced support (8/8) so the failure is the metric, not the support floor.
+    cases = [LabeledCase(f"c{i}", "fail", "fail") for i in range(8)] + \
+            [LabeledCase(f"d{i}", "pass", "fail") for i in range(8)]
+    rep = validate(cases, judge_version="jv1", model="m", prompt_version="p")
+    assert rep.f1 < 0.70          # macro-F1 ≈ 0.33, not the inflated fail-only ≈ 0.89
+    assert not rep.passes()
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/validate.py`
 
 ```python
-"""Judge validation (Engine §6; llm-eval stage 5). 'fail' is the positive class
-because the judge's job is to catch failures. F1 >= threshold => usable to gate.
+"""Judge validation (Engine §6; llm-eval stage 5). The gate is macro-F1 >= threshold
+(the mean of pass-class and fail-class F1), not fail-only F1: on the failure-biased
+validation set, an always-"fail" judge would earn a high fail-only F1 (perfect
+recall, base-rate precision) while never recognizing success — averaging both
+classes forces it to get passes right too, so a degenerate always-"fail" or
+always-"pass" judge fails the gate.
 
-Only a literal judge "fail" is a positive prediction. "pass" and any abstention
-("uncertain"/"skip") are non-positive predictions, so a hedging judge can never
-earn a true positive: an all-"uncertain" judge scores tp=0 -> F1=0 and fails the
-gate, instead of being silently credited with agreement on failure-heavy sets.
-`cases` must be the held-out validation split (few-shot/train cases excluded by
-the caller — including them would leak)."""
+Confusion is fail-positive ("fail" is the class we detect). An abstention
+("uncertain"/"skip") is non-"fail" and non-"pass", so a hedging judge earns no true
+positive in either class: an all-"uncertain" judge scores macro-F1=0 and fails.
+The gate also needs >= min_class_support gold cases of *each* class, so a tiny or
+one-sided split can't pass on noise. `cases` must be the held-out validation split
+(few-shot/train cases excluded by the caller — including them would leak)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -271,40 +285,49 @@ class JudgeReport:
     per_label: list[dict[str, object]]
     confusion: dict[str, int]
     validation_set_size: int
-    min_positive_support: int  # server-side gate input, not part of the UI §7 shape
+    min_class_support: int  # per-class gold floor (server-side gate input)
 
     def passes(self) -> bool:
-        # F1 over a handful of positives is noise; an undersized validation split
-        # (fewer than min_positive_support gold "fail" cases) can't gate (Engine §6).
+        # macro-F1 over the threshold AND enough gold cases of BOTH classes to
+        # trust it: F1 over a handful is noise, and a one-class split lets a
+        # degenerate (always-fail / always-pass) judge through (Engine §6).
         gold_fail = self.confusion["tp"] + self.confusion["fn"]
-        return self.f1 >= self.threshold and gold_fail >= self.min_positive_support
+        gold_pass = self.confusion["fp"] + self.confusion["tn"]
+        return (self.f1 >= self.threshold
+                and gold_fail >= self.min_class_support
+                and gold_pass >= self.min_class_support)
 
 
 def validate(cases: list[LabeledCase], *, judge_version: str, model: str,
              prompt_version: str, threshold: float = 0.70,
-             min_positive_support: int = 5) -> JudgeReport:
-    # Positive class = "fail". Only a literal judge "fail" is a positive
-    # prediction; "pass"/"skip"/"uncertain" are non-positive, so an abstaining
-    # judge never earns a true positive.
+             min_class_support: int = 5) -> JudgeReport:
+    # Confusion is fail-positive ("fail" is the class we detect). Only a literal
+    # judge "fail" is a fail-prediction; "pass"/"skip"/"uncertain" are non-"fail",
+    # so an abstaining judge never earns a fail true-positive.
     tp = sum(1 for c in cases if c.human == "fail" and c.judge == "fail")
     fp = sum(1 for c in cases if c.human != "fail" and c.judge == "fail")
     fn = sum(1 for c in cases if c.human == "fail" and c.judge != "fail")
     tn = sum(1 for c in cases if c.human != "fail" and c.judge != "fail")
-    _, _, f1 = precision_recall_f1(tp, fp, fn)
 
+    # Macro-F1 = mean of pass-class and fail-class F1. Averaging both classes stops
+    # an always-"fail" judge from passing on a failure-biased split (fail-only F1
+    # is inflated by the base rate); it must get passes right too.
     per_label: list[dict[str, object]] = []
+    class_f1: list[float] = []
     for label in ("pass", "fail"):
         ltp = sum(1 for c in cases if c.human == label and c.judge == label)
         lfp = sum(1 for c in cases if c.human != label and c.judge == label)
         lfn = sum(1 for c in cases if c.human == label and c.judge != label)
-        p, r, _ = precision_recall_f1(ltp, lfp, lfn)
+        p, r, lf1 = precision_recall_f1(ltp, lfp, lfn)
         per_label.append({"label": label, "precision": p, "recall": r})
+        class_f1.append(lf1)
+    f1 = sum(class_f1) / len(class_f1)  # macro-F1
 
     return JudgeReport(
         judge_version=judge_version, model=model, prompt_version=prompt_version,
         f1=f1, threshold=threshold, per_label=per_label,
         confusion={"tp": tp, "fp": fp, "fn": fn, "tn": tn},
-        validation_set_size=len(cases), min_positive_support=min_positive_support,
+        validation_set_size=len(cases), min_class_support=min_class_support,
     )
 ```
 
@@ -318,7 +341,7 @@ def validate(cases: list[LabeledCase], *, judge_version: str, model: str,
 
 **Interfaces:**
 - `write_regression_report(root, project, run_id, report: RegressionReport, *, baseline_harness, candidate_harness, judge_version, trace_urls: dict[str, str] | None = None, candidate_pr_url=None) -> Path` — writes `root/<project>/reports/regression/<run_id>.json` matching UI §7 `RegressionReport`. `fixed`/`newlyBroken`/`perLabel`/`passRateDelta` are all derived from `report` (single owner); `trace_urls` maps `case_id → Langfuse deep link` so the glue script supplies URLs without `compare()` knowing about Langfuse.
-- `write_judge_report(root, project, report: JudgeReport) -> Path` — writes `root/<project>/reports/judge/<judge_version>.json` matching UI §7 `JudgeReport`.
+- `write_judge_report(root, project, report: JudgeReport) -> Path` — writes `root/<project>/reports/judge/<judge_version>.json` matching UI §7 `JudgeReport`, including the serialized gate decision (`passes`) and gold support counts so `run_regression.py` and the UI honor the gate without re-deriving private logic.
 - `write_regression_markdown(root, project, run_id, report: RegressionReport, *, baseline_harness, candidate_harness, judge_version, trace_urls: dict[str, str] | None = None, candidate_pr_url=None) -> Path` — writes a human-readable `root/<project>/reports/regression/<run_id>.md` (Engine §3/§7 mandate "markdown + JSON"). The JSON feeds the UI; the markdown is the artifact a human reads or pastes into the candidate PR, so it renders `baseline_harness → candidate_harness` (same data as the JSON — without it the artifact can't say *what* was compared). `trace_urls` (same map passed to `write_regression_report`) renders fixed/newly-broken case ids as Langfuse deep links (Engine §7 / UI §6). Same data as the JSON, no new computation.
 - `read_json(path) -> dict`.
 - **Locked decision:** report JSON uses the camelCase keys the frontend expects (UI §7), written directly here, so the read API can serve them verbatim. The CI bounds come from `report.delta_low/delta_high` (a real interval, never zero-width).
@@ -373,11 +396,13 @@ def test_judge_report_written_with_expected_keys(tmp_path: Path):
                    judge_version="jv1", model="claude-opus-4-8", prompt_version="p1")
     path = write_judge_report(tmp_path, "bourbon", rep)
     data = read_json(path)
-    # exact UI §7 JudgeReport camelCase contract
+    # exact UI §7 JudgeReport camelCase contract (incl. serialized gate decision)
     assert set(data) == {"judgeVersion", "model", "promptVersion", "f1", "threshold",
+                         "passes", "goldFailCount", "goldPassCount", "minClassSupport",
                          "perLabel", "confusion", "validationSetSize"}
     assert data["judgeVersion"] == "jv1"
     assert data["confusion"]["tp"] == 1
+    assert data["passes"] is False  # only 1 gold fail / 1 gold pass < support floor
 
 def test_unsafe_run_id_rejected(tmp_path: Path):
     import pytest
@@ -484,12 +509,19 @@ def write_regression_markdown(
 
 
 def write_judge_report(root: Path, project: str, report: JudgeReport) -> Path:
+    confusion = report.confusion
     payload = {
         "judgeVersion": report.judge_version,
         "model": report.model,
         "promptVersion": report.prompt_version,
-        "f1": report.f1,
+        "f1": report.f1,                       # macro-F1
         "threshold": report.threshold,
+        # the gate decision + support, serialized so run_regression.py and the UI
+        # honor it without re-deriving private gate logic (UI §6/§9)
+        "passes": report.passes(),
+        "goldFailCount": confusion["tp"] + confusion["fn"],
+        "goldPassCount": confusion["fp"] + confusion["tn"],
+        "minClassSupport": report.min_class_support,
         "perLabel": report.per_label,
         "confusion": report.confusion,
         "validationSetSize": report.validation_set_size,
@@ -513,7 +545,7 @@ def read_json(path: Path) -> dict[str, object]:
 **Files:** `flywheel/api/__init__.py`, `flywheel/api/read_api.py`, `flywheel/tests/api/test_read_api.py`
 
 **Interfaces:**
-- `create_app(root, *, project: str, runs_provider: Callable[[str], list[dict[str, object]]]) -> FastAPI`. The app is bound to a single configured `project` (this is a personal one-project tool), so the endpoints carry no `?project=` query — matching UI §8 exactly. `runs_provider(project)` returns `RunSummary[]` (injected; in production it queries Langfuse run/score summaries — stubbed in tests).
+- `create_app(root, *, project: str, runs_provider: Callable[[str], list[dict[str, object]]]) -> FastAPI`. The app is bound to a single configured `project` (this is a personal one-project tool), so the endpoints carry no `?project=` query — matching UI §8 exactly. `runs_provider(project)` returns `RunSummary[]` (injected; in production it queries Langfuse run/score summaries for the **report-backed regression runs only** — see Task 6 Step 8 — so every listed run resolves to a `/runs/{run_id}` report and never 404s; stubbed in tests).
 - **Endpoints return the UI §8 shapes directly — no envelope wrapper, no query params:**
 - `GET /api/runs` → `RunSummary[]` (a bare JSON array).
 - `GET /api/runs/{run_id}` → `RegressionReport` from the report file; 404 if absent.
@@ -532,7 +564,8 @@ from flywheel.validate import validate, LabeledCase
 from api.read_api import create_app
 
 def _client(tmp_path: Path):
-    runs = [{"runId": "run_1", "harness": "abc@m", "judgeVersion": "jv1", "judgeF1": None,
+    runs = [{"runId": "run_1", "harness": "abc@m", "judgeVersion": "jv1",
+             "judgeF1": None, "judgeValidated": None,
              "passRate": {"point": 0.5, "low": 0.3, "high": 0.7}, "failCount": 1,
              "createdAt": "2026-06-24", "langfuseRunUrl": "http://lf/r/run_1"}]
     app = create_app(tmp_path, project="bourbon", runs_provider=lambda project: runs)
@@ -544,7 +577,7 @@ def test_list_runs_returns_bare_array(tmp_path):
     body = r.json()
     assert isinstance(body, list)                     # UI §8: bare RunSummary[], no envelope
     assert body[0]["runId"] == "run_1"
-    assert set(body[0]) >= {"runId", "harness", "judgeVersion", "judgeF1",
+    assert set(body[0]) >= {"runId", "harness", "judgeVersion", "judgeF1", "judgeValidated",
                             "passRate", "failCount", "createdAt", "langfuseRunUrl"}
 
 def test_get_regression_report(tmp_path):
@@ -570,8 +603,10 @@ def test_get_judge_report(tmp_path):
     write_judge_report(tmp_path, "bourbon", rep)
     body = _client(tmp_path).get("/api/judges/jv1").json()   # bare JudgeReport (UI §7)
     assert set(body) == {"judgeVersion", "model", "promptVersion", "f1", "threshold",
+                         "passes", "goldFailCount", "goldPassCount", "minClassSupport",
                          "perLabel", "confusion", "validationSetSize"}
     assert body["judgeVersion"] == "jv1"
+    assert isinstance(body["passes"], bool)
     assert set(body["confusion"]) == {"tp", "fp", "fn", "tn"}
     assert set(body["perLabel"][0]) == {"label", "precision", "recall"}
 
@@ -716,21 +751,29 @@ described as done.
   `judge_train` / `judge_dev` / `judge_test` (Engine §6); the gating cases are
   tagged `regression`, disjoint from all three judge splits (Engine §5). **`failure_label`
   and `expected` are dataset-item metadata curated here — not derived from judge
-  output.** This is the human half of the flywheel; it is manual by design and has
-  no script.
+  output.** On each **judge** item (`judge_train`/`judge_dev`/`judge_test`) also
+  **freeze the annotated output and its human `pass`/`fail` label** — the exact
+  trace output you graded — because the judge is later validated against *that*
+  output, never a fresh rerun (a rerun would change the output and make the gold
+  label stale). `regression` items store **no** frozen output; their outputs come
+  from the baseline/candidate harness runs (Step 4). This is the human half of the
+  flywheel; it is manual by design and has no script.
 - [ ] **Step 4: `flywheel/scripts/run_harness.py`** — execute Bourbon over the
-  promoted dataset items to create the Langfuse **dataset run** the judge and
-  regression read; **without this step there is no `output` to score.** For a given
-  `Harness(git_sha, model)` (baseline = `main`, candidate = the PR branch), run the
-  agent on each `regression` / `judge_test` item's `input`, record the agent output
-  as that dataset-run item's output, and set the `eval.case_id` (dataset item id)
-  and `eval.run_id` (dataset run name) span attrs from Step 1 so each trace links
-  back. Run it **twice** — once for baseline, once for candidate — before any
-  scoring. Nondeterministic `regression` cases are run ≥3× (Engine §7), one
-  dataset-run output per repeat; `judge_test` is run once per case.
-- [ ] **Step 5: `flywheel/scripts/run_judge.py`** — for a dataset run (the outputs
-  produced in Step 4): read each case's `input`/`output` and the dataset item's
-  `expected`/acceptance note, build
+  **`regression`-tagged items only** to create the Langfuse **dataset runs** the
+  regression compare reads; **without this step there is no candidate `output` to
+  score.** For a given `Harness(git_sha, model)` (baseline = `main`, candidate = the
+  PR branch), run the agent on each `regression` item's `input`, record the agent
+  output as that dataset-run item's output, and set the `eval.case_id` (dataset item
+  id) and `eval.run_id` (dataset run name) span attrs from Step 1 so each trace
+  links back. Run it **twice** — once for baseline, once for candidate — before any
+  scoring. Nondeterministic cases are run ≥3× (Engine §7), one dataset-run output
+  per repeat. **Judge-validation items (`judge_test`) are *not* rerun here** — they
+  keep the frozen annotated output from Step 3 so their gold labels stay valid.
+- [ ] **Step 5: `flywheel/scripts/run_judge.py`** — score the judge over a dataset
+  run: read each case's `input`/`output` and the dataset item's `expected`/acceptance
+  note — the `output` is the **frozen annotated output (Step 3)** for `judge_test`
+  items (so validation scores the judge on the exact output the human labeled) and
+  the **Step 4 harness output** for `regression` items. Build
   the judge's few-shot examples **only from `judge_train` items** (never `judge_dev`
   / `judge_test` / `regression` — that would leak the validation set), call
   `Judge.score_case(case_input, case_output, acceptance)` with `complete` wired to
@@ -744,17 +787,20 @@ described as done.
   single judge verdict to compare against its human label.
 - [ ] **Step 6: `flywheel/scripts/validate_judge.py`** — load the **held-out
   `judge_test` split** as `LabeledCase`s — `human` from the gold annotation
-  (`pass`/`fail`), `judge` read back from the single categorical score written in
-  Step 5 (preserving `uncertain`). (`judge_test` is scored once per case; if a
-  repeat ever exists, collapse it with `aggregate_repeats(...)` first so each case
-  has exactly one judge verdict.) Call `validate(...)`, and `write_judge_report(...)`. **Exit non-zero when `not
-  report.passes()` (F1 < 0.70, or too few gold `fail` cases to trust F1)** so CI
-  cannot gate a change with an unvalidated judge (Engine §6). This wires the
-  F1 ≥ 0.70 gate into the real workflow, not just
+  (`pass`/`fail`), `judge` read back from the Step 5 categorical score on the
+  **same frozen output the human annotated** (Step 3 — no harness rerun for
+  `judge_test`, so the gold label is never stale). (`judge_test` is scored once per
+  case; if a repeat ever exists, collapse it with `aggregate_repeats(...)` first so
+  each case has exactly one judge verdict.) Call `validate(...)`, and `write_judge_report(...)`. **Exit non-zero when `not
+  report.passes()` (macro-F1 < 0.70, or too few gold `pass`/`fail` cases to trust
+  it)** so CI cannot gate a change with an unvalidated judge (Engine §6). This wires
+  the macro-F1 gate into the real workflow, not just
   the unit test.
 - [ ] **Step 7: `flywheel/scripts/run_regression.py`** — first **require a passing
   `JudgeReport`** for the run's `judge_version` (read the report written in Step 6;
-  refuse to compare if it is missing or `not passes()`). Then load baseline +
+  refuse to compare if it is missing or its serialized **`passes` is false** — the
+  gate decision lives in the JSON, so this honors non-default support floors without
+  re-deriving gate logic). Then load baseline +
   candidate `CaseScore`s over the `regression`-tagged items, **reading each side's
   `judge_version` from its own score metadata and passing both into `compare(...)`
   (which enforces the same-judge gate — never pass one run-level string for both
@@ -770,17 +816,22 @@ described as done.
   passing `baseline_harness` / `candidate_harness` (the two `Harness.id()`s compared)
   and `trace_urls=...` to each.
 - [ ] **Step 8: `runs_provider`** — implement the callable injected into the read
-  API: query Langfuse for the project's dataset runs and their score summaries,
-  **join each run's judge validation report to populate `RunSummary.judgeF1` (null
-  when the judge has no validation report → UI renders "not available", never a
-  misleading `0`)**, and return `RunSummary[]` (UI §7). This is the only place that
+  API: enumerate **only the project's report-backed regression runs** (the candidate
+  runs `run_regression.py` wrote a report for) so every `/runs` row opens to a real
+  `/runs/{run_id}` report — never a Langfuse run that 404s. For each, join its judge
+  validation report to populate `RunSummary.judgeF1` (macro-F1) and
+  `RunSummary.judgeValidated`: **both `null`** when the judge has **no** validation
+  report (UI renders "not available", never a misleading `0`); when a report exists,
+  `judgeF1` is its macro-F1 and `judgeValidated` is its serialized **`passes`** (so
+  the UI badges "judge: not validated" when the gate failed even though an F1 number
+  exists — UI §6/§9). Return `RunSummary[]` (UI §7). This is the only place that
   reads Langfuse for the list view.
 - [ ] **Step 9: Smoke** — run one real dataset through `sample_traces.py` →
   (manual annotate/promote) → `run_harness.py` (baseline **and** candidate) →
   `run_judge.py` → `validate_judge.py` → `run_regression.py`, open the UI `/runs`,
   and confirm a trace deep link resolves in Langfuse. Confirm `run_regression.py`
-  refuses to run when the judge report is below F1 0.70 (or below the gold-fail
-  support floor). Document the commands in `flywheel/README.md`.
+  refuses to run when the judge report is below macro-F1 0.70 (or below either the
+  gold `pass`/`fail` support floor). Document the commands in `flywheel/README.md`.
 
 No commit gating here beyond "the smoke run works"; this is the seam between the
 tested core and the real Bourbon/Langfuse environment.
@@ -789,7 +840,7 @@ tested core and the real Bourbon/Langfuse environment.
 
 ## Self-review
 - **Engine/UI coverage:** judge.py = Engine §6 judge running; validate.py =
-  Engine §6 F1≥0.70 gate + UI §7 `JudgeReport`; report.py + read_api.py = UI §7
+  Engine §6 macro-F1≥0.70 + per-class support gate + UI §7 `JudgeReport`; report.py + read_api.py = UI §7
   shapes + §8 three read endpoints; ui/ = UI §5 routes and §6 page designs.
 - **Deleted-on-purpose:** no lifecycle enums, State Store, audit, idempotency,
   roles, ScoreBridge, 45-endpoint surface, or 17 record schemas — Engine §0/§8
