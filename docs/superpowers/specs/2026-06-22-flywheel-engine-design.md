@@ -138,15 +138,23 @@ Langfuse.
    a markdown file in `flywheel/labels.md`, edited freely. No versioned
    registry, no migration maps. A label is just a string used in a Langfuse
    score comment.
-4. **Promote** representative failures into a **Langfuse Dataset** as items.
-   A dataset item needs only: `input`, `expected` / acceptance note,
-   `failure_label`.
+4. **Promote** representative failures into a **Langfuse Dataset** as items, tagged
+   by split. Requirements differ by item type: a **regression** item needs `input`,
+   `expected` / acceptance note, and `failure_label` (its output comes fresh from
+   each harness run). A **judge** item (`judge_train` / `judge_dev` / `judge_test`)
+   *additionally* **freezes the annotated output and its human `pass`/`fail` gold
+   label** (or an immutable trace pointer to them), because the judge is validated
+   against that exact output — never a rerun, which would make the gold label stale.
 
-Split policy is intentionally minimal: keep a **judge-validation set** and a
-**regression set** disjoint (don't validate the judge on the same cases you use
-to gate a change). That single disjointness rule replaces the four-way
-`train/dev/locked_test/regression_holdout` partition. Enforced as a set
-intersection check in `regression.py`.
+Split policy is intentionally minimal: keep the **judge case pool** — *all*
+human-labeled judge cases, i.e. `judge_train ∪ judge_dev ∪ judge_test` — and the
+**regression set** disjoint. Don't gate a change on any case the judge was built,
+tuned, **or** validated on: a `train` (few-shot) or `dev` (prompt-tuning) case
+leaks just as a `test` case does. That single rule (regression ∩ *entire* judge
+pool = ∅) replaces the four-way `train/dev/locked_test/regression_holdout`
+partition. Enforced as a set intersection check in `regression.py`, where
+`compare()`'s `validation_case_ids` is the **whole** judge pool, not just
+`judge_test`.
 
 ---
 
@@ -204,8 +212,9 @@ Mechanics that survived because they are correctness, not ceremony:
 - **Same-judge comparison**: assert baseline and candidate scored with the same
   `judge_version`; otherwise refuse and ask for a re-score. (One assert,
   replacing `judge_migration_required` / `blocked_on_judge_migration`.)
-- **Disjointness**: assert the regression set shares no cases with the
-  judge-validation set. (One assert, replacing the holdout ledger.)
+- **Disjointness**: assert the regression set shares no cases with the **entire
+  judge case pool** (`judge_train ∪ judge_dev ∪ judge_test`, not just `judge_test`).
+  (One assert, replacing the holdout ledger.)
 - **Noise band**: baseline and candidate are scored on the **same** regression
   cases (a paired design), so report the pass-rate delta with a **paired
   (McNemar) Wilson confidence interval** computed from the discordant pairs

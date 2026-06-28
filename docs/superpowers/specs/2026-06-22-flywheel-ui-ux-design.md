@@ -143,8 +143,9 @@ Primary question: *"Can this judge be trusted to gate changes?"*
 
 Show: model + prompt version · overall **macro-F1** vs the 0.70 threshold ·
 whether it passed the gate (`passes` → validated badge) · gold pass/fail counts
-vs the support floor · per-label precision/recall · confusion matrix ·
-validation set size.
+vs the support floor · per-label precision/recall/**F1** (the **fail-class F1**
+carries its own ≥ 0.70 gate, so this row explains a `passes=false` at a healthy
+macro-F1) · confusion matrix · validation set size.
 
 ---
 
@@ -188,11 +189,11 @@ type JudgeReport = {
   promptVersion: string;
   f1: number;               // macro-F1 (mean of pass-class and fail-class F1)
   threshold: number;        // 0.70
-  passes: boolean;          // the gate decision (macro-F1 ≥ threshold AND both support floors met)
+  passes: boolean;          // the gate: macro-F1 ≥ threshold AND fail-class F1 ≥ threshold AND both support floors met
   goldFailCount: number;    // human "fail" cases in the split (tp + fn)
   goldPassCount: number;    // human "pass" cases in the split (fp + tn)
   minClassSupport: number;  // per-class gold floor used by the gate
-  perLabel: { label: string; precision: number; recall: number }[];
+  perLabel: { label: string; precision: number; recall: number; f1: number }[];  // per-class f1 shows why passes can be false at high macro-F1
   confusion: { tp: number; fp: number; fn: number; tn: number };
   validationSetSize: number;
 };

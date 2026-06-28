@@ -56,8 +56,10 @@ Apply to every task below.
     (a case both runs silently dropped must not pass on an easier subset).
   - *disjointness:* the regression split must not overlap the judge-validation
     split (the full `judge_train ∪ judge_dev ∪ judge_test`).
-  - plus loud rejects for an empty set, duplicate case ids, and (in `validate()`)
-    an undersized/duplicated validation split.
+  - plus loud rejects: `compare()` raises on an empty regression set or duplicate
+    case ids; `validate()` raises on a **duplicate** case id, but treats an
+    **undersized/imbalanced** validation split as *not validated* (`passes=false`,
+    not a raise — too little evidence is a non-validation, not a usage error).
 - **Judge is the one validated asset.** macro-F1 ≥ 0.70 + per-class gold support
   (recomputed by re-running `validate.py`), not a 6-state lifecycle.
 - **Regression result is three-valued:** `better | no_change | worse`, decided by

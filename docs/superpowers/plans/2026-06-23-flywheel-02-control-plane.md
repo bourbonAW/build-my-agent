@@ -398,7 +398,9 @@ def validate(cases: list[LabeledCase], *, judge_version: str, model: str,
         lfp = sum(1 for c in cases if c.human != label and c.judge == label)
         lfn = sum(1 for c in cases if c.human == label and c.judge != label)
         p, r, lf1 = precision_recall_f1(ltp, lfp, lfn)
-        per_label.append({"label": label, "precision": p, "recall": r})
+        # per-class f1 is surfaced so the UI can show *why* a judge fails the gate
+        # (e.g. fail-class f1 < threshold while macro clears it).
+        per_label.append({"label": label, "precision": p, "recall": r, "f1": lf1})
         class_f1.append(lf1)
     f1 = sum(class_f1) / len(class_f1)  # macro-F1
 
@@ -692,7 +694,7 @@ def test_get_judge_report(tmp_path):
     assert body["judgeVersion"] == "jv1"
     assert isinstance(body["passes"], bool)
     assert set(body["confusion"]) == {"tp", "fp", "fn", "tn"}
-    assert set(body["perLabel"][0]) == {"label", "precision", "recall"}
+    assert set(body["perLabel"][0]) == {"label", "precision", "recall", "f1"}  # per-class f1 surfaced (fail-class gate)
 
 def test_missing_report_404(tmp_path):
     assert _client(tmp_path).get("/api/runs/nope").status_code == 404
@@ -789,12 +791,12 @@ npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom @pl
   - `/` — index: links to runs + a Langfuse deep link for traces/datasets/annotation.
   - `/runs` — `RunSummary[]` table: run id, harness, judge version, judge status (macro-F1 when `judgeValidated === true`; `judge: not validated` badge linking to `/judges/:judgeVersion` when `judgeValidated === false`; `not available` when `judgeValidated === null`, i.e. no report — UI §6/§9), pass rate + CI bar, #not-passed, Langfuse link.
   - `/runs/:runId` — `RegressionReport`: baseline vs candidate harness, judge version (with the "same judge" note), pass-rate delta + CI, result badge (`better` green / `no_change` amber / `worse` red), per-label delta table, fixed / newly-broken lists with Langfuse trace deep links.
-  - `/judges/:judgeVersion` — `JudgeReport`: macro-F1 vs threshold + validated/`passes` badge, gold pass/fail counts vs the support floor, per-label precision/recall, confusion matrix.
+  - `/judges/:judgeVersion` — `JudgeReport`: macro-F1 vs threshold + validated/`passes` badge, gold pass/fail counts vs the support floor, per-label precision/recall/**F1** (fail-class F1 flagged against its own 0.70 gate, so a `passes=false` at healthy macro-F1 is explained), confusion matrix.
 
 - [ ] **Step 4: Component tests (Vitest + Testing Library)**
   - runs table renders rows + CI, and the three judge states: validated (F1 shown), `not validated` (`judgeValidated === false`, badge + `/judges/:v` link), and `not available` (`judgeValidated === null`).
   - regression report renders all three result badges (parametrized).
-  - judge report renders macro-F1 vs threshold, the `passes` badge, and confusion matrix.
+  - judge report renders macro-F1 vs threshold, the `passes` badge, per-label F1 (incl. the fail-class F1 gate), and confusion matrix.
 
 - [ ] **Step 5: One Playwright happy path**
   - mock the read API → open `/runs` → click a run → assert the result badge and a working Langfuse deep-link `href`.
@@ -861,11 +863,16 @@ described as done.
   Nondeterministic cases are run ≥3× (Engine §7), one dataset-run output per repeat.
   **Judge-validation items (`judge_test`) are *not* rerun here** — they keep the
   frozen annotated output from Step 3 so their gold labels stay valid.
-- [ ] **Step 5: `flywheel/scripts/run_judge.py`** — score the judge over a dataset
-  run: read each case's `input`/`output` and the dataset item's `expected`/acceptance
-  note — the `output` is the **frozen annotated output (Step 3)** for `judge_test`
-  items (so validation scores the judge on the exact output the human labeled) and
-  the **Step 4 harness output** for `regression` items. Build
+- [ ] **Step 5: `flywheel/scripts/run_judge.py --split <judge_test|regression> [--run <name>]`** —
+  score the judge over **one target split**, reading each case's `input`/`output` and
+  the dataset item's `expected`/acceptance note. The `output` source differs by split:
+  for **`judge_test`** there is **no harness dataset run** (Step 4 deliberately skips
+  it), so read the **frozen annotated output straight from each item's metadata**
+  (Step 3) — the judge grades the exact output the human labeled — and write the
+  verdict as a Langfuse **categorical score keyed to that item** (which
+  `validate_judge.py` reads back); for a **`regression`** run, read the **Step-4
+  harness output** of the named baseline/candidate dataset run and write the verdict
+  as a score on that run's item. Build
   the judge's few-shot examples **only from `judge_train` items** (never `judge_dev`
   / `judge_test` / `regression` — that would leak the validation set), call
   `Judge.score_case(case_input, case_output, acceptance)` with `complete` wired to
@@ -876,10 +883,10 @@ described as done.
   failure** — retry, or record an operational `skip`, but **never** persist it as an
   `uncertain` score (that would inflate the abstention rate and punish the judge for
   a protocol glitch). Uses `Harness(git_sha, model)` for the run's harness id.
-  **Invoke this once per target run** — it scores exactly one dataset run per call,
-  so the smoke path runs it **three times**: the `judge_test` frozen-output run (for
-  validation), the **baseline** `regression` run, and the **candidate** `regression`
-  run. The ≥3× repeat sampling (Engine §7) is a property of the **`regression`** runs
+  **Invoke this once per target** — it scores exactly one split/run per call, so the
+  smoke path runs it **three times**: the `judge_test` split (frozen outputs from item
+  metadata — no harness run), the **baseline** `regression` run, and the **candidate**
+  `regression` run. The ≥3× repeat sampling (Engine §7) is a property of the **`regression`** runs
   only — score those nondeterministic cases ≥3× when budget allows, one score per
   repeat. The **`judge_test`** run is scored **once per case**, so each validation
   case has a single judge verdict to compare against its human label.
@@ -942,8 +949,8 @@ described as done.
   that lacks a regression report.
 - [ ] **Step 9: Smoke** — run one real dataset through `sample_traces.py` →
   (manual annotate/promote) → `run_harness.py` (baseline **and** candidate
-  `regression` runs) → `run_judge.py` **×3** (the `judge_test` frozen-output run, the
-  baseline `regression` run, and the candidate `regression` run — one invocation each,
+  `regression` runs) → `run_judge.py` **×3** (`--split judge_test` reading frozen
+  outputs, then the baseline and candidate `regression` runs — one invocation each,
   Step 5) → `validate_judge.py` → `run_regression.py`, open the UI `/runs`, and
   confirm a trace deep link resolves in Langfuse. Confirm `run_regression.py` refuses
   to run when the judge report is below macro-F1 0.70 / below fail-class F1 0.70 / below
