@@ -169,10 +169,14 @@ The judge is the one asset worth real rigor (per `llm-eval` stages 4–5).
   always-`fail` judge would score a high *fail-only* F1 (perfect recall, base-rate
   precision) while being unable to recognize success; averaging both classes' F1
   forces the judge to get passes right too, so an always-`fail` (or always-`pass`)
-  judge fails the gate. An `uncertain` verdict is an abstention — never a true
-  positive for either class — so a hedging judge cannot pass either. The gate also
-  requires a **per-class support floor (~5 gold cases of *each* of `pass` and
-  `fail`)** in the held-out split: F1 over a handful of cases swings by >0.2 per
+  judge fails the gate. The gate **also** requires the **fail-class F1 ≥ 0.70 on its
+  own**, independent of the mean: a judge can clear macro-F1 with a perfect pass
+  class while hedging on real failures (catching 2 of 5, abstaining on 3 → macro
+  ≈ 0.79 but fail-F1 ≈ 0.57), and catching failures is the judge's core job, so it
+  must still fail. An `uncertain` verdict is an abstention — never a true positive
+  for either class — so a hedging judge cannot pass either. The gate also requires a
+  **per-class support floor (~5 gold cases of *each* of `pass` and `fail`)** in the
+  held-out split: F1 over a handful of cases swings by >0.2 per
   single case, and a one-class split lets a degenerate judge through. Sample enough
   of **both** outcomes (§5) that the 20% `test` split clears the floor on each
   class. The report also carries per-label precision/recall and a confusion matrix.
@@ -260,7 +264,7 @@ free string drawn from `labels.md` / the Langfuse score comment.
 | Trace attrs | `gen_ai.*` + two `eval.*` strings | Reuse the real standard, don't invent `flywheel.*`. |
 | Data / scores / datasets | Langfuse native | It already models these; mirroring them is double bookkeeping. |
 | Failure taxonomy | A flat editable markdown list | Versioned registries are for stable cross-team contracts. |
-| Judge lifecycle | Re-run `validate.py`; macro-F1 ≥ 0.70 (+ per-class support) | "Trustworthy" is recomputed, not a persisted 6-state machine. |
+| Judge lifecycle | Re-run `validate.py`; macro-F1 ≥ 0.70 + fail-class F1 ≥ 0.70 (+ per-class support) | "Trustworthy" is recomputed, not a persisted 6-state machine. |
 | Regression result | `better` / `no_change` / `worse` + Wilson CI | A proposal is a PR; its outcome is a merge decision. |
 | Control plane | None (scripts + thin read API) | No users, no roles, no concurrency to govern yet. |
 | UI | A real frontend (per owner), lean surface | See ui spec — kept as a project, slimmed to ~3 routes. |

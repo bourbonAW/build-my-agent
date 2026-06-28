@@ -129,7 +129,10 @@ Show:
 - result badge: `better` (green) / `no_change` (amber) / `worse` (red)
 - per-label delta table
 - fixed failures and newly-broken failures, each linking to its Langfuse trace
-- a disjointness note: regression set ∩ judge-validation set = ∅
+- a disjointness note: regression set ∩ judge-validation set = ∅. This is a
+  **static invariant**, not a data field: `compare()` raises on any overlap, so a
+  `RegressionReport` only exists when the gate held — the UI renders the note as a
+  guaranteed fact, so `RegressionReport` carries no `disjoint`/overlap field.
 
 No publish/rollback/defer/rebase buttons. The decision is "merge the PR or not,"
 taken in git. The page may show the candidate's branch/PR URL if provided.
@@ -175,6 +178,8 @@ type RegressionReport = {
   fixed: { caseId: string; traceUrl: string }[];
   newlyBroken: { caseId: string; traceUrl: string }[];
   candidatePrUrl?: string;
+  // No `disjoint` field: disjointness is a gate invariant (compare() raises on
+  // overlap), so a report's existence already proves regression ∩ validation = ∅ (§6).
 };
 
 type JudgeReport = {

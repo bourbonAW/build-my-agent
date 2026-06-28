@@ -48,11 +48,16 @@ Apply to every task below.
   `uncertain`; the `Label` type also carries `skip` — `skip`/`uncertain` are
   non-successes), and `trace_id`. Plus a minimal harness id `git_sha@model` and a plain
   `judge_version` string. No 8-part fingerprint, no lifecycle enums.
-- **Two surviving correctness gates** (asserts, not state machines):
-  - *same-judge:* baseline and candidate must be scored by one `judge_version`;
-    `compare()` raises otherwise.
+- **Surviving correctness gates** (asserts, not state machines): `compare()` raises
+  on any of —
+  - *same-judge:* baseline and candidate must be scored by one `judge_version`.
+  - *same-population:* baseline and candidate must cover identical case ids.
+  - *completeness:* the compared set must equal the full declared regression split
+    (a case both runs silently dropped must not pass on an easier subset).
   - *disjointness:* the regression split must not overlap the judge-validation
-    split; `compare()` raises otherwise.
+    split (the full `judge_train ∪ judge_dev ∪ judge_test`).
+  - plus loud rejects for an empty set, duplicate case ids, and (in `validate()`)
+    an undersized/duplicated validation split.
 - **Judge is the one validated asset.** macro-F1 ≥ 0.70 + per-class gold support
   (recomputed by re-running `validate.py`), not a 6-state lifecycle.
 - **Regression result is three-valued:** `better | no_change | worse`, decided by
@@ -72,7 +77,7 @@ flywheel/
 ├── flywheel/               # core library (plan 01) + judge/validate/report (plan 02)
 │   ├── identity.py metrics.py regression.py
 │   └── judge.py validate.py report.py
-├── api/                    # thin read-only FastAPI (plan 02)
+├── api/                    # thin read-only FastAPI + runs_provider.py (plan 02)
 ├── scripts/                # Bourbon/Langfuse glue: sample_traces.py, run_harness.py, run_judge.py, validate_judge.py, run_regression.py (plan 02 Task 6)
 ├── ui/                     # React + Vite frontend (plan 02 Task 5)
 ├── labels.md               # flat editable failure-label list (plan 01)
