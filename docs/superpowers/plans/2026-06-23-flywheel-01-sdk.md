@@ -229,12 +229,12 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
 **Interfaces:**
 - `RegressionResult = Literal["better", "no_change", "worse"]`
 - `@dataclass(frozen=True) class CaseScore(case_id: str, label: Label, failure_label: str | None = None)` — `label` is the typed `Label` (`pass`/`fail`/`skip`/`uncertain`); `__post_init__` rejects any other value so a malformed Langfuse score (`"PASS"`, `"error"`, `""`) raises at ingestion instead of being silently miscounted as a failure. `failure_label` is a free string from `labels.md` / a Langfuse score comment, used for per-label deltas (Engine §7).
-- `@dataclass(frozen=True) class RegressionReport(result, baseline_rate, candidate_rate, candidate_rate_low, candidate_rate_high, candidate_non_pass_count, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `candidate_rate` + `candidate_rate_low/high` are the candidate run's **case-level** Wilson CI and `candidate_non_pass_count` its case-level non-pass count, computed from the **same aggregated scores `compare()` gates on** — so `RunSummary.passRate`/`nonPassCount` (served from the report) can never disagree with the regression report on a run with repeats; `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
+- `@dataclass(frozen=True) class RegressionReport(result, judge_version, baseline_rate, candidate_rate, candidate_rate_low, candidate_rate_high, candidate_non_pass_count, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `judge_version` is the single version `compare()` asserted both sides share (so report.py serializes the *gated* version, not an arbitrary caller string); `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `candidate_rate` + `candidate_rate_low/high` are the candidate run's **case-level** Wilson CI and `candidate_non_pass_count` its case-level non-pass count, computed from the **same aggregated scores `compare()` gates on** — so `RunSummary.passRate`/`nonPassCount` (served from the report) can never disagree with the regression report on a run with repeats; `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
 - `compare(baseline, candidate, *, regression_case_ids: set[str], validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
   - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
   - **completeness gate:** raises `ValueError` unless the compared cases are **exactly** `regression_case_ids` (the full declared regression split read from the dataset). A silently dropped case (harness error, missing score) must not let a candidate pass the gate on an easier subset; "same scored ids on both sides" alone can't catch a case both runs skipped.
   - **disjointness gate (Engine §5/§7):** raises `ValueError` if compared case ids overlap `validation_case_ids`. That set is the **entire judge-validation set** — the union of all human-labeled judge cases (`judge_train ∪ judge_dev ∪ judge_test`), not just the held-out `judge_test` split, because a regression case that was a few-shot (`train`) or prompt-tuning (`dev`) case is leaked too. The regression set is the dataset's **regression split**; the caller reads both from the Langfuse dataset metadata.
-  - assigns `better`/`worse`/`no_change` by whether the pass-rate-delta Wilson CI clears zero (Engine §7 noise band).
+  - assigns `better`/`worse`/`no_change` by an **exact two-sided paired sign test** (McNemar exact) on the discordant pairs (Engine §7); the Wilson delta CI is kept only as the descriptive interval (it is anti-conservative on tiny discordant counts).
 - `aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]` — collapses repeated scorings of the same `case_id` (Engine §7 "sample ≥3× for nondeterministic cases") into one `CaseScore` by majority vote: a case is `pass` only if a strict majority of its repeats passed (ties → not-a-pass, conservative); the kept `failure_label` is the most common one among the non-pass repeats. Single-run cases pass through unchanged, so callers that don't repeat are unaffected. `run_regression.py` (plan 02 Task 6) calls this before `compare()`.
 
 - [ ] **Step 1: failing test** `tests/test_regression.py`
@@ -280,6 +280,13 @@ def test_no_discordance_reports_finite_band_not_certainty():
     assert rep.result == "no_change"
     assert rep.delta == 0.0
     assert rep.delta_low < 0 < rep.delta_high    # honest finite-sample band, never [0, 0]
+
+def test_small_one_sided_discordance_is_no_change():
+    # 4 fixed / 0 newly-broken: exact two-sided sign-test p = 0.125, not significant.
+    # The Wilson band alone would clear zero and call this "better" (anti-conservative).
+    base = _run(["fail", "fail", "fail", "fail", "pass", "pass"])
+    cand = _run(["pass", "pass", "pass", "pass", "pass", "pass"])
+    assert _cmp(base, cand).result == "no_change"   # need ≥6 consistent fixes for p<0.05
 
 def test_mismatched_judge_raises():
     s = _scores(5, 5)
@@ -353,7 +360,9 @@ def test_aggregate_repeats_majority_vote():
 
 ```python
 """Baseline vs candidate regression (Engine §7): better | no_change | worse.
-Decision uses the Wilson CI of the pass-rate delta as the noise band. Enforces
+The better/worse decision uses an EXACT two-sided paired sign test (McNemar exact)
+on the discordant pairs; the Wilson delta CI is kept only as the descriptive
+interval the UI shows (it is anti-conservative on tiny discordant counts). Enforces
 two surviving correctness gates:
   1. same-judge: baseline and candidate must be scored by the same judge_version.
   2. disjointness: compared cases must not overlap the judge-validation set.
@@ -365,6 +374,7 @@ caller reads both from Langfuse dataset metadata. Any non-"pass" label
 consistent with metrics.pass_rate."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Literal, get_args
 
@@ -372,6 +382,21 @@ from .identity import Label
 from .metrics import pass_rate
 
 RegressionResult = Literal["better", "no_change", "worse"]
+
+
+def _sign_test_significant(fixed_n: int, broken_n: int, alpha: float = 0.05) -> bool:
+    """Exact two-sided binomial sign test (McNemar exact) on discordant pairs.
+    Under H0 (no real change) a discordant pair is equally likely a fix or a break,
+    so the smaller count ~ Binomial(disc, 0.5). Returns True only when we can reject
+    H0 at `alpha` — i.e. the direction is real, not small-sample noise. This is
+    stricter than "the Wilson delta band clears zero", which would call 4-fixed /
+    0-broken `better` though the exact two-sided p is 0.125."""
+    disc = fixed_n + broken_n
+    if disc == 0:
+        return False
+    k = min(fixed_n, broken_n)
+    tail = sum(math.comb(disc, i) for i in range(k + 1)) / (2 ** disc)
+    return min(1.0, 2.0 * tail) < alpha
 
 
 @dataclass(frozen=True)
@@ -390,6 +415,7 @@ class CaseScore:
 @dataclass(frozen=True)
 class RegressionReport:
     result: RegressionResult
+    judge_version: str             # the single judge_version compare() asserted both sides share
     baseline_rate: float
     candidate_rate: float          # candidate case-level pass-rate point
     candidate_rate_low: float      # candidate case-level Wilson CI bounds — same
@@ -529,10 +555,11 @@ def compare(
         p_ci = pass_rate(["pass"] * len(fixed) + ["fail"] * len(newly_broken))
         delta_low = (2 * p_ci.low - 1) * disc / n
         delta_high = (2 * p_ci.high - 1) * disc / n
-    if delta_low > 0:
-        result: RegressionResult = "better"
-    elif delta_high < 0:
-        result = "worse"
+    # Decision uses the EXACT paired sign test, not "does the Wilson band clear
+    # zero" (which is anti-conservative on tiny discordant counts). delta_low/high
+    # remain the descriptive interval. When significant, fixed != broken so delta != 0.
+    if _sign_test_significant(len(fixed), len(newly_broken)):
+        result: RegressionResult = "better" if delta > 0 else "worse"
     else:
         result = "no_change"
 
@@ -544,7 +571,8 @@ def compare(
     ]
 
     return RegressionReport(
-        result=result, baseline_rate=base_rate, candidate_rate=cand_rate,
+        result=result, judge_version=baseline_judge_version,  # == candidate's, asserted above
+        baseline_rate=base_rate, candidate_rate=cand_rate,
         candidate_rate_low=cand_ci.low, candidate_rate_high=cand_ci.high,
         candidate_non_pass_count=cand_non_pass,
         delta=delta, delta_low=delta_low, delta_high=delta_high,

@@ -215,13 +215,16 @@ Mechanics that survived because they are correctness, not ceremony:
 - **Disjointness**: assert the regression set shares no cases with the **entire
   judge case pool** (`judge_train ∪ judge_dev ∪ judge_test`, not just `judge_test`).
   (One assert, replacing the holdout ledger.)
-- **Noise band**: baseline and candidate are scored on the **same** regression
-  cases (a paired design), so report the pass-rate delta with a **paired
-  (McNemar) Wilson confidence interval** computed from the discordant pairs
-  (fixed vs newly-broken) — an unpaired difference of two independent Wilson
-  intervals would ignore the pairing and hide real one-directional changes. If
-  the interval crosses zero, the result is `no_change`, not a win. (Replaces
-  `no_significant_change` as a first-class lifecycle state.)
+- **Significance**: baseline and candidate are scored on the **same** regression
+  cases (a paired design), so the `better`/`worse`/`no_change` call uses an **exact
+  two-sided paired sign test (McNemar exact)** on the discordant pairs (fixed vs
+  newly-broken). An unpaired difference of two independent intervals would ignore
+  the pairing; a Wilson band on the discordant fraction is reported as the
+  **descriptive** delta CI, but it is *not* the gate — it is anti-conservative on
+  tiny discordant counts (4 fixed / 0 broken would "clear zero" though the exact
+  two-sided p is 0.125), so the decision needs the exact test (≥6 consistent
+  one-sided fixes before `better`). Not significant → `no_change`, not a win.
+  (Replaces `no_significant_change` as a first-class lifecycle state.)
 - **Repeats**: for nondeterministic cases, sample ≥3× when budget allows.
 
 Output is a report (markdown + JSON): pass-rate delta + CI, per-label delta,
