@@ -154,9 +154,10 @@ intersection check in `regression.py`.
 
 The judge is the one asset worth real rigor (per `llm-eval` stages 4–5).
 
-- `judge.py` runs an LLM judge over a dataset run and writes `pass`/`fail`
-  scores back to Langfuse. Few-shot labeled examples carry the signal; the
-  system prompt stays neutral.
+- `judge.py` runs an LLM judge over a dataset run and writes `pass`/`fail`/`uncertain`
+  scores back to Langfuse (the judge may abstain — `uncertain` is persisted as
+  itself, never coerced to a pass/fail). Few-shot labeled examples carry the
+  signal; the system prompt stays neutral.
 - The human-labeled cases are partitioned **60/20/20** as a data-prep step:
   `train` supplies the judge's few-shot examples, `dev` is used while iterating
   the prompt, and the disjoint `test` split is the held-out validation set.
@@ -165,8 +166,12 @@ The judge is the one asset worth real rigor (per `llm-eval` stages 4–5).
   **F1 ≥ 0.70** to use the judge for gating, plus per-label precision / recall and
   a confusion matrix. The positive class is `fail` (the judge's job is to catch
   failures); an `uncertain` verdict is an abstention, never a true positive, so a
-  hedging judge cannot pass the gate. Below threshold → refine prompt/examples and
-  re-run.
+  hedging judge cannot pass the gate. The gate also requires a **minimum of ~5
+  gold `fail` cases** in the held-out split: F1 over a handful of positives swings
+  by >0.2 per single case, so below that floor the judge is treated as *not yet
+  validated* (gate fails) rather than trusted on noise. Sample enough failures
+  (§5) that the 20% `test` split clears that floor. Below threshold (or below the
+  support floor) → refine prompt/examples or label more failures, and re-run.
 
 That's the lifecycle. No `draft → calibrating → locked_test → validated →
 validated_limited → recheck_required` machine. A judge is "good enough to gate"
@@ -235,8 +240,8 @@ not aggressive enough** and more should be deleted.
 | `flywheel` | New, small: `identity.py`, `metrics.py`, `judge.py`, `validate.py`, `regression.py`, `report.py`, a thin read API, and the UI frontend project. No `sdk/` HTTP client, no `api/` control plane, no State Store. |
 
 The trace→case link that justifies this repo is built by plan-02 Task 6 (span
-attrs + `run_judge.py` + `run_regression.py` + `runs_provider`), not by the
-pure-logic tasks. Per-label deltas (§7) come from `CaseScore.failure_label`, a
+attrs + `run_harness.py` + `run_judge.py` + `run_regression.py` + `runs_provider`),
+not by the pure-logic tasks. Per-label deltas (§7) come from `CaseScore.failure_label`, a
 free string drawn from `labels.md` / the Langfuse score comment.
 
 ---

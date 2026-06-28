@@ -73,7 +73,7 @@ flywheel/
 │   ├── identity.py metrics.py regression.py
 │   └── judge.py validate.py report.py
 ├── api/                    # thin read-only FastAPI (plan 02)
-├── scripts/                # Bourbon/Langfuse glue: sample_traces.py, run_judge.py, validate_judge.py, run_regression.py (plan 02 Task 6)
+├── scripts/                # Bourbon/Langfuse glue: sample_traces.py, run_harness.py, run_judge.py, validate_judge.py, run_regression.py (plan 02 Task 6)
 ├── ui/                     # React + Vite frontend (plan 02 Task 5)
 ├── labels.md               # flat editable failure-label list (plan 01)
 └── tests/                  # pytest tree
@@ -151,5 +151,5 @@ Langfuse-native operation or a deleted concept.
 Plan 01 (pure logic, TDD) → Plan 02 (judge/validate/report TDD, then read API,
 then frontend, then Bourbon glue in Task 6). Within each plan, tasks are strictly
 ordered. The trace→case link that justifies the repo is built in **plan 02
-Task 6** (Bourbon span attrs + `run_judge.py` + `run_regression.py` +
-`runs_provider`), not in the pure-logic tasks.
+Task 6** (Bourbon span attrs + `run_harness.py` + `run_judge.py` +
+`run_regression.py` + `runs_provider`), not in the pure-logic tasks.

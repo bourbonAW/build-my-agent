@@ -232,7 +232,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
 - `@dataclass(frozen=True) class RegressionReport(result, baseline_rate, candidate_rate, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
 - `compare(baseline, candidate, *, validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
   - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
-  - **disjointness gate (Engine §5/§7):** raises `ValueError` if compared case ids overlap `validation_case_ids`. That set is the dataset's **judge-validation split**; the regression set is the dataset's **regression split** — the caller reads both from the Langfuse dataset metadata.
+  - **disjointness gate (Engine §5/§7):** raises `ValueError` if compared case ids overlap `validation_case_ids`. That set is the **entire judge-validation set** — the union of all human-labeled judge cases (`judge_train ∪ judge_dev ∪ judge_test`), not just the held-out `judge_test` split, because a regression case that was a few-shot (`train`) or prompt-tuning (`dev`) case is leaked too. The regression set is the dataset's **regression split**; the caller reads both from the Langfuse dataset metadata.
   - assigns `better`/`worse`/`no_change` by whether the pass-rate-delta Wilson CI clears zero (Engine §7 noise band).
 - `aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]` — collapses repeated scorings of the same `case_id` (Engine §7 "sample ≥3× for nondeterministic cases") into one `CaseScore` by majority vote: a case is `pass` only if a strict majority of its repeats passed (ties → not-a-pass, conservative); the kept `failure_label` is the most common one among the non-pass repeats. Single-run cases pass through unchanged, so callers that don't repeat are unaffected. `run_regression.py` (plan 02 Task 6) calls this before `compare()`.
 
@@ -333,9 +333,11 @@ Decision uses the Wilson CI of the pass-rate delta as the noise band. Enforces
 two surviving correctness gates:
   1. same-judge: baseline and candidate must be scored by the same judge_version.
   2. disjointness: compared cases must not overlap the judge-validation set.
-`validation_case_ids` is the dataset's judge-validation split; the regression set
-is the dataset's regression split. The caller reads both from Langfuse dataset
-metadata. Any non-"pass" label (fail/skip/uncertain) counts as not-a-success,
+`validation_case_ids` is the *entire* judge-validation set (the union of
+`judge_train ∪ judge_dev ∪ judge_test` — train/dev cases leak too, not only the
+held-out test split); the regression set is the dataset's regression split. The
+caller reads both from Langfuse dataset metadata. Any non-"pass" label
+(fail/skip/uncertain) counts as not-a-success,
 consistent with metrics.pass_rate."""
 from __future__ import annotations
 
