@@ -230,8 +230,9 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
 - `RegressionResult = Literal["better", "no_change", "worse"]`
 - `@dataclass(frozen=True) class CaseScore(case_id: str, label: Label, failure_label: str | None = None)` — `label` is the typed `Label` (`pass`/`fail`/`skip`/`uncertain`); `__post_init__` rejects any other value so a malformed Langfuse score (`"PASS"`, `"error"`, `""`) raises at ingestion instead of being silently miscounted as a failure. `failure_label` is a free string from `labels.md` / a Langfuse score comment, used for per-label deltas (Engine §7).
 - `@dataclass(frozen=True) class RegressionReport(result, baseline_rate, candidate_rate, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
-- `compare(baseline, candidate, *, validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
+- `compare(baseline, candidate, *, regression_case_ids: set[str], validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
   - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
+  - **completeness gate:** raises `ValueError` unless the compared cases are **exactly** `regression_case_ids` (the full declared regression split read from the dataset). A silently dropped case (harness error, missing score) must not let a candidate pass the gate on an easier subset; "same scored ids on both sides" alone can't catch a case both runs skipped.
   - **disjointness gate (Engine §5/§7):** raises `ValueError` if compared case ids overlap `validation_case_ids`. That set is the **entire judge-validation set** — the union of all human-labeled judge cases (`judge_train ∪ judge_dev ∪ judge_test`), not just the held-out `judge_test` split, because a regression case that was a few-shot (`train`) or prompt-tuning (`dev`) case is leaked too. The regression set is the dataset's **regression split**; the caller reads both from the Langfuse dataset metadata.
   - assigns `better`/`worse`/`no_change` by whether the pass-rate-delta Wilson CI clears zero (Engine §7 noise band).
 - `aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]` — collapses repeated scorings of the same `case_id` (Engine §7 "sample ≥3× for nondeterministic cases") into one `CaseScore` by majority vote: a case is `pass` only if a strict majority of its repeats passed (ties → not-a-pass, conservative); the kept `failure_label` is the most common one among the non-pass repeats. Single-run cases pass through unchanged, so callers that don't repeat are unaffected. `run_regression.py` (plan 02 Task 6) calls this before `compare()`.
@@ -251,8 +252,12 @@ def _run(labels):
     and candidate built this way share the same case-id set (required by compare)."""
     return [CaseScore(f"c{i}", lab) for i, lab in enumerate(labels)]
 
-def _cmp(base, cand, validation_case_ids=frozenset()):
-    return compare(base, cand, validation_case_ids=set(validation_case_ids),
+def _cmp(base, cand, validation_case_ids=frozenset(), regression_case_ids=None):
+    # default the declared split to the baseline ids so existing cases compare the
+    # full set; tests that exercise the completeness gate pass it explicitly.
+    ids = {s.case_id for s in base} if regression_case_ids is None else set(regression_case_ids)
+    return compare(base, cand, regression_case_ids=ids,
+                   validation_case_ids=set(validation_case_ids),
                    baseline_judge_version="jv1", candidate_judge_version="jv1")
 
 def test_clear_improvement_is_better():
@@ -270,8 +275,9 @@ def test_regression_is_worse():
     assert _cmp(_run(["pass"] * 18 + ["fail"] * 2), _run(["fail"] * 18 + ["pass"] * 2)).result == "worse"
 
 def test_mismatched_judge_raises():
+    s = _scores(5, 5)
     with pytest.raises(ValueError, match="same-judge"):
-        compare(_scores(5, 5), _scores(5, 5), validation_case_ids=set(),
+        compare(s, s, regression_case_ids={x.case_id for x in s}, validation_case_ids=set(),
                 baseline_judge_version="jv1", candidate_judge_version="jv2")
 
 def test_disjointness_violation_raises():
@@ -282,6 +288,12 @@ def test_disjointness_violation_raises():
 def test_mismatched_case_set_raises():
     with pytest.raises(ValueError, match="same regression case set"):
         _cmp([CaseScore("a", "pass")], [CaseScore("b", "pass")])
+
+def test_incomplete_regression_set_raises():
+    # both runs silently dropped c2 — must not pass the gate on the easier subset
+    base = _run(["pass", "fail"])  # c0, c1
+    with pytest.raises(ValueError, match="regression set is incomplete"):
+        _cmp(base, base, regression_case_ids={"c0", "c1", "c2"})
 
 def test_duplicate_case_id_raises():
     dup = [CaseScore("a", "pass"), CaseScore("a", "fail")]
@@ -430,6 +442,7 @@ def compare(
     baseline: list[CaseScore],
     candidate: list[CaseScore],
     *,
+    regression_case_ids: set[str],
     validation_case_ids: set[str],
     baseline_judge_version: str,
     candidate_judge_version: str,
@@ -451,6 +464,17 @@ def compare(
             "same-population gate: baseline and candidate must cover the same "
             "regression case set (compare on identical case_ids, not different "
             "populations); re-run the missing cases first"
+        )
+    # Completeness gate: the compared set must be exactly the declared split. A case
+    # both runs silently dropped (harness error, missing score) would slip past the
+    # same-population check above and let a candidate pass on an easier subset.
+    if set(base_ids) != regression_case_ids:
+        missing = regression_case_ids - set(base_ids)
+        extra = set(base_ids) - regression_case_ids
+        raise ValueError(
+            "regression set is incomplete: baseline/candidate must cover exactly the "
+            f"declared regression split (missing={missing}, extra={extra}); re-run the "
+            "missing cases — a silently dropped case must not pass the gate"
         )
     case_ids = set(base_ids) | set(cand_ids)
     overlap = case_ids & validation_case_ids
@@ -510,7 +534,8 @@ def compare(
 ## Self-review
 - **Engine spec coverage:** identity.py = §4 (four ids + minimal fingerprint);
   metrics.py = the math §6/§7 depend on; regression.py = §7 (three outcomes,
-  Wilson noise band, disjointness assert).
+  Wilson noise band, same-judge + completeness + disjointness asserts;
+  `CaseScore.label` is the typed `Label`, validated at ingestion).
 - **Deleted-on-purpose:** no `flywheel.*` constants, no context validator, no
   score HTTP client — see "What changed" above; the engine spec §0/§8 record why.
 - **Type handoff to plan 02:** `ConfidenceInterval`, `RegressionReport`,

@@ -242,6 +242,20 @@ def test_always_fail_judge_fails_gate():
     rep = validate(cases, judge_version="jv1", model="m", prompt_version="p")
     assert rep.f1 < 0.70          # macro-F1 ≈ 0.33, not the inflated fail-only ≈ 0.89
     assert not rep.passes()
+
+def test_duplicate_case_id_rejected():
+    import pytest
+    # 2 distinct cases copied 5× must not satisfy the "5 gold per class" floor
+    cases = [LabeledCase("a", "fail", "fail")] * 5 + [LabeledCase("b", "pass", "pass")] * 5
+    with pytest.raises(ValueError, match="duplicate case_id"):
+        validate(cases, judge_version="jv1", model="m", prompt_version="p")
+
+def test_invalid_labels_rejected():
+    import pytest
+    with pytest.raises(ValueError, match="invalid judge label"):
+        LabeledCase("a", "fail", "PASS")   # judge not a canonical Label
+    with pytest.raises(ValueError, match="invalid human label"):
+        LabeledCase("a", "skip", "pass")   # human must be binary pass/fail (no skip/uncertain)
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/validate.py`
@@ -263,6 +277,7 @@ one-sided split can't pass on noise. `cases` must be the held-out validation spl
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import get_args
 
 from .identity import HumanLabel, Label
 from .metrics import precision_recall_f1
@@ -273,6 +288,15 @@ class LabeledCase:
     case_id: str
     human: HumanLabel   # gold, binary pass/fail
     judge: Label        # may be "uncertain" (abstention)
+
+    def __post_init__(self) -> None:
+        # Validate at ingestion: a malformed Langfuse value must fail loudly, not be
+        # silently folded into the confusion matrix / F1 (a "human" gold label is
+        # binary; only the judge may abstain).
+        if self.human not in get_args(HumanLabel):
+            raise ValueError(f"invalid human label {self.human!r}; expected {get_args(HumanLabel)}")
+        if self.judge not in get_args(Label):
+            raise ValueError(f"invalid judge label {self.judge!r}; expected {get_args(Label)}")
 
 
 @dataclass(frozen=True)
@@ -301,6 +325,13 @@ class JudgeReport:
 def validate(cases: list[LabeledCase], *, judge_version: str, model: str,
              prompt_version: str, threshold: float = 0.70,
              min_class_support: int = 5) -> JudgeReport:
+    # Reject duplicate case_ids: the per-class support floor counts distinct gold
+    # cases, so repeated copies of one pass + one fail must not satisfy it. judge_test
+    # is scored once per case (Task 6 Step 5), so a repeat here is an error, not data.
+    ids = [c.case_id for c in cases]
+    if len(set(ids)) != len(ids):
+        raise ValueError("duplicate case_id in validation split; judge_test is scored "
+                         "once per case — collapse or drop repeats before validate()")
     # Confusion is fail-positive ("fail" is the class we detect). Only a literal
     # judge "fail" is a fail-prediction; "pass"/"skip"/"uncertain" are non-"fail",
     # so an abstaining judge never earns a fail true-positive.
@@ -340,7 +371,7 @@ def validate(cases: list[LabeledCase], *, judge_version: str, model: str,
 **Files:** `flywheel/flywheel/report.py`, `flywheel/tests/test_report.py`
 
 **Interfaces:**
-- `write_regression_report(root, project, run_id, report: RegressionReport, *, baseline_harness, candidate_harness, judge_version, trace_urls: dict[str, str] | None = None, candidate_pr_url=None) -> Path` — writes `root/<project>/reports/regression/<run_id>.json` matching UI §7 `RegressionReport`. `fixed`/`newlyBroken`/`perLabel`/`passRateDelta` are all derived from `report` (single owner); `trace_urls` maps `case_id → Langfuse deep link` so the glue script supplies URLs without `compare()` knowing about Langfuse.
+- `write_regression_report(root, project, run_id, report: RegressionReport, *, baseline_harness, candidate_harness, judge_version, trace_urls: dict[str, str] | None = None, candidate_pr_url=None) -> Path` — writes `root/<project>/reports/regression/<run_id>.json` matching UI §7 `RegressionReport`. `run_id` becomes the filename and the `/api/runs/{run_id}` segment, so it must be a URL-safe slug (generated so in Task 6 Step 4); `_safe_segment` rejects path separators / traversal defensively. `fixed`/`newlyBroken`/`perLabel`/`passRateDelta` are all derived from `report` (single owner); `trace_urls` maps `case_id → Langfuse deep link` so the glue script supplies URLs without `compare()` knowing about Langfuse.
 - `write_judge_report(root, project, report: JudgeReport) -> Path` — writes `root/<project>/reports/judge/<judge_version>.json` matching UI §7 `JudgeReport`, including the serialized gate decision (`passes`) and gold support counts so `run_regression.py` and the UI honor the gate without re-deriving private logic.
 - `write_regression_markdown(root, project, run_id, report: RegressionReport, *, baseline_harness, candidate_harness, judge_version, trace_urls: dict[str, str] | None = None, candidate_pr_url=None) -> Path` — writes a human-readable `root/<project>/reports/regression/<run_id>.md` (Engine §3/§7 mandate "markdown + JSON"). The JSON feeds the UI; the markdown is the artifact a human reads or pastes into the candidate PR, so it renders `baseline_harness → candidate_harness` (same data as the JSON — without it the artifact can't say *what* was compared). `trace_urls` (same map passed to `write_regression_report`) renders fixed/newly-broken case ids as Langfuse deep links (Engine §7 / UI §6). Same data as the JSON, no new computation.
 - `read_json(path) -> dict`.
@@ -356,7 +387,7 @@ from flywheel.report import write_regression_report, read_json
 def test_regression_report_written_with_expected_keys(tmp_path: Path):
     base = [CaseScore("a", "fail", "tool_misuse"), CaseScore("b", "pass")]
     cand = [CaseScore("a", "pass"), CaseScore("b", "pass")]
-    rep = compare(base, cand, validation_case_ids=set(),
+    rep = compare(base, cand, regression_case_ids={"a", "b"}, validation_case_ids=set(),
                   baseline_judge_version="jv1", candidate_judge_version="jv1")
     path = write_regression_report(
         tmp_path, "bourbon", "run_1", rep,
@@ -379,7 +410,7 @@ def test_regression_markdown_written(tmp_path: Path):
     from flywheel.report import write_regression_markdown
     base = [CaseScore("a", "fail", "tool_misuse"), CaseScore("b", "pass")]
     cand = [CaseScore("a", "pass"), CaseScore("b", "pass")]
-    rep = compare(base, cand, validation_case_ids=set(),
+    rep = compare(base, cand, regression_case_ids={"a", "b"}, validation_case_ids=set(),
                   baseline_judge_version="jv1", candidate_judge_version="jv1")
     path = write_regression_markdown(tmp_path, "bourbon", "run_1", rep,
                                      baseline_harness="abc@m", candidate_harness="def@m",
@@ -407,7 +438,7 @@ def test_judge_report_written_with_expected_keys(tmp_path: Path):
 def test_unsafe_run_id_rejected(tmp_path: Path):
     import pytest
     base = [CaseScore("a", "pass")]
-    rep = compare(base, base, validation_case_ids=set(),
+    rep = compare(base, base, regression_case_ids={"a"}, validation_case_ids=set(),
                   baseline_judge_version="jv1", candidate_judge_version="jv1")
     with pytest.raises(ValueError, match="unsafe id segment"):
         write_regression_report(tmp_path, "bourbon", "../../escape", rep,
@@ -566,7 +597,7 @@ from api.read_api import create_app
 def _client(tmp_path: Path):
     runs = [{"runId": "run_1", "harness": "abc@m", "judgeVersion": "jv1",
              "judgeF1": None, "judgeValidated": None,
-             "passRate": {"point": 0.5, "low": 0.3, "high": 0.7}, "failCount": 1,
+             "passRate": {"point": 0.5, "low": 0.3, "high": 0.7}, "nonPassCount": 1,
              "createdAt": "2026-06-24", "langfuseRunUrl": "http://lf/r/run_1"}]
     app = create_app(tmp_path, project="bourbon", runs_provider=lambda project: runs)
     return TestClient(app)
@@ -578,13 +609,13 @@ def test_list_runs_returns_bare_array(tmp_path):
     assert isinstance(body, list)                     # UI §8: bare RunSummary[], no envelope
     assert body[0]["runId"] == "run_1"
     assert set(body[0]) >= {"runId", "harness", "judgeVersion", "judgeF1", "judgeValidated",
-                            "passRate", "failCount", "createdAt", "langfuseRunUrl"}
+                            "passRate", "nonPassCount", "createdAt", "langfuseRunUrl"}
 
 def test_get_regression_report(tmp_path):
     # baseline failure carries a failure_label so compare() emits a perLabel row
     # (per-label counts only non-pass scores that have a failure_label)
     rep = compare([CaseScore("a", "fail", "tool_misuse")], [CaseScore("a", "pass")],
-                  validation_case_ids=set(),
+                  regression_case_ids={"a"}, validation_case_ids=set(),
                   baseline_judge_version="jv1", candidate_judge_version="jv1")
     write_regression_report(tmp_path, "bourbon", "run_1", rep,
                             baseline_harness="abc@m", candidate_harness="def@m",
@@ -703,14 +734,14 @@ npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom @pl
 
 - [ ] **Step 3: Routes (UI §5)**
   - `/` — index: links to runs + a Langfuse deep link for traces/datasets/annotation.
-  - `/runs` — `RunSummary[]` table: run id, harness, judge version, judge F1 (or "not available" when `judgeF1` is null), pass rate + CI bar, #fail, Langfuse link.
+  - `/runs` — `RunSummary[]` table: run id, harness, judge version, judge status (macro-F1 when `judgeValidated === true`; `judge: not validated` badge linking to `/judges/:judgeVersion` when `judgeValidated === false`; `not available` when `judgeValidated === null`, i.e. no report — UI §6/§9), pass rate + CI bar, #not-passed, Langfuse link.
   - `/runs/:runId` — `RegressionReport`: baseline vs candidate harness, judge version (with the "same judge" note), pass-rate delta + CI, result badge (`better` green / `no_change` amber / `worse` red), per-label delta table, fixed / newly-broken lists with Langfuse trace deep links.
-  - `/judges/:judgeVersion` — `JudgeReport`: F1 vs threshold, per-label precision/recall, confusion matrix.
+  - `/judges/:judgeVersion` — `JudgeReport`: macro-F1 vs threshold + validated/`passes` badge, gold pass/fail counts vs the support floor, per-label precision/recall, confusion matrix.
 
 - [ ] **Step 4: Component tests (Vitest + Testing Library)**
-  - runs table renders rows + CI.
+  - runs table renders rows + CI, and the three judge states: validated (F1 shown), `not validated` (`judgeValidated === false`, badge + `/judges/:v` link), and `not available` (`judgeValidated === null`).
   - regression report renders all three result badges (parametrized).
-  - judge report renders F1 vs threshold and confusion matrix.
+  - judge report renders macro-F1 vs threshold, the `passes` badge, and confusion matrix.
 
 - [ ] **Step 5: One Playwright happy path**
   - mock the read API → open `/runs` → click a run → assert the result badge and a working Langfuse deep-link `href`.
@@ -765,10 +796,15 @@ described as done.
   PR branch), run the agent on each `regression` item's `input`, record the agent
   output as that dataset-run item's output, and set the `eval.case_id` (dataset item
   id) and `eval.run_id` (dataset run name) span attrs from Step 1 so each trace
-  links back. Run it **twice** — once for baseline, once for candidate — before any
-  scoring. Nondeterministic cases are run ≥3× (Engine §7), one dataset-run output
-  per repeat. **Judge-validation items (`judge_test`) are *not* rerun here** — they
-  keep the frozen annotated output from Step 3 so their gold labels stay valid.
+  links back. **Generate `eval.run_id` as a URL-safe slug** (`[A-Za-z0-9._@-]`, no
+  `/` — e.g. `f"{harness.id()}-{ts}"`, where `harness.id()` is already
+  `git_sha@model`), because it becomes both the report filename and the
+  `/api/runs/{run_id}` path segment; `report._safe_segment` is the defensive guard
+  that rejects a non-slug run id rather than letting it escape the reports dir. Run
+  it **twice** — once for baseline, once for candidate — before any scoring.
+  Nondeterministic cases are run ≥3× (Engine §7), one dataset-run output per repeat.
+  **Judge-validation items (`judge_test`) are *not* rerun here** — they keep the
+  frozen annotated output from Step 3 so their gold labels stay valid.
 - [ ] **Step 5: `flywheel/scripts/run_judge.py`** — score the judge over a dataset
   run: read each case's `input`/`output` and the dataset item's `expected`/acceptance
   note — the `output` is the **frozen annotated output (Step 3)** for `judge_test`
@@ -789,9 +825,12 @@ described as done.
   `judge_test` split** as `LabeledCase`s — `human` from the gold annotation
   (`pass`/`fail`), `judge` read back from the Step 5 categorical score on the
   **same frozen output the human annotated** (Step 3 — no harness rerun for
-  `judge_test`, so the gold label is never stale). (`judge_test` is scored once per
-  case; if a repeat ever exists, collapse it with `aggregate_repeats(...)` first so
-  each case has exactly one judge verdict.) Call `validate(...)`, and `write_judge_report(...)`. **Exit non-zero when `not
+  `judge_test`, so the gold label is never stale). `judge_test` is scored **once per
+  case** (Step 5), so each `LabeledCase` has exactly one judge verdict — do **not**
+  run `aggregate_repeats(...)` here (it operates on `CaseScore` and has no human
+  label to preserve); `validate(...)` rejects any duplicate `case_id` loudly, so a
+  stray repeat surfaces as an error instead of being silently collapsed. Call
+  `validate(...)`, and `write_judge_report(...)`. **Exit non-zero when `not
   report.passes()` (macro-F1 < 0.70, or too few gold `pass`/`fail` cases to trust
   it)** so CI cannot gate a change with an unvalidated judge (Engine §6). This wires
   the macro-F1 gate into the real workflow, not just
@@ -807,11 +846,13 @@ described as done.
   sides)**; take each case's `failure_label` from the **dataset-item metadata**
   (Step 3), not the judge critique; when a case was scored ≥3× (nondeterministic,
   Engine §7), call `aggregate_repeats(...)` (plan 01 Task 4) to collapse repeats by
-  majority vote before comparing; read the regression split ids **and the full
-  judge-validation set (`judge_train ∪ judge_dev ∪ judge_test`)** from the dataset,
-  and pass that **union** as `compare(...)`'s `validation_case_ids` — not just
-  `judge_test`, since a regression case that was a `train` (few-shot) or `dev`
-  (prompt-tuning) case is leaked too. Then build the `case_id → Langfuse trace URL`
+  majority vote before comparing; read **both** the full `regression` split ids **and
+  the full judge-validation set (`judge_train ∪ judge_dev ∪ judge_test`)** from the
+  dataset, and pass the former as `compare(...)`'s `regression_case_ids` (so a case
+  the harness silently dropped fails the completeness gate, not slips through) and
+  the latter **union** as `validation_case_ids` — not just `judge_test`, since a
+  regression case that was a `train` (few-shot) or `dev` (prompt-tuning) case is
+  leaked too. Then build the `case_id → Langfuse trace URL`
   map and call both `write_regression_report(...)` and `write_regression_markdown(...)`,
   passing `baseline_harness` / `candidate_harness` (the two `Harness.id()`s compared)
   and `trace_urls=...` to each.

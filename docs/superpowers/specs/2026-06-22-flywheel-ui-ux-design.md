@@ -105,7 +105,8 @@ state machines; a "proposal" is a git PR, a "baseline" is `main`).
 ### `/runs` — runs list
 
 Columns: run id · harness (`git_sha@model`) · judge version · pass rate **with
-confidence interval** · #fail · created at · link to Langfuse run.
+confidence interval** · #not-passed (fail + skip + uncertain) · created at · link
+to Langfuse run.
 
 The list shows only **report-backed regression runs** (the candidate runs a
 regression report was written for), so every row opens to a real `/runs/:runId`
@@ -156,7 +157,7 @@ type RunSummary = {
   judgeF1: number | null;   // macro-F1 from the judge's validation report; null → "not available" (§6)
   judgeValidated: boolean | null;  // report's `passes`; null → no report ("not available"); false → "not validated" badge (§6/§9)
   passRate: { point: number; low: number; high: number };  // Wilson CI
-  failCount: number;
+  nonPassCount: number;     // not-passed (fail + skip + uncertain); agrees with the pass-rate denominator, so it's never 0 while pass rate < 1
   createdAt: string;
   langfuseRunUrl: string;
 };
