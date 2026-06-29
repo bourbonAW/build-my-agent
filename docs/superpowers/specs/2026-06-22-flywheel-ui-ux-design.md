@@ -146,7 +146,9 @@ Show: model + prompt version · overall **macro-F1** vs the 0.70 threshold ·
 whether it passed the gate (`passes` → validated badge) · gold pass/fail counts
 vs the support floor · per-label precision/recall/**F1** (the **fail-class F1**
 carries its own ≥ 0.70 gate, so this row explains a `passes=false` at a healthy
-macro-F1) · confusion matrix · validation set size.
+macro-F1) · confusion matrix **with abstentions broken out**
+(`goldFailAbstained`/`goldPassAbstained`, so a judge's `uncertain` on a gold case
+isn't read as a correct cell) · validation set size.
 
 ---
 
@@ -198,7 +200,9 @@ type JudgeReport = {
   goldPassCount: number;    // human "pass" cases in the split (fp + tn)
   minClassSupport: number;  // per-class gold floor used by the gate
   perLabel: { label: string; precision: number; recall: number; f1: number }[];  // per-class f1 shows why passes can be false at high macro-F1
-  confusion: { tp: number; fp: number; fn: number; tn: number };
+  confusion: { tp: number; fp: number; fn: number; tn: number };  // 2x2 fail-positive
+  goldFailAbstained: number;  // gold-fail cases the judge abstained on (inside fn) — shown so the matrix doesn't read an abstention as correct
+  goldPassAbstained: number;  // gold-pass cases the judge abstained on (inside tn)
   validationSetSize: number;
 };
 ```

@@ -90,6 +90,7 @@ strict = true
 - `HumanLabel = Literal["pass", "fail"]` — a **human** annotation is gold and binary (no `skip`/`uncertain`). A judge verdict may be `uncertain`; a human verdict may not.
 - `@dataclass(frozen=True) class Harness(git_sha: str, model: str)` with `id() -> str` = `f"{git_sha[:7]}@{model}"`.
 - `JudgeVersion = str` (alias; a **URL-safe slug** `^[A-Za-z0-9._@-]+$` since it is a report filename / `/api/judges/{judge_version}` segment — not a lifecycle).
+- `validate_judge_version(value: str) -> str` — raises `ValueError` unless `value` matches the JudgeVersion slug; enforced at the typed boundary (`compare()`, `validate()`, `JudgeConfig.__post_init__`), not just at report-write time.
 
 - [ ] **Step 1: failing test** `tests/test_identity.py`
 
@@ -124,6 +125,7 @@ ids and run names, mirrored on spans as eval.case_id / eval.run_id. This module
 holds the two small typed extras: the label enum and the harness fingerprint."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -131,6 +133,17 @@ Label = Literal["pass", "fail", "skip", "uncertain"]  # any verdict (human/judge
 HumanLabel = Literal["pass", "fail"]  # a human annotation is gold and binary
 JudgeVersion = str  # a URL-safe slug ^[A-Za-z0-9._@-]+$ (it is a report filename /
 # /api/judges/{judge_version} segment), e.g. "judge-v2" — not a lifecycle
+
+_JUDGE_VERSION_RE = re.compile(r"^[A-Za-z0-9._@-]+$")
+
+
+def validate_judge_version(value: str) -> str:
+    """Enforce the JudgeVersion slug contract at the typed boundary (not just at the
+    report-filename write). A bad value like "judge:v1" / "judge/v1" must fail where
+    it enters the core — JudgeConfig, validate(), compare() — not late at write time."""
+    if not _JUDGE_VERSION_RE.match(value):
+        raise ValueError(f"invalid judge_version {value!r}; must match ^[A-Za-z0-9._@-]+$")
+    return value
 
 
 @dataclass(frozen=True)
@@ -296,6 +309,12 @@ def test_mismatched_judge_raises():
         compare(s, s, regression_case_ids={x.case_id for x in s}, validation_case_ids=set(),
                 baseline_judge_version="jv1", candidate_judge_version="jv2")
 
+def test_invalid_judge_version_raises():
+    with pytest.raises(ValueError, match="invalid judge_version"):
+        compare([CaseScore("a", "pass")], [CaseScore("a", "pass")],
+                regression_case_ids={"a"}, validation_case_ids=set(),
+                baseline_judge_version="judge:v1", candidate_judge_version="judge:v1")
+
 def test_disjointness_violation_raises():
     base = _scores(5, 5)
     with pytest.raises(ValueError, match="disjoint"):
@@ -396,7 +415,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-from .identity import Label
+from .identity import Label, validate_judge_version
 from .metrics import pass_rate
 
 RegressionResult = Literal["better", "no_change", "worse"]
@@ -535,6 +554,8 @@ def compare(
     baseline_judge_version: str,
     candidate_judge_version: str,
 ) -> RegressionReport:
+    validate_judge_version(baseline_judge_version)   # slug contract (Engine §4), enforced
+    validate_judge_version(candidate_judge_version)   # at the typed boundary, not just at write
     if baseline_judge_version != candidate_judge_version:
         raise ValueError(
             "same-judge gate: baseline and candidate must use one judge_version "
