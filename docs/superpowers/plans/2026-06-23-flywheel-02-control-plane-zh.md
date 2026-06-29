@@ -865,7 +865,7 @@ def create_app(root: Path, *, project: str,
 Table、shadcn/ui（或本地组件）、Recharts、Vitest + Testing Library，加一个
 Playwright 快乐路径测试。
 
-- [ ] **Step 1: 脚手架**
+- [x] **Step 1: 脚手架**
 
 ```bash
 cd flywheel && npm create vite@latest ui -- --template react-ts
@@ -873,34 +873,34 @@ cd ui && npm install @tanstack/react-query @tanstack/react-table react-router-do
 npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom @playwright/test
 ```
 
-- [ ] **Step 2: API 客户端 + 类型** — `ui/src/api.ts`，包含 UI §7 类型
+- [x] **Step 2: API 客户端 + 类型** — `ui/src/api.ts`，包含 UI §7 类型
   （`RunSummary`、`RegressionReport`、`LabelDelta`、`JudgeReport`、
   `RegressionResult`）和三个命中只读 API 的 fetcher。报告 JSON 已经是
   camelCase（Task 3），所以类型 1:1 映射 — 无边界转换。
 
-- [ ] **Step 3: 路由（UI §5）**
+- [x] **Step 3: 路由（UI §5）**
   - `/` — 首页：链接到 runs + 一个用于 traces/datasets/annotation 的 Langfuse 深链接。
   - `/runs` — `RunSummary[]` 表格：run id、harness、judge version、judge 状态 — **当 `judgeF1` 非 null 时渲染它（macro-F1），包括 `judgeValidated === false` 时**（不要隐藏数字）；`judgeValidated` 只驱动徽章（`validated` vs `judge: not validated`，后者链接到 `/judges/:judgeVersion`）；**仅当** `judgeF1`/`judgeValidated` 为 null（无报告）时显示 `not available` — UI §6/§9。然后是通过率 + CI 条形图、#not-passed、Langfuse 链接。
   - `/runs/:runId` — `RegressionReport`：baseline vs candidate harness、judge version（带"同一 judge"注释）、pass-rate delta + 描述性带（非 CI；徽章来自精确符号检验）、结果徽章（`better` 绿色 / `no_change` 琥珀色 / `worse` 红色）、per-label delta 表格、fixed/newly-broken 列表（带 Langfuse 追踪深链接），以及**不相交性说明** "regression set ∩ judge case pool = ∅" 作为静态不变量渲染（UI §6 — 报告的存在证明了它，无需数据字段）。
   - `/judges/:judgeVersion` — `JudgeReport`：macro-F1 vs 阈值 + validated/`passes` 徽章、gold pass/fail 计数 vs 支撑下限、per-label precision/recall/**F1**（fail 类 F1 针对其自身 0.70 门控标注，这样当 macro-F1 健康时 `passes=false` 就能被解释）、带**弃权分解**的混淆矩阵（`goldFailAbstained`/`goldPassAbstained` 在 `fn`/`tn` 旁边显示/从中减去，这样 gold-pass 的 `uncertain` 不会被渲染为普通 TN）。
   - **空状态/错误状态（UI §9）：** `/runs` 无运行时显示"如何运行 eval 脚本"空状态 + Langfuse sample-traces 链接；`/runs/:runId` 缺少报告（404）时显示"运行 regression.py 以生成此报告"。对于 fixed/newly-broken 用例（UI §9）：当 `traceUrl === ""` 时渲染该行**无链接**；当 `traceUrl` 存在时，始终将其渲染为链接（只读 API 服务报告 JSON 且不探测 Langfuse 的追踪存在性，所以不存在"存在但已消失"的状态需要标记 — 已删除的追踪在点击时简单地在 Langfuse 中 404）。
 
-- [ ] **Step 4: 组件测试（Vitest + Testing Library）**
+- [x] **Step 4: 组件测试（Vitest + Testing Library）**
   - runs 表格渲染行 + CI，以及三种 judge 状态：validated（显示 F1）、`not validated`（`judgeValidated === false`，徽章 + `/judges/:v` 链接，**F1 仍然显示** — 数字不被隐藏）、和 `not available`（`judgeF1`/`judgeValidated` null）。
   - 回归报告渲染所有三个结果徽章（参数化）和静态不相交性说明。
   - judge 报告渲染 macro-F1 vs 阈值、`passes` 徽章、per-label F1（包括 fail 类 F1 门控）、以及带**弃权分解**的混淆矩阵（`goldFailAbstained`/`goldPassAbstained` 明确显示，不被静默折叠到 `fn`/`tn` 中）。
   - **UI §9 状态：** 空 `/runs`（无运行）渲染空状态，而非空表格；404 `/runs/:runId` 渲染"报告未生成"状态，而非崩溃；`traceUrl === ""` 的用例渲染该行无链接；具有 `traceUrl` 的用例渲染链接（UI §9 — 只读 API 中无追踪可用性探测）。
 
-- [ ] **Step 5: 一个 Playwright 快乐路径**
+- [x] **Step 5: 一个 Playwright 快乐路径**
   - mock 只读 API → 打开 `/runs` → 点击一个 run → 断言结果徽章和一个有效的 Langfuse 深链接 `href`。
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 ```bash
 cd flywheel/ui && npm run test -- --run && npx playwright test
 ```
 
-- [ ] **Step 7: 提交** `feat(ui): React+Vite frontend with runs, regression, and judge views`。
+- [x] **Step 7: 提交** `feat(ui): React+Vite frontend with runs, regression, and judge views`。
 
 ---
 
