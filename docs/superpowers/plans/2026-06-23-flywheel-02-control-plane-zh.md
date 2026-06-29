@@ -227,7 +227,7 @@ class Judge:
 - `validate(cases, *, judge_version, model, prompt_version, threshold=0.70, min_class_support=5) -> JudgeReport` — `cases` 是**留出的验证分割**（60/20/20 分区的 `test` 20%；Engine §6）。调用者负责分割 — judge 的 few-shot 示例来自 `train`，不得出现在此处（泄漏），`dev` 用于迭代提示词。混淆矩阵是 fail-positive（`fail` 是我们检测的类）；`uncertain`/`skip` 判定是非 `fail`（且非 `pass`），所以规避型 judge 在任一类中都不能获得 true positive。核心指标是 **macro-F1** — pass 类和 fail 类 F1 的平均值 — 这样退化的 always-`fail` judge（高 fail 召回率、基准率精度）就不能在 failure 偏置的分割上通过。计算 tp/fp/fn/tn、每类 precision/recall、macro-F1。
 - `JudgeReport.passes() -> bool` = `f1 (macro) >= threshold` **且** `fail 类 F1 >= threshold` **且** 分割持有至少 `min_class_support` 个**每类**黄金用例 — gold `fail`（`tp + fn`）**且** gold `pass`（`fp + tn`）。fail 类下限独立于 macro-F1：一个 judge 可以凭借完美的 pass 类通过均值，同时对真实失败采取规避策略（例如捕获 2/5 个 fail，弃权 3 个 → macro ≈ 0.79 但 fail-F1 ≈ 0.57），而捕获失败是 judge 的核心职责，所以它仍然必须失败。少量用例上的 macro-F1 每单个用例波动 >0.2，单类分割会让退化 judge 通过，所以规模不足/不平衡的分割是*尚未验证的*，不能门控（Engine §6），而不是在噪声上通过。
 
-- [ ] **Step 1: 失败测试** `tests/test_validate.py`
+- [x] **Step 1: 失败测试** `tests/test_validate.py`
 
 ```python
 from flywheel.validate import validate, LabeledCase
@@ -324,7 +324,7 @@ def test_validate_rejects_bad_judge_version():
         validate([LabeledCase("a", "fail", "fail")], judge_version="judge/v1", model="m", prompt_version="p")
 ```
 
-- [ ] **Step 2:** 运行 → 失败。**Step 3: 实现** `flywheel/flywheel/validate.py`
+- [x] **Step 2:** 运行 → 失败。**Step 3: 实现** `flywheel/flywheel/validate.py`
 
 ```python
 """Judge validation (Engine §6; llm-eval stage 5). The gate is macro-F1 >= threshold
@@ -449,7 +449,7 @@ def validate(cases: list[LabeledCase], *, judge_version: str, model: str,
     )
 ```
 
-- [ ] **Step 4:** 运行 → 通过。**Step 5:** 提交 `feat(flywheel): 60/20/20 judge validation report`。
+- [x] **Step 4:** 运行 → 通过。**Step 5:** 提交 `feat(flywheel): 60/20/20 judge validation report`。
 
 ---
 
