@@ -174,7 +174,7 @@ class Harness:
 - `wilson_interval(successes, n, z=1.96) -> ConfidenceInterval`（n==0 → (0,0,1)）
 - `pass_rate(labels: list[str]) -> ConfidenceInterval`（"pass" = 成功；skip/uncertain 计为尝试）
 
-- [ ] **步骤 1: 失败测试** `tests/test_metrics.py`
+- [x] **步骤 1: 失败测试** `tests/test_metrics.py`
 
 ```python
 import math
@@ -200,7 +200,7 @@ def test_pass_rate_counts_skip_as_attempt():
     assert math.isclose(pass_rate(["pass", "pass", "skip", "uncertain"]).point, 0.5)
 ```
 
-- [ ] **步骤 2:** 运行 → 失败。**步骤 3: 实现** `flywheel/flywheel/metrics.py`
+- [x] **步骤 2:** 运行 → 失败。**步骤 3: 实现** `flywheel/flywheel/metrics.py`
 
 ```python
 """Local eval metrics: precision/recall/F1 and Wilson-score pass-rate CIs."""
@@ -239,7 +239,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
     return wilson_interval(successes=successes, n=len(labels))
 ```
 
-- [ ] **步骤 4:** 运行 → 通过。**步骤 5:** 提交 `feat(flywheel): precision/recall/F1 and Wilson CI`。
+- [x] **步骤 4:** 运行 → 通过。**步骤 5:** 提交 `feat(flywheel): precision/recall/F1 and Wilson CI`。
 
 ---
 
