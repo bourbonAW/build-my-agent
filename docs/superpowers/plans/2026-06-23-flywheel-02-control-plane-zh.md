@@ -912,10 +912,10 @@ Engine spec 说这个仓库存在的唯一原因是将追踪链接到可重放�
 手动冒烟运行验证，而非单元测试 — 但它不能被跳过或
 描述为已完成。
 
-- [ ] **Step 1: 从 Bourbon 发出 eval 身份属性** — 在 eval 运行时，在根 span 上设置 OTel
+- [x] **Step 1: 从 Bourbon 发出 eval 身份属性** — 在 eval 运行时，在根 span 上设置 OTel
   span 属性 `eval.case_id`（Langfuse 数据集项 id）和 `eval.run_id`
   （数据集运行名称），与 Bourbon 已发出的 `gen_ai.*` 属性并列。这是 `bourbon` 可观测性连线的一个小改动。
-- [ ] **Step 2: `flywheel/scripts/sample_traces.py`** — 查询 Langfuse 获取约 20–50
+- [x] **Step 2: `flywheel/scripts/sample_traces.py`** — 查询 Langfuse 获取约 20–50
   条近期追踪，偏向 Engine §5 step 1 的**所有三个**分层 — 失败
   （低分/被标记/错误）、**高风险工具/沙箱路径**（涉及高风险工具或沙箱执行的追踪）、和**长多轮会话**（高
   span/轮次数）— 而非仅失败，这样池就不会对高风险但
@@ -936,7 +936,7 @@ Engine spec 说这个仓库存在的唯一原因是将追踪链接到可重放�
   标签过时）。`regression` 项**不**存储冻结输出；它们的输出来自
   baseline/candidate harness 运行（Step 4）。这是飞轮的人类
   部分；它设计上就是手动的，没有脚本。
-- [ ] **Step 4: `flywheel/scripts/run_harness.py`** — 在
+- [x] **Step 4: `flywheel/scripts/run_harness.py`** — 在
   **仅 `regression` 标签的项** 上执行 Bourbon 以创建 Langfuse **数据集运行**，
   供回归比较读取；**没有这一步就没有候选 `output` 可供
   评分。** 对于给定的 `Harness(git_sha, model)`（baseline = `main`，candidate = 
@@ -954,7 +954,7 @@ Engine spec 说这个仓库存在的唯一原因是将追踪链接到可重放�
   非确定性用例运行 ≥3×（Engine §7），每次重复一个数据集运行输出。
   **Judge 验证项（`judge_test`）*不*在此处重新运行** — 它们保留
   Step 3 的冻结标注输出，这样其黄金标签保持有效。
-- [ ] **Step 5: `flywheel/scripts/run_judge.py --split <judge_dev|judge_test|regression> [--run <name>]`** —
+- [x] **Step 5: `flywheel/scripts/run_judge.py --split <judge_dev|judge_test|regression> [--run <name>]`** —
   在**一个目标分割**上评分 judge，读取每个用例的 `input`/`output` 和
   数据集项的 `expected`/验收说明。`output` 来源因分割而异：
   对于 **`judge_dev`** 和 **`judge_test`**，没有 harness 数据集运行（Step 4
@@ -981,7 +981,7 @@ Engine spec 说这个仓库存在的唯一原因是将追踪链接到可重放�
   `uncertain` 评分（那样会膨胀弃权率并因协议故障惩罚 judge）。使用 `Harness(git_sha, model)` 作为运行的 harness id。
   **每个目标调用一次** — 它每次调用恰好评分一个分割/运行，所以
   冒烟路径运行它**三次**：`judge_test` 分割（从项元数据读冻结输出 — 无 harness 运行）、**baseline** `regression` 运行和 **candidate** `regression` 运行 — 每次各一个调用（Step 5）。≥3× 重复采样（Engine §7）是 **`regression`** 运行独有的属性 — 当预算允许时对那些非确定性用例评分 ≥3×，每次重复一个评分。**`judge_test`** 运行**每用例评分一次**，所以每个验证用例有单一 judge 判定来与其人类标签比较。
-- [ ] **Step 6: `flywheel/scripts/validate_judge.py [--split <judge_dev|judge_test>]`** —
+- [x] **Step 6: `flywheel/scripts/validate_judge.py [--split <judge_dev|judge_test>]`** —
   在提示词迭代期间，在 **`judge_dev`** 上运行（便宜、可重复 — 那是
   调优的反馈信号）；**门控**运行加载**留出的 `judge_test`
   分割**（默认），只评分一次。**首先对四个分割调用 `check_splits_disjoint(...)`**（纵深防御 — 即使
@@ -1000,7 +1000,7 @@ Engine spec 说这个仓库存在的唯一原因是将追踪链接到可重放�
   `pass`/`fail` 用例太少而不能信任）** 这样 CI 就不能用未验证的
   judge 门控变更（Engine §6）。这将完整的 judge 门控连入真实工作流，而不仅仅是
   单元测试。
-- [ ] **Step 7: `flywheel/scripts/run_regression.py`** — 首先**要求一个通过的
+- [x] **Step 7: `flywheel/scripts/run_regression.py`** — 首先**要求一个通过的
   `JudgeReport`**（读取 Step 6 写入的报告；
   如果缺失或其序列化的 **`passes` 为 false** 则拒绝比较 — 门控决策
   存在于 JSON 中，所以这无需重新推导门控逻辑就能尊重非默认支撑下限）。然后加载 baseline +
@@ -1021,7 +1021,7 @@ Engine spec 说这个仓库存在的唯一原因是将追踪链接到可重放�
   `write_regression_report(...)` 和 `write_regression_markdown(...)`，
   向每个传入 `baseline_harness` / `candidate_harness`（比较的两个 `Harness.id()`）
   和 `trace_urls=...`。
-- [ ] **Step 8: `flywheel/api/runs_provider.py`** — `/api/runs` 的**生产**数据源
+- [x] **Step 8: `flywheel/api/runs_provider.py`** — `/api/runs` 的**生产**数据源
   （Task 4 只注入了一个桩，所以这是单独实现和测试的，
   不是作为未测试的 lambda 遗留的）。暴露
   `list_runs(root, project, *, langfuse) -> list[dict]` 并将真实应用连接为

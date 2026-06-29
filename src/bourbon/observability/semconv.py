@@ -11,6 +11,8 @@ TOOL_SPAN_KIND = SpanKind.INTERNAL
 
 AGENT_WORKDIR_ATTR = "bourbon.agent.workdir"
 AGENT_ENTRYPOINT_ATTR = "bourbon.agent.entrypoint"
+EVAL_CASE_ID_ATTR = "eval.case_id"
+EVAL_RUN_ID_ATTR = "eval.run_id"
 TOOL_IS_ERROR_ATTR = "bourbon.tool.is_error"
 TOOL_SUSPENDED_ATTR = "bourbon.tool.suspended"
 TOOL_ERROR_ATTR = "error.type"
@@ -24,14 +26,24 @@ def tool_span_name(name: str) -> str:
     return f"execute_tool {name}"
 
 
-def agent_span_attributes(workdir: str, entrypoint: str) -> dict[str, object]:
-    return {
+def agent_span_attributes(
+    workdir: str,
+    entrypoint: str,
+    eval_case_id: str | None = None,
+    eval_run_id: str | None = None,
+) -> dict[str, object]:
+    attributes: dict[str, object] = {
         "gen_ai.operation.name": "invoke_agent",
         "gen_ai.provider.name": "bourbon",
         "gen_ai.agent.name": "bourbon",
         AGENT_WORKDIR_ATTR: workdir,
         AGENT_ENTRYPOINT_ATTR: entrypoint,
     }
+    if eval_case_id:
+        attributes[EVAL_CASE_ID_ATTR] = eval_case_id
+    if eval_run_id:
+        attributes[EVAL_RUN_ID_ATTR] = eval_run_id
+    return attributes
 
 
 def llm_request_attributes(model: str, max_tokens: int, provider: str) -> dict[str, object]:

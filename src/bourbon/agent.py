@@ -204,6 +204,8 @@ class Agent:
 
         self._obs_manager = ObservabilityManager(config.observability)
         self._tracer = self._obs_manager.get_tracer()
+        self._eval_case_id: str | None = None
+        self._eval_run_id: str | None = None
 
         # Permission runtime state
         self.session_permissions = SessionPermissionStore()
@@ -230,6 +232,11 @@ class Agent:
     def _get_tracer(self) -> BourbonTracer:
         """Return the agent's tracer, falling back to a no-op tracer for test stubs."""
         return getattr(self, "_tracer", BourbonTracer(otel_tracer=None))
+
+    def set_eval_context(self, *, case_id: str | None, run_id: str | None) -> None:
+        """Attach eval identity to the next root agent spans for Langfuse trace linking."""
+        self._eval_case_id = case_id
+        self._eval_run_id = run_id
 
     def _resolve_canonical_path(self) -> Path:
         """Resolve the canonical project path for memory key derivation."""
@@ -324,7 +331,12 @@ class Agent:
         """Process one user input and return assistant response."""
         tracer = self._get_tracer()
         try:
-            with tracer.agent_step(workdir=str(self.workdir), entrypoint="step"):
+            with tracer.agent_step(
+                workdir=str(self.workdir),
+                entrypoint="step",
+                eval_case_id=getattr(self, "_eval_case_id", None),
+                eval_run_id=getattr(self, "_eval_run_id", None),
+            ):
                 return self._step_impl(user_input)
         finally:
             self.force_flush_observability()
@@ -373,7 +385,12 @@ class Agent:
         """
         tracer = self._get_tracer()
         try:
-            with tracer.agent_step(workdir=str(self.workdir), entrypoint="step_stream"):
+            with tracer.agent_step(
+                workdir=str(self.workdir),
+                entrypoint="step_stream",
+                eval_case_id=getattr(self, "_eval_case_id", None),
+                eval_run_id=getattr(self, "_eval_run_id", None),
+            ):
                 return self._step_stream_impl(user_input, on_text_chunk)
         finally:
             self.force_flush_observability()

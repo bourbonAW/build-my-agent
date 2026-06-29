@@ -89,11 +89,17 @@ class BourbonTracer:
                 raise
 
     @contextmanager
-    def agent_step(self, workdir: str, entrypoint: str = "step") -> Generator[Any, None, None]:
+    def agent_step(
+        self,
+        workdir: str,
+        entrypoint: str = "step",
+        eval_case_id: str | None = None,
+        eval_run_id: str | None = None,
+    ) -> Generator[Any, None, None]:
         with self._span(
             AGENT_SPAN_NAME,
             kind=AGENT_SPAN_KIND,
-            attributes=agent_span_attributes(workdir, entrypoint),
+            attributes=agent_span_attributes(workdir, entrypoint, eval_case_id, eval_run_id),
         ) as span:
             yield span
 

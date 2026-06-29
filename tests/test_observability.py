@@ -19,6 +19,8 @@ from bourbon.observability.semconv import (
     AGENT_ENTRYPOINT_ATTR,
     AGENT_SPAN_KIND,
     AGENT_SPAN_NAME,
+    EVAL_CASE_ID_ATTR,
+    EVAL_RUN_ID_ATTR,
     TOOL_ERROR_ATTR,
     TOOL_IS_ERROR_ATTR,
     TOOL_SPAN_KIND,
@@ -79,6 +81,25 @@ def test_semconv_agent_span_metadata_is_centralized():
         "bourbon.agent.workdir": "/tmp/project",
         "bourbon.agent.entrypoint": "step_stream",
     }
+
+
+def test_semconv_agent_span_metadata_includes_eval_identity_when_present():
+    assert agent_span_attributes(
+        "/tmp/project",
+        "step",
+        eval_case_id="case_123",
+        eval_run_id="run_456",
+    ) == {
+        "gen_ai.operation.name": "invoke_agent",
+        "gen_ai.provider.name": "bourbon",
+        "gen_ai.agent.name": "bourbon",
+        "bourbon.agent.workdir": "/tmp/project",
+        "bourbon.agent.entrypoint": "step",
+        "eval.case_id": "case_123",
+        "eval.run_id": "run_456",
+    }
+    assert EVAL_CASE_ID_ATTR == "eval.case_id"
+    assert EVAL_RUN_ID_ATTR == "eval.run_id"
 
 
 def test_semconv_llm_and_tool_helpers_build_expected_attributes():
@@ -245,12 +266,20 @@ def test_disabled_agent_does_not_reuse_enabled_tracer(monkeypatch, tmp_path):
 class RecordingTracer:
     def __init__(self):
         self.entrypoints = []
+        self.eval_contexts = []
         self.llm_calls = []
         self.events = []
 
     @contextmanager
-    def agent_step(self, workdir: str, entrypoint: str = "step"):
+    def agent_step(
+        self,
+        workdir: str,
+        entrypoint: str = "step",
+        eval_case_id: str | None = None,
+        eval_run_id: str | None = None,
+    ):
         self.entrypoints.append(entrypoint)
+        self.eval_contexts.append((eval_case_id, eval_run_id))
         self.events.append(f"{entrypoint}:enter")
         try:
             yield object()
@@ -299,8 +328,7 @@ def make_entrypoint_agent(tmp_path):
     agent.workdir = tmp_path
     agent._tracer = RecordingTracer()
     agent._obs_manager = SimpleNamespace(
-        force_flush=lambda timeout=None: agent._tracer.events.append(f"flush:{timeout}")
-        or True
+        force_flush=lambda timeout=None: agent._tracer.events.append(f"flush:{timeout}") or True
     )
     agent._prompt_builder = AsyncPromptBuilder()
     agent._prompt_ctx = object()
@@ -344,8 +372,7 @@ def test_resume_permission_request_records_resume_entrypoint(tmp_path):
     agent.workdir = tmp_path
     agent._tracer = RecordingTracer()
     agent._obs_manager = SimpleNamespace(
-        force_flush=lambda timeout=None: agent._tracer.events.append(f"flush:{timeout}")
-        or True
+        force_flush=lambda timeout=None: agent._tracer.events.append(f"flush:{timeout}") or True
     )
     agent.suspended_tool_round = None
 
@@ -379,6 +406,7 @@ def make_llm_loop_agent(tmp_path, llm):
         get_messages_for_llm=lambda: [{"role": "user", "content": "hi"}],
         add_message=lambda msg: None,
         save=lambda: None,
+        context_manager=SimpleNamespace(record_response_tokens=lambda tokens: None),
     )
     return agent
 
@@ -439,9 +467,7 @@ def test_sync_llm_path_omits_token_attrs_when_usage_missing(tmp_path):
     assert agent._run_conversation_loop() == "done"
 
     call = agent._tracer.llm_calls[0]
-    assert agent._tracer.recorded_llm_responses == [
-        (call["span"], "end_turn", None, None)
-    ]
+    assert agent._tracer.recorded_llm_responses == [(call["span"], "end_turn", None, None)]
     assert call["span"].attributes == {}
 
 
@@ -645,8 +671,7 @@ def test_tool_execution_queue_uses_mark_tool_result_helper_for_semantic_errors()
     q.execute_all()
 
     assert [
-        (is_error, error_type, message)
-        for _, is_error, error_type, message in tracer.tool_results
+        (is_error, error_type, message) for _, is_error, error_type, message in tracer.tool_results
     ] == [(True, "custom_tool_error", "bad things happened")]
     assert tracer.recorded_errors == []
 
@@ -664,8 +689,7 @@ def test_tool_execution_queue_exception_uses_single_outcome_recording_via_record
     q.execute_all()
 
     assert [
-        (is_error, error_type, message)
-        for _, is_error, error_type, message in tracer.tool_results
+        (is_error, error_type, message) for _, is_error, error_type, message in tracer.tool_results
     ] == [(True, "ValueError", "boom")]
     assert [type(exc).__name__ for _, exc in tracer.recorded_errors] == ["ValueError"]
 
@@ -997,6 +1021,22 @@ def test_otel_root_span_records_agent_attributes():
     assert span.attributes["gen_ai.agent.name"] == "bourbon"
     assert span.attributes["bourbon.agent.workdir"] == "/tmp/project"
     assert span.attributes["bourbon.agent.entrypoint"] == "step_stream"
+
+
+def test_otel_root_span_records_eval_identity_attributes():
+    tracer, exporter = _make_test_tracer()
+
+    with tracer.agent_step(
+        workdir="/tmp/project",
+        entrypoint="step",
+        eval_case_id="case_123",
+        eval_run_id="run_456",
+    ):
+        pass
+
+    span = _span_named(exporter, "invoke_agent bourbon")
+    assert span.attributes["eval.case_id"] == "case_123"
+    assert span.attributes["eval.run_id"] == "run_456"
 
 
 def test_otel_agent_span_uses_explicit_kind():
