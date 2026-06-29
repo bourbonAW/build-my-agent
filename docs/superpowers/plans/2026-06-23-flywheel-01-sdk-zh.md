@@ -88,7 +88,7 @@ strict = true
 - `JudgeVersion = str`（别名；一个 **URL 安全的 slug** `^[A-Za-z0-9._@-]+$`，因为它是报告文件名 / `/api/judges/{judge_version}` 路径段 — 不是生命周期）。
 - `validate_judge_version(value: str) -> str` — 除非 `value` 匹配 JudgeVersion slug 否则抛出 `ValueError`；在类型边界（`compare()`、`validate()`、`JudgeConfig.__post_init__`）强制执行，而非仅在报告写入时。
 
-- [ ] **步骤 1: 失败测试** `tests/test_identity.py`
+- [x] **步骤 1: 失败测试** `tests/test_identity.py`
 
 ```python
 import pytest
@@ -118,8 +118,8 @@ def test_harness_id_changes_with_model():
     assert a != b
 ```
 
-- [ ] **步骤 2:** 运行 → 失败（`ModuleNotFoundError`）。
-- [ ] **步骤 3: 实现** `flywheel/flywheel/identity.py`
+- [x] **步骤 2:** 运行 → 失败（`ModuleNotFoundError`）。
+- [x] **步骤 3: 实现** `flywheel/flywheel/identity.py`
 
 ```python
 """Minimal eval identity (Engine §4). Four concepts carry the loop:
@@ -160,7 +160,7 @@ class Harness:
         return f"{self.git_sha[:7]}@{self.model}"
 ```
 
-- [ ] **步骤 4:** 运行 → 通过。**步骤 5:** 提交 `feat(flywheel): minimal identity (Harness + Label)`。
+- [x] **步骤 4:** 运行 → 通过。**步骤 5:** 提交 `feat(flywheel): minimal identity (Harness + Label)`。
 
 ---
 
