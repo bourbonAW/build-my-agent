@@ -172,7 +172,11 @@ The judge is the one asset worth real rigor (per `llm-eval` stages 4–5).
   signal; the system prompt stays neutral.
 - The human-labeled cases are partitioned **60/20/20** as a data-prep step:
   `train` supplies the judge's few-shot examples, `dev` is used while iterating
-  the prompt, and the disjoint `test` split is the held-out validation set.
+  the prompt, and the disjoint `test` split is the held-out validation set. These
+  splits **plus** the `regression` set must be **mutually disjoint** — enforced by an
+  executable load-time check (`check_splits_disjoint`), not just convention, because a
+  `train` few-shot case that also appears in `test` silently inflates the gate and
+  `validate()` (which only sees the held-out list) can't detect it.
 - **Pool sizing is separate from the §5 error-analysis sample.** The "~20–50 traces"
   in §5 is the *error-analysis* sample (enough to cluster failure labels). The
   *judge-validation pool* must be **larger and stratified**: the held-out 20% `test`

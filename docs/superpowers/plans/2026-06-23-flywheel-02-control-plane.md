@@ -529,9 +529,10 @@ def test_unsafe_run_id_rejected(tmp_path: Path):
     base = [CaseScore("a", "pass")]
     rep = compare(base, base, regression_case_ids={"a"}, validation_case_ids=set(),
                   baseline_judge_version="jv1", candidate_judge_version="jv1")
-    with pytest.raises(ValueError, match="unsafe id segment"):
-        write_regression_report(tmp_path, "bourbon", "../../escape", rep,
-                                baseline_harness="a@m", candidate_harness="b@m")
+    for bad in ("../../escape", "run\n", ".", ".."):     # fullmatch: trailing-\n / dot are unsafe
+        with pytest.raises(ValueError, match="unsafe id segment"):
+            write_regression_report(tmp_path, "bourbon", bad, rep,
+                                    baseline_harness="a@m", candidate_harness="b@m")
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/report.py`
@@ -548,7 +549,7 @@ from pathlib import Path
 from .regression import RegressionReport
 from .validate import JudgeReport
 
-_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9._@-]+$")
+_SAFE_SEGMENT = re.compile(r"[A-Za-z0-9._@-]+")  # used with fullmatch — no ^…$ trailing-\n hole
 
 
 def _reports_dir(root: Path, project: str, kind: str) -> Path:
@@ -562,7 +563,7 @@ def _safe_segment(value: str) -> str:
     run_id/judge_version with a space, '?', '#', '/', '\\', NUL, or unicode can't
     escape the reports dir or break the `/api/...` path — reject rather than sanitize,
     so a non-slug id fails loudly at write time instead of silently relocating."""
-    if not _SAFE_SEGMENT.match(value) or value in (".", ".."):
+    if not _SAFE_SEGMENT.fullmatch(value) or value in (".", ".."):
         raise ValueError(f"unsafe id segment: {value!r}")
     return value
 
@@ -867,13 +868,13 @@ npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom @pl
   - `/runs` — `RunSummary[]` table: run id, harness, judge version, judge status — **render `judgeF1` (macro-F1) whenever it is non-null, including when `judgeValidated === false`** (don't hide the number); `judgeValidated` drives only the badge (`validated` vs `judge: not validated`, the latter linking to `/judges/:judgeVersion`); show `not available` **only** when `judgeF1`/`judgeValidated` are null (no report) — UI §6/§9. Then pass rate + CI bar, #not-passed, Langfuse link.
   - `/runs/:runId` — `RegressionReport`: baseline vs candidate harness, judge version (with the "same judge" note), pass-rate delta + CI, result badge (`better` green / `no_change` amber / `worse` red), per-label delta table, fixed / newly-broken lists with Langfuse trace deep links, and the **disjointness note** "regression set ∩ judge case pool = ∅" rendered as a static invariant (UI §6 — the report's existence proves it, no data field).
   - `/judges/:judgeVersion` — `JudgeReport`: macro-F1 vs threshold + validated/`passes` badge, gold pass/fail counts vs the support floor, per-label precision/recall/**F1** (fail-class F1 flagged against its own 0.70 gate, so a `passes=false` at healthy macro-F1 is explained), confusion matrix.
-  - **Empty / error states (UI §9):** `/runs` with no runs shows the "how to run the eval script" empty state + Langfuse sample-traces link; `/runs/:runId` with a missing report (404) shows "run regression.py to produce this report". For a fixed/newly-broken case, distinguish two trace states (UI §9): when `traceUrl === ""` (no URL in the report) render the row with **no link**; when a `traceUrl` is present but the trace is gone in Langfuse, **keep the link** and mark it `unavailable` (don't drop a real deep link the user may still want).
+  - **Empty / error states (UI §9):** `/runs` with no runs shows the "how to run the eval script" empty state + Langfuse sample-traces link; `/runs/:runId` with a missing report (404) shows "run regression.py to produce this report". For a fixed/newly-broken case (UI §9): when `traceUrl === ""` render the row with **no link**; when a `traceUrl` is present, always render it as a link (the read-only API serves report JSON and does not probe Langfuse for trace existence, so there is no "present-but-gone" state to mark — a deleted trace simply 404s in Langfuse on click).
 
 - [ ] **Step 4: Component tests (Vitest + Testing Library)**
   - runs table renders rows + CI, and the three judge states: validated (F1 shown), `not validated` (`judgeValidated === false`, badge + `/judges/:v` link, **F1 still shown** — the number isn't hidden), and `not available` (`judgeF1`/`judgeValidated` null).
   - regression report renders all three result badges (parametrized) and the static disjointness note.
   - judge report renders macro-F1 vs threshold, the `passes` badge, per-label F1 (incl. the fail-class F1 gate), and confusion matrix.
-  - **UI §9 states:** empty `/runs` (no runs) renders the empty state, not a blank table; a 404 `/runs/:runId` renders the "report not generated" state, not a crash; a case with `traceUrl === ""` renders the row with no link; a case with a present-but-unavailable trace keeps the link with an `unavailable` marker (UI §9).
+  - **UI §9 states:** empty `/runs` (no runs) renders the empty state, not a blank table; a 404 `/runs/:runId` renders the "report not generated" state, not a crash; a case with `traceUrl === ""` renders the row with no link; a case with a present `traceUrl` renders the link (UI §9 — no trace-availability probing in the read-only API).
 
 - [ ] **Step 5: One Playwright happy path**
   - mock the read API → open `/runs` → click a run → assert the result badge and a working Langfuse deep-link `href`.
@@ -955,7 +956,11 @@ described as done.
   against** (score `judge_dev` → `validate` → tweak prompt/examples → repeat, as
   often as you like); **`judge_test` is reserved for the final gate, scored once** —
   iterating against `judge_test` would tune on the held-out set and inflate the gate.
-  Build
+  After reading the dataset's split tags, **call `check_splits_disjoint({judge_train,
+  judge_dev, judge_test, regression})` (plan 01 Task 4)** — a case tagged both
+  `judge_train` (few-shot) and `judge_test` would leak and inflate the gate, and
+  `validate()` can't see it, so the partition is enforced here, loudly, before any
+  scoring. Build
   the judge's few-shot examples **only from `judge_train` items** (never `judge_dev`
   / `judge_test` / `regression` — that would leak the validation set), call
   `Judge.score_case(case_input, case_output, acceptance)` with `complete` wired to
@@ -982,7 +987,10 @@ described as done.
 - [ ] **Step 6: `flywheel/scripts/validate_judge.py [--split <judge_dev|judge_test>]`** —
   during prompt iteration, run it on **`judge_dev`** (cheap, repeatable — that's the
   feedback signal for tuning); the **gating** run loads the **held-out `judge_test`
-  split** (default), scored once. Load the chosen split as `LabeledCase`s — `human`
+  split** (default), scored once. **Call `check_splits_disjoint(...)` on the four
+  splits first** (defense-in-depth — catch a leaked `train`/`dev` case even if
+  `run_judge` was skipped, since leakage here directly inflates the gate F1). Load
+  the chosen split as `LabeledCase`s — `human`
   from the gold annotation (`pass`/`fail`), `judge` read back from the Step 5
   categorical score on the
   **same frozen output the human annotated** (Step 3 — no harness rerun for
@@ -1020,7 +1028,9 @@ described as done.
   the harness silently dropped fails the completeness gate, not slips through) and
   the latter **union** as `validation_case_ids` — not just `judge_test`, since a
   regression case that was a `train` (few-shot) or `dev` (prompt-tuning) case is
-  leaked too. Then build the `case_id → Langfuse trace URL` map — for a **repeated**
+  leaked too. (Run `check_splits_disjoint(...)` on the four splits when loading them,
+  so a mis-tagged partition fails loudly here too.) Then build the
+  `case_id → Langfuse trace URL` map — for a **repeated**
   case, pick a **representative** trace whose own verdict matches the case's
   aggregated majority label (deterministically, e.g. the first such repeat), so the
   deep link shows evidence consistent with the `fixed`/`newly-broken` classification

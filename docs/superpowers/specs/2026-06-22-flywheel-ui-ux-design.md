@@ -233,7 +233,7 @@ no audit log in MVP.
 |---|---|
 | No runs yet | Show how to run the eval script; link to Langfuse to sample traces. |
 | Judge not validated | Run badge shows `judge: not validated`; link to `/judges/:v`. |
-| Trace missing in Langfuse | Keep the case row, mark trace `unavailable`, keep the link. |
+| Case has no trace URL (`traceUrl === ""`) | Keep the case row; render **no link** (nothing to point to). The read API serves report JSON only and does **not** probe Langfuse for trace existence, so there is no "present-but-gone" state to mark — a present `traceUrl` is always rendered as a link (clicking it surfaces Langfuse's own 404 if the trace was deleted). |
 | Change not significant | Render `no_change` (amber) when the exact paired sign test isn't significant (not "the Wilson band crosses zero"); the delta + descriptive CI are still shown, but do not imply a win. |
 | Report not generated yet | Show "run regression.py to produce this report." |
 

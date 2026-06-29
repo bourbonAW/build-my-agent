@@ -95,11 +95,18 @@ strict = true
 - [ ] **Step 1: failing test** `tests/test_identity.py`
 
 ```python
-from flywheel.identity import Harness, Label, HumanLabel
+import pytest
+from flywheel.identity import Harness, Label, HumanLabel, validate_judge_version
 from typing import get_args
 
 def test_label_values():
     assert set(get_args(Label)) == {"pass", "fail", "skip", "uncertain"}
+
+def test_judge_version_slug_accepts_and_rejects():
+    assert validate_judge_version("judge-v2.1@m") == "judge-v2.1@m"
+    for bad in ("judge:v1", "judge/v1", "judge v1", "judge-v1\n", ".", "..", ""):
+        with pytest.raises(ValueError, match="invalid judge_version"):
+            validate_judge_version(bad)   # fullmatch + dot guard: no trailing-\n / dot-segment holes
 
 def test_human_label_is_binary():
     assert set(get_args(HumanLabel)) == {"pass", "fail"}
@@ -134,15 +141,17 @@ HumanLabel = Literal["pass", "fail"]  # a human annotation is gold and binary
 JudgeVersion = str  # a URL-safe slug ^[A-Za-z0-9._@-]+$ (it is a report filename /
 # /api/judges/{judge_version} segment), e.g. "judge-v2" — not a lifecycle
 
-_JUDGE_VERSION_RE = re.compile(r"^[A-Za-z0-9._@-]+$")
+_JUDGE_VERSION_RE = re.compile(r"[A-Za-z0-9._@-]+")  # fullmatch — no ^…$ trailing-\n hole
 
 
 def validate_judge_version(value: str) -> str:
     """Enforce the JudgeVersion slug contract at the typed boundary (not just at the
-    report-filename write). A bad value like "judge:v1" / "judge/v1" must fail where
-    it enters the core — JudgeConfig, validate(), compare() — not late at write time."""
-    if not _JUDGE_VERSION_RE.match(value):
-        raise ValueError(f"invalid judge_version {value!r}; must match ^[A-Za-z0-9._@-]+$")
+    report-filename write). A bad value like "judge:v1" / "judge/v1" / a trailing
+    newline / "."/".." must fail where it enters the core — JudgeConfig, validate(),
+    compare() — not late at write time. `fullmatch` (not `match` + `$`, which accepts
+    a trailing newline) and the explicit dot check make it a real path segment."""
+    if not _JUDGE_VERSION_RE.fullmatch(value) or value in (".", ".."):
+        raise ValueError(f"invalid judge_version {value!r}; must be a slug [A-Za-z0-9._@-]+ and not '.'/'..'")
     return value
 
 
@@ -243,7 +252,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
 **Interfaces:**
 - `RegressionResult = Literal["better", "no_change", "worse"]`
 - `@dataclass(frozen=True) class CaseScore(case_id: str, label: Label, failure_label: str | None = None)` — `label` is the typed `Label` (`pass`/`fail`/`skip`/`uncertain`); `__post_init__` rejects any other value so a malformed Langfuse score (`"PASS"`, `"error"`, `""`) raises at ingestion instead of being silently miscounted as a failure. `failure_label` is a free string from `labels.md` / a Langfuse score comment, used for per-label deltas (Engine §7).
-- `@dataclass(frozen=True) class RegressionReport(result, judge_version, baseline_rate, candidate_rate, candidate_rate_low, candidate_rate_high, candidate_non_pass_count, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `judge_version` is the single version `compare()` asserted both sides share (so report.py serializes the *gated* version, not an arbitrary caller string); `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `candidate_rate` + `candidate_rate_low/high` are the candidate run's **case-level** Wilson CI and `candidate_non_pass_count` its case-level non-pass count, computed from the **same aggregated scores `compare()` gates on** — so `RunSummary.passRate`/`nonPassCount` (served from the report) can never disagree with the regression report on a run with repeats; `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts.
+- `@dataclass(frozen=True) class RegressionReport(result, judge_version, baseline_rate, candidate_rate, candidate_rate_low, candidate_rate_high, candidate_non_pass_count, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `judge_version` is the single version `compare()` asserted both sides share (so report.py serializes the *gated* version, not an arbitrary caller string); `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `candidate_rate` + `candidate_rate_low/high` are the candidate run's **case-level** Wilson CI and `candidate_non_pass_count` its case-level non-pass count, computed from the **same aggregated scores `compare()` gates on** — so `RunSummary.passRate`/`nonPassCount` (served from the report) can never disagree with the regression report on a run with repeats; `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts (a non-pass case with no `failure_label` is bucketed as `"unlabeled"`, never silently dropped).
 - `compare(baseline, candidate, *, regression_case_ids: set[str], validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
   - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
   - **completeness gate:** raises `ValueError` unless the compared cases are **exactly** `regression_case_ids` (the full declared regression split read from the dataset). A silently dropped case (harness error, missing score) must not let a candidate pass the gate on an easier subset; "same scored ids on both sides" alone can't catch a case both runs skipped.
@@ -251,6 +260,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
   - assigns `better`/`worse`/`no_change` by an **exact two-sided paired sign test** (McNemar exact) on the discordant pairs (Engine §7); the Wilson delta CI is kept only as the descriptive interval (it is anti-conservative on tiny discordant counts).
 - `aggregate_repeats(scores: list[CaseScore]) -> list[CaseScore]` — collapses repeated scorings of the same `case_id` (Engine §7 "sample ≥3× for nondeterministic cases") into one `CaseScore` by majority vote: a case is `pass` only if a strict majority of its repeats passed (ties → not-a-pass, conservative); the kept `failure_label` is the most common one among the non-pass repeats. Single-run cases pass through unchanged, so callers that don't repeat are unaffected. `run_regression.py` (plan 02 Task 6) calls this before `compare()`.
 - `check_repeat_budgets(baseline, candidate, *, min_repeats=3) -> None` — pure, unit-tested guard run **before** `aggregate_repeats` (which discards counts): raises `ValueError` if any case has an **unequal** score count across baseline/candidate (unfair majority vote) or is sampled `>1` but `< min_repeats` (under-powered half-sample). `compare()` can't see this post-aggregation, so the check lives here rather than in I/O glue; `run_regression.py` calls it first.
+- `check_splits_disjoint(splits: dict[str, set[str]]) -> None` — pure, unit-tested guard: raises `ValueError` if any two of the dataset's case-id splits (`judge_train`/`judge_dev`/`judge_test`/`regression`) overlap. The 60/20/20 partition + regression set must be disjoint or a few-shot/dev case leaks into the held-out gate and inflates it; `validate()` only sees the held-out list and can't detect it. The split loaders (`run_judge.py`, `validate_judge.py`, `run_regression.py`) call it right after reading the splits.
 
 - [ ] **Step 1: failing test** `tests/test_regression.py`
 
@@ -357,6 +367,13 @@ def test_per_label_failure_counts():
     row = next(r for r in rep.per_label if r["label"] == "tool_misuse")
     assert row["baseline"] == 2 and row["candidate"] == 1
 
+def test_unlabeled_non_pass_is_bucketed_not_dropped():
+    base = [CaseScore("a", "fail"), CaseScore("b", "fail", "tool_misuse")]  # a has no failure_label
+    cand = [CaseScore("a", "fail"), CaseScore("b", "pass")]
+    rows = {r["label"]: r for r in _cmp(base, cand).per_label}
+    assert rows["unlabeled"]["baseline"] == 1 and rows["unlabeled"]["candidate"] == 1  # not dropped
+    assert rows["tool_misuse"]["baseline"] == 1 and rows["tool_misuse"]["candidate"] == 0
+
 def test_aggregate_repeats_majority_vote():
     from flywheel.regression import aggregate_repeats
     runs = [
@@ -391,6 +408,15 @@ def test_repeat_budget_under_min_raises():
     from flywheel.regression import check_repeat_budgets
     with pytest.raises(ValueError, match="repeat once or >="):
         check_repeat_budgets([CaseScore("a", "pass")] * 2, [CaseScore("a", "pass")] * 2)
+
+def test_splits_disjoint_ok():
+    from flywheel.regression import check_splits_disjoint
+    check_splits_disjoint({"judge_train": {"a", "b"}, "judge_test": {"c"}, "regression": {"d"}})
+
+def test_splits_overlap_raises():
+    from flywheel.regression import check_splits_disjoint
+    with pytest.raises(ValueError, match="split overlap"):
+        check_splits_disjoint({"judge_train": {"a", "b"}, "judge_test": {"b"}})  # b leaks train→test
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/regression.py`
@@ -473,8 +499,11 @@ def _labels_by_case(scores: list[CaseScore]) -> dict[str, str]:
 def _fail_counts(scores: list[CaseScore]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for s in scores:
-        if s.label != "pass" and s.failure_label:
-            counts[s.failure_label] = counts.get(s.failure_label, 0) + 1
+        if s.label != "pass":
+            # Bucket a missing/empty failure_label as "unlabeled" rather than silently
+            # dropping it: Engine §5 wants every regression item labeled, but a forgotten
+            # label must surface in the per-label deltas, not undercount fixes/breaks.
+            counts[s.failure_label or "unlabeled"] = counts.get(s.failure_label or "unlabeled", 0) + 1
     return counts
 
 
@@ -543,6 +572,25 @@ def check_repeat_budgets(
             raise ValueError(
                 f"case {cid!r} sampled {bc[cid]}x: repeat once or >= {min_repeats}x (Engine §7)"
             )
+
+
+def check_splits_disjoint(splits: dict[str, set[str]]) -> None:
+    """Pure, tested guard: raise if any two of the dataset's case-id splits share a
+    case. The pipeline depends on `judge_train` / `judge_dev` / `judge_test` /
+    `regression` being a **true partition** (Engine §5/§6) — a case used as a few-shot
+    (`train`) example that also appears in `judge_test` leaks and inflates the gate,
+    and `validate()` only sees the held-out list so it cannot detect it. The split
+    loaders (`run_judge.py`, `validate_judge.py`, `run_regression.py`) call this on the
+    four named splits right after reading them from the dataset."""
+    names = list(splits)
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            overlap = splits[names[i]] & splits[names[j]]
+            if overlap:
+                raise ValueError(
+                    f"split overlap: {names[i]} ∩ {names[j]} = {sorted(overlap)}; "
+                    "judge_train/judge_dev/judge_test/regression must be a true partition"
+                )
 
 
 def compare(
