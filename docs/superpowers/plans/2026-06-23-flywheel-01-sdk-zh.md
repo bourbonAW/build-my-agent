@@ -258,7 +258,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
 - `check_repeat_budgets(baseline, candidate, *, min_repeats=3) -> None` — 纯函数、可单元测试的守卫，在 `aggregate_repeats`（会丢弃计数）**之前**运行：如果任何用例在基线/候选之间的评分计数**不等**（不公平的多数投票）或被采样 `>1` 次但 `< min_repeats`（欠动力半样本），则抛出 `ValueError`。`compare()` 在聚合后无法看到这一点，因此检查位于此处而非 I/O 胶水中；`run_regression.py` 首先调用它。
 - `check_splits_disjoint(splits: dict[str, set[str]]) -> None` — 纯函数、可单元测试的守卫：如果数据集的用例 id 拆分（`judge_train`/`judge_dev`/`judge_test`/`regression`）中任意两个重叠则抛出 `ValueError`。60/20/20 分区 + 回归集必须不相交，否则 few-shot/dev 用例泄漏到保留门控中并使其膨胀；`validate()` 仅看到保留列表，无法检测到它。拆分加载器（`run_judge.py`、`validate_judge.py`、`run_regression.py`）在读取拆分后立即调用它。
 
-- [ ] **步骤 1: 失败测试** `tests/test_regression.py`
+- [x] **步骤 1: 失败测试** `tests/test_regression.py`
 
 ```python
 import pytest
@@ -415,7 +415,7 @@ def test_splits_overlap_raises():
         check_splits_disjoint({"judge_train": {"a", "b"}, "judge_test": {"b"}})  # b leaks train→test
 ```
 
-- [ ] **步骤 2:** 运行 → 失败。**步骤 3: 实现** `flywheel/flywheel/regression.py`
+- [x] **步骤 2:** 运行 → 失败。**步骤 3: 实现** `flywheel/flywheel/regression.py`
 
 ```python
 """Baseline vs candidate regression (Engine §7): better | no_change | worse.
@@ -692,10 +692,10 @@ def compare(
     )
 ```
 
-- [ ] **步骤 4:** 运行 → 通过。
-- [ ] **步骤 5:** 种子文件 `flywheel/labels.md`，含扁平列表（每行一个标签 + 一行定义）。
-- [ ] **步骤 6:** 完整套件 + lint + 类型检查: `pytest -q && ruff check flywheel tests && mypy flywheel`。
-- [ ] **步骤 7:** 提交 `feat(flywheel): three-value regression comparison + seed labels`。
+- [x] **步骤 4:** 运行 → 通过。
+- [x] **步骤 5:** 种子文件 `flywheel/labels.md`，含扁平列表（每行一个标签 + 一行定义）。
+- [x] **步骤 6:** 完整套件 + lint + 类型检查: `pytest -q && ruff check flywheel tests && mypy flywheel`。
+- [x] **步骤 7:** 提交 `feat(flywheel): three-value regression comparison + seed labels`。
 
 ---
 

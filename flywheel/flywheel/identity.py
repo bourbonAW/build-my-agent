@@ -20,8 +20,7 @@ def validate_judge_version(value: str) -> str:
     """Enforce the JudgeVersion slug contract at the typed boundary."""
     if not _JUDGE_VERSION_RE.fullmatch(value) or value in (".", ".."):
         raise ValueError(
-            f"invalid judge_version {value!r}; must be a slug [A-Za-z0-9._@-]+ "
-            "and not '.'/'..'"
+            f"invalid judge_version {value!r}; must be a slug [A-Za-z0-9._@-]+ and not '.'/'..'"
         )
     return value
 
