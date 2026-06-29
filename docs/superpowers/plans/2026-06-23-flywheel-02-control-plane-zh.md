@@ -697,7 +697,7 @@ def read_json(path: Path) -> dict[str, object]:
 - 只读：无 POST，无 auth，无幂等性。浏览器永远不会接收 Langfuse 写入凭证（UI §4）。
 - **打包：** 此任务创建了兄弟 `api/` 包，所以在重新安装之前，将 `api` 添加到 `flywheel/pyproject.toml` 中的 `[tool.hatch.build.targets.wheel] packages`（plan 01 只有 `packages = ["flywheel"]`）。
 
-- [ ] **Step 1: 失败测试** `tests/api/test_read_api.py`
+- [x] **Step 1: 失败测试** `tests/api/test_read_api.py`
 
 ```python
 from pathlib import Path
@@ -781,7 +781,7 @@ def test_contained_path_guards_traversal_directly(tmp_path):
     assert _contained_path(base, "run_1") == (base / "run_1.json").resolve()  # ok
 ```
 
-- [ ] **Step 2:** 运行 → 失败。**Step 3: 实现** `flywheel/api/read_api.py`
+- [x] **Step 2:** 运行 → 失败。**Step 3: 实现** `flywheel/api/read_api.py`
 
 ```python
 """Thin read-only API serving report JSON + Langfuse run summaries (UI §4, §8)."""
@@ -847,12 +847,12 @@ def create_app(root: Path, *, project: str,
     return app
 ```
 
-- [ ] **Step 4: 打包 `api`** — 编辑 `flywheel/pyproject.toml` 使兄弟
+- [x] **Step 4: 打包 `api`** — 编辑 `flywheel/pyproject.toml` 使兄弟
   包在 wheel 中分发：`[tool.hatch.build.targets.wheel] packages = ["flywheel", "api"]`
   （plan 01 只有 `["flywheel"]`），然后重新运行 `uv pip install -e ".[dev]"`。
   验证 `python -c "import api.read_api"` 能从源代码根目录**外部**工作
   （这样是构建暴露了 `api`，而不仅仅是 `pythonpath = ["."]`）。
-- [ ] **Step 5:** 运行 → 通过。**Step 6:** `pytest tests/api -q && ruff check api flywheel tests && mypy flywheel api`。**Step 7:** 提交 `feat(api): thin read-only API for runs and judge reports`。
+- [x] **Step 5:** 运行 → 通过。**Step 6:** `pytest tests/api -q && ruff check api flywheel tests && mypy flywheel api`。**Step 7:** 提交 `feat(api): thin read-only API for runs and judge reports`。
 
 ---
 

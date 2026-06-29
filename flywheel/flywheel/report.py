@@ -105,8 +105,7 @@ def write_regression_markdown(
         lines.append(f"- **Candidate PR:** {candidate_pr_url}")
     lines += ["", "## Per-label failures", "", "| label | baseline | candidate |", "|---|---|---|"]
     lines += [
-        f"| {row['label']} | {row['baseline']} | {row['candidate']} |"
-        for row in report.per_label
+        f"| {row['label']} | {row['baseline']} | {row['candidate']} |" for row in report.per_label
     ]
     lines += [
         "",

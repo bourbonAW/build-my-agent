@@ -63,7 +63,9 @@ def test_judge_prompt_includes_fewshot_and_acceptance() -> None:
         "p1",
         (JudgeExample("ex-in", "ex-expected", "ex-out", "fail", "missing offset"),),
     )
-    j = Judge(cfg, complete=lambda prompt: seen.__setitem__("p", prompt) or "VERDICT: pass\nREASON: ok")
+    j = Judge(
+        cfg, complete=lambda prompt: seen.__setitem__("p", prompt) or "VERDICT: pass\nREASON: ok"
+    )
     label, critique = j.score_case("q", "a", "must page through all results")
     assert label == "pass" and critique == "ok"
     assert "missing offset" in seen["p"]

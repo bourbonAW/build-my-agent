@@ -72,12 +72,8 @@ def validate(
     tn = sum(1 for case in cases if case.human != "fail" and case.judge != "fail")
 
     abstain = ("uncertain", "skip")
-    gold_fail_abstained = sum(
-        1 for case in cases if case.human == "fail" and case.judge in abstain
-    )
-    gold_pass_abstained = sum(
-        1 for case in cases if case.human != "fail" and case.judge in abstain
-    )
+    gold_fail_abstained = sum(1 for case in cases if case.human == "fail" and case.judge in abstain)
+    gold_pass_abstained = sum(1 for case in cases if case.human != "fail" and case.judge in abstain)
 
     per_label: list[dict[str, object]] = []
     class_f1: list[float] = []
