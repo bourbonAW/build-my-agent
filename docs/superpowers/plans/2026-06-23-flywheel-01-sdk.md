@@ -252,7 +252,7 @@ def pass_rate(labels: list[str]) -> ConfidenceInterval:
 **Interfaces:**
 - `RegressionResult = Literal["better", "no_change", "worse"]`
 - `@dataclass(frozen=True) class CaseScore(case_id: str, label: Label, failure_label: str | None = None)` — `label` is the typed `Label` (`pass`/`fail`/`skip`/`uncertain`); `__post_init__` rejects any other value so a malformed Langfuse score (`"PASS"`, `"error"`, `""`) raises at ingestion instead of being silently miscounted as a failure. `failure_label` is a free string from `labels.md` / a Langfuse score comment, used for per-label deltas (Engine §7).
-- `@dataclass(frozen=True) class RegressionReport(result, judge_version, baseline_rate, candidate_rate, candidate_rate_low, candidate_rate_high, candidate_non_pass_count, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `judge_version` is the single version `compare()` asserted both sides share (so report.py serializes the *gated* version, not an arbitrary caller string); `delta_low/high` are the Wilson-CI bounds of the delta (so report.py can serialize a real CI, not a zero-width one); `candidate_rate` + `candidate_rate_low/high` are the candidate run's **case-level** Wilson CI and `candidate_non_pass_count` its case-level non-pass count, computed from the **same aggregated scores `compare()` gates on** — so `RunSummary.passRate`/`nonPassCount` (served from the report) can never disagree with the regression report on a run with repeats; `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts (a non-pass case with no `failure_label` is bucketed as `"unlabeled"`, never silently dropped).
+- `@dataclass(frozen=True) class RegressionReport(result, judge_version, baseline_rate, candidate_rate, candidate_rate_low, candidate_rate_high, candidate_non_pass_count, delta, delta_low, delta_high, fixed, newly_broken, per_label)` — `judge_version` is the single version `compare()` asserted both sides share (so report.py serializes the *gated* version, not an arbitrary caller string); `delta_low/high` are a **descriptive discordance band** for the delta (a magnitude cue, **not** a confidence interval and **not** the gate — the decision is the exact sign test; the band can disagree, see `compare()`), serialized so report.py shows a non-zero-width band; `candidate_rate` + `candidate_rate_low/high` are the candidate run's **case-level** Wilson CI and `candidate_non_pass_count` its case-level non-pass count, computed from the **same aggregated scores `compare()` gates on** — so `RunSummary.passRate`/`nonPassCount` (served from the report) can never disagree with the regression report on a run with repeats; `fixed`/`newly_broken` are case-id lists; `per_label` is `[{label, baseline, candidate}]` failure counts (a non-pass case with no `failure_label` is bucketed as `"unlabeled"`, never silently dropped).
 - `compare(baseline, candidate, *, regression_case_ids: set[str], validation_case_ids: set[str], baseline_judge_version: str, candidate_judge_version: str) -> RegressionReport`
   - **same-judge gate (Engine §7):** raises `ValueError` if the two judge versions differ — baseline/candidate must be scored by the same judge or be re-scored first.
   - **completeness gate:** raises `ValueError` unless the compared cases are **exactly** `regression_case_ids` (the full declared regression split read from the dataset). A silently dropped case (harness error, missing score) must not let a candidate pass the gate on an easier subset; "same scored ids on both sides" alone can't catch a case both runs skipped.
@@ -485,8 +485,8 @@ class RegressionReport:
     candidate_rate_high: float     # aggregated scores compare() gates on, so the
     candidate_non_pass_count: int  # runs list (served from this) can't disagree
     delta: float
-    delta_low: float        # Wilson-CI lower bound of the delta (noise band)
-    delta_high: float       # Wilson-CI upper bound of the delta
+    delta_low: float        # descriptive discordance band (NOT a CI; gate = exact sign test)
+    delta_high: float       # descriptive upper bound — magnitude cue only
     fixed: list[str]        # case ids the candidate fixed
     newly_broken: list[str] # case ids the candidate broke
     per_label: list[dict[str, object]]  # [{label, baseline, candidate}] failure counts
@@ -649,17 +649,17 @@ def compare(
     cand_rate = cand_ci.point
     cand_non_pass = sum(1 for label in cand_labels if label != "pass")
     delta = cand_rate - base_rate
-    # Paired (McNemar) noise band. The case sets are identical, so the delta is
+    # Descriptive discordance band (NOT a confidence interval, and NOT the gate — the
+    # gate is the exact sign test below). The case sets are identical, so the delta is
     # driven entirely by discordant pairs (fixed vs newly-broken); concordant pairs
-    # cancel. A difference of two *independent* Wilson intervals would ignore the
-    # pairing and call a real one-directional change "no_change". Instead put a
-    # Wilson CI on the fraction of discordant pairs that improved, then map it back
-    # to a pass-rate delta: delta = (2p - 1) * disc / n.
+    # cancel. Put a Wilson band on the fraction of discordant pairs that improved and
+    # map it back to a pass-rate delta (delta = (2p - 1) * disc / n) purely as a
+    # magnitude cue for the UI; it can disagree with the sign test and that's expected.
     n = len(base_ids)
     disc = len(fixed) + len(newly_broken)
     if disc == 0:
         # No discordant pairs observed. The point delta is 0, but a finite paired
-        # sample can't *prove* the true difference is 0 — a zero-width CI would
+        # sample can't *prove* the true difference is 0 — a zero-width band would
         # falsely claim certainty (badly so on small sets). Rule of three: with 0
         # discordant pairs in n, up to ~3 could plausibly occur, in either
         # direction, so report a symmetric ±3/n band (clamped to the [-1, 1] range
@@ -670,9 +670,9 @@ def compare(
         p_ci = pass_rate(["pass"] * len(fixed) + ["fail"] * len(newly_broken))
         delta_low = (2 * p_ci.low - 1) * disc / n
         delta_high = (2 * p_ci.high - 1) * disc / n
-    # Decision uses the EXACT paired sign test, not "does the Wilson band clear
-    # zero" (which is anti-conservative on tiny discordant counts). delta_low/high
-    # remain the descriptive interval. When significant, fixed != broken so delta != 0.
+    # Decision uses the EXACT paired sign test, not "does the band clear zero" (which
+    # is anti-conservative on tiny discordant counts). delta_low/high remain a
+    # descriptive band only. When significant, fixed != broken so delta != 0.
     if _sign_test_significant(len(fixed), len(newly_broken)):
         result: RegressionResult = "better" if delta > 0 else "worse"
     else:
@@ -705,7 +705,7 @@ def compare(
 ## Self-review
 - **Engine spec coverage:** identity.py = §4 (four ids + minimal fingerprint);
   metrics.py = the math §6/§7 depend on; regression.py = §7 (three outcomes,
-  Wilson noise band, same-judge + completeness + disjointness asserts;
+  exact sign-test decision + descriptive delta band, same-judge + completeness + disjointness asserts;
   `CaseScore.label` is the typed `Label`, validated at ingestion).
 - **Deleted-on-purpose:** no `flywheel.*` constants, no context validator, no
   score HTTP client — see "What changed" above; the engine spec §0/§8 record why.

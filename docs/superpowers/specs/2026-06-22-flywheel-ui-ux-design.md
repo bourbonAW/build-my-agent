@@ -37,8 +37,9 @@ human annotation — is a **deep link into Langfuse**, not a cloned page.
 
 ## 2. Product principles
 
-1. **Evidence before decision**: the regression view shows pass-rate delta with
-   confidence interval, fixed vs newly-broken cases, and trace links.
+1. **Evidence before decision**: the regression view shows the pass-rate delta with
+   a descriptive discordance band (the better/worse call itself comes from an exact
+   paired sign test, not the band), fixed vs newly-broken cases, and trace links.
 2. **Don't clone Langfuse**: reuse it for traces, annotation, and dataset
    editing.
 3. **Noise is a result**: `no_change` is rendered distinctly from `better` /
@@ -89,7 +90,7 @@ mutation/auth/audit layer in MVP.
 | Route | Purpose |
 |---|---|
 | `/runs` | Eval runs: run id, harness (`git_sha@model`), judge version, pass rate + CI, link to Langfuse run. |
-| `/runs/:runId` | One regression report: baseline vs candidate, pass-rate delta + CI, per-label delta, fixed / newly-broken cases, Langfuse trace deep links, the three-value result. |
+| `/runs/:runId` | One regression report: baseline vs candidate, pass-rate delta + descriptive band, per-label delta, fixed / newly-broken cases, Langfuse trace deep links, the three-value result. |
 | `/judges/:judgeVersion` | Judge validation report: overall F1, per-label precision/recall, confusion matrix. |
 | `/` | A minimal index linking the above + a deep link to Langfuse for traces/datasets/annotation. |
 
@@ -125,7 +126,8 @@ Primary question: *"Can this candidate become the new baseline?"*
 Show:
 - baseline vs candidate harness ids; the single `judge_version` used for both
   (with a visible assert that they match)
-- pass-rate delta with Wilson confidence interval
+- pass-rate delta with a descriptive discordance band (not a CI; the result badge
+  comes from the exact paired sign test)
 - result badge: `better` (green) / `no_change` (amber) / `worse` (red)
 - per-label delta table
 - fixed failures and newly-broken failures, each linking to its Langfuse trace
@@ -178,7 +180,7 @@ type RegressionReport = {
   judgeVersion: string;     // same for both, asserted server-side
   passRate: { point: number; low: number; high: number };  // candidate case-level Wilson CI (post-aggregation); runs_provider serves RunSummary.passRate from this
   nonPassCount: number;     // candidate case-level non-pass count (same source) — never the attempt-level raw Langfuse count
-  passRateDelta: { point: number; low: number; high: number };
+  passRateDelta: { point: number; low: number; high: number };  // descriptive discordance band, NOT a CI; the result badge is from the exact paired sign test
   result: RegressionResult;
   perLabel: LabelDelta[];
   fixed: { caseId: string; traceUrl: string }[];
@@ -234,7 +236,7 @@ no audit log in MVP.
 | No runs yet | Show how to run the eval script; link to Langfuse to sample traces. |
 | Judge not validated | Run badge shows `judge: not validated`; link to `/judges/:v`. |
 | Case has no trace URL (`traceUrl === ""`) | Keep the case row; render **no link** (nothing to point to). The read API serves report JSON only and does **not** probe Langfuse for trace existence, so there is no "present-but-gone" state to mark — a present `traceUrl` is always rendered as a link (clicking it surfaces Langfuse's own 404 if the trace was deleted). |
-| Change not significant | Render `no_change` (amber) when the exact paired sign test isn't significant (not "the Wilson band crosses zero"); the delta + descriptive CI are still shown, but do not imply a win. |
+| Change not significant | Render `no_change` (amber) when the exact paired sign test isn't significant (not "the band crosses zero"); the delta + descriptive band are still shown, but do not imply a win. |
 | Report not generated yet | Show "run regression.py to produce this report." |
 
 ---

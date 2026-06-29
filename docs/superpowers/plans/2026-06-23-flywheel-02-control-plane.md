@@ -285,12 +285,13 @@ def test_all_uncertain_judge_fails_gate():
 
 def test_always_fail_judge_fails_gate():
     # flagging everything "fail" gives a high fail-only F1 on a failure-biased split,
-    # but macro-F1 (averaging in the pass class it gets wrong) fails the gate.
-    # Balanced support (8/8) so the failure is the metric, not the support floor.
-    cases = [LabeledCase(f"c{i}", "fail", "fail") for i in range(8)] + \
-            [LabeledCase(f"d{i}", "pass", "fail") for i in range(8)]
+    # but macro-F1 (averaging in the pass class it gets wrong) fails the gate. Use a
+    # 20-fail / 5-pass split so fail-only F1 really is high AND both support floors
+    # (≥5 each) are met — the failure is the metric, not the support floor.
+    cases = [LabeledCase(f"c{i}", "fail", "fail") for i in range(20)] + \
+            [LabeledCase(f"d{i}", "pass", "fail") for i in range(5)]
     rep = validate(cases, judge_version="jv1", model="m", prompt_version="p")
-    assert rep.f1 < 0.70          # macro-F1 ≈ 0.33, not the inflated fail-only ≈ 0.89
+    assert rep.f1 < 0.70          # macro-F1 ≈ 0.44, despite the inflated fail-only ≈ 0.89
     assert not rep.passes()
 
 def test_partial_hedge_on_failures_fails_gate():
@@ -487,7 +488,7 @@ def test_regression_report_written_with_expected_keys(tmp_path: Path):
     assert data["judgeVersion"] == "jv1"
     assert data["fixed"][0]["caseId"] == "a"
     assert data["fixed"][0]["traceUrl"] == "http://lf/t/a"
-    # real CI: low <= point <= high (not a zero-width fake)
+    # descriptive delta band: low <= point <= high (not a zero-width fake)
     d = data["passRateDelta"]
     assert d["low"] <= d["point"] <= d["high"]
     # candidate case-level summary served from the report (not raw Langfuse attempts)
@@ -533,6 +534,9 @@ def test_unsafe_run_id_rejected(tmp_path: Path):
         with pytest.raises(ValueError, match="unsafe id segment"):
             write_regression_report(tmp_path, "bourbon", bad, rep,
                                     baseline_harness="a@m", candidate_harness="b@m")
+    with pytest.raises(ValueError, match="unsafe id segment"):     # project is a path segment too
+        write_regression_report(tmp_path, "../../escape", "run_1", rep,
+                                baseline_harness="a@m", candidate_harness="b@m")
 ```
 
 - [ ] **Step 2:** run → fails. **Step 3: implement** `flywheel/flywheel/report.py`
@@ -553,7 +557,9 @@ _SAFE_SEGMENT = re.compile(r"[A-Za-z0-9._@-]+")  # used with fullmatch — no ^�
 
 
 def _reports_dir(root: Path, project: str, kind: str) -> Path:
-    d = Path(root) / project / "reports" / kind
+    # `project` is also a path segment under root, so it gets the same slug guard as
+    # run_id/judge_version — a configured project like "../../x" must not escape root.
+    d = Path(root) / _safe_segment(project) / "reports" / kind
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -591,7 +597,8 @@ def write_regression_report(
                      "low": report.candidate_rate_low,
                      "high": report.candidate_rate_high},
         "nonPassCount": report.candidate_non_pass_count,
-        # real CI from the regression report — never a zero-width fake
+        # descriptive delta band from the regression report — never a zero-width fake,
+        # and not a CI (the better/worse gate is the exact sign test, see compare())
         "passRateDelta": {"point": report.delta,
                           "low": report.delta_low,
                           "high": report.delta_high},
@@ -627,7 +634,7 @@ def write_regression_markdown(
         f"- **Comparing:** {baseline_harness} → {candidate_harness}",
         f"- **Judge:** {report.judge_version}",
         f"- **Pass rate:** {report.baseline_rate:.3f} → {report.candidate_rate:.3f} "
-        f"(Δ {report.delta:+.3f}, 95% CI [{report.delta_low:+.3f}, {report.delta_high:+.3f}])",
+        f"(Δ {report.delta:+.3f}, descriptive band [{report.delta_low:+.3f}, {report.delta_high:+.3f}]; gate = exact sign test)",
     ]
     if candidate_pr_url:
         lines.append(f"- **Candidate PR:** {candidate_pr_url}")
@@ -757,6 +764,12 @@ def test_path_traversal_is_rejected(tmp_path):
     # a resolved id that escapes the reports dir must 404, never read outside it
     assert _client(tmp_path).get("/api/runs/..%2f..%2fsecret").status_code == 404
 
+def test_unsafe_project_rejected(tmp_path):
+    # a configured project must be a slug too — "../../x" can't escape root
+    import pytest
+    with pytest.raises(ValueError, match="unsafe id segment"):
+        create_app(tmp_path, project="../../escape", runs_provider=lambda p: [])
+
 def test_contained_path_guards_traversal_directly(tmp_path):
     # exercise the resolver guard directly — the route test above may be short-
     # circuited by FastAPI's own path handling before _report_path runs
@@ -802,6 +815,8 @@ def create_app(root: Path, *, project: str,
                runs_provider: Callable[[str], list[dict[str, object]]]) -> FastAPI:
     app = FastAPI(title="Flywheel Read API")
     root = Path(root)
+    project = _safe_segment(project)  # `project` is a path segment under root too —
+    # a configured "../../x" must not escape root on reads (mirrors report._reports_dir)
 
     # Bound to one configured project; endpoints carry no ?project= (UI §8) and
     # return the UI §8 shapes directly (no envelope wrapper).
@@ -866,14 +881,14 @@ npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom @pl
 - [ ] **Step 3: Routes (UI §5)**
   - `/` — index: links to runs + a Langfuse deep link for traces/datasets/annotation.
   - `/runs` — `RunSummary[]` table: run id, harness, judge version, judge status — **render `judgeF1` (macro-F1) whenever it is non-null, including when `judgeValidated === false`** (don't hide the number); `judgeValidated` drives only the badge (`validated` vs `judge: not validated`, the latter linking to `/judges/:judgeVersion`); show `not available` **only** when `judgeF1`/`judgeValidated` are null (no report) — UI §6/§9. Then pass rate + CI bar, #not-passed, Langfuse link.
-  - `/runs/:runId` — `RegressionReport`: baseline vs candidate harness, judge version (with the "same judge" note), pass-rate delta + CI, result badge (`better` green / `no_change` amber / `worse` red), per-label delta table, fixed / newly-broken lists with Langfuse trace deep links, and the **disjointness note** "regression set ∩ judge case pool = ∅" rendered as a static invariant (UI §6 — the report's existence proves it, no data field).
-  - `/judges/:judgeVersion` — `JudgeReport`: macro-F1 vs threshold + validated/`passes` badge, gold pass/fail counts vs the support floor, per-label precision/recall/**F1** (fail-class F1 flagged against its own 0.70 gate, so a `passes=false` at healthy macro-F1 is explained), confusion matrix.
+  - `/runs/:runId` — `RegressionReport`: baseline vs candidate harness, judge version (with the "same judge" note), pass-rate delta + descriptive band (not a CI; the badge is from the exact sign test), result badge (`better` green / `no_change` amber / `worse` red), per-label delta table, fixed / newly-broken lists with Langfuse trace deep links, and the **disjointness note** "regression set ∩ judge case pool = ∅" rendered as a static invariant (UI §6 — the report's existence proves it, no data field).
+  - `/judges/:judgeVersion` — `JudgeReport`: macro-F1 vs threshold + validated/`passes` badge, gold pass/fail counts vs the support floor, per-label precision/recall/**F1** (fail-class F1 flagged against its own 0.70 gate, so a `passes=false` at healthy macro-F1 is explained), confusion matrix **with the abstention breakout** (`goldFailAbstained`/`goldPassAbstained` shown next to / subtracted from `fn`/`tn`, so a gold-pass `uncertain` is not rendered as an ordinary TN).
   - **Empty / error states (UI §9):** `/runs` with no runs shows the "how to run the eval script" empty state + Langfuse sample-traces link; `/runs/:runId` with a missing report (404) shows "run regression.py to produce this report". For a fixed/newly-broken case (UI §9): when `traceUrl === ""` render the row with **no link**; when a `traceUrl` is present, always render it as a link (the read-only API serves report JSON and does not probe Langfuse for trace existence, so there is no "present-but-gone" state to mark — a deleted trace simply 404s in Langfuse on click).
 
 - [ ] **Step 4: Component tests (Vitest + Testing Library)**
   - runs table renders rows + CI, and the three judge states: validated (F1 shown), `not validated` (`judgeValidated === false`, badge + `/judges/:v` link, **F1 still shown** — the number isn't hidden), and `not available` (`judgeF1`/`judgeValidated` null).
   - regression report renders all three result badges (parametrized) and the static disjointness note.
-  - judge report renders macro-F1 vs threshold, the `passes` badge, per-label F1 (incl. the fail-class F1 gate), and confusion matrix.
+  - judge report renders macro-F1 vs threshold, the `passes` badge, per-label F1 (incl. the fail-class F1 gate), and the confusion matrix **with the abstention breakout** (`goldFailAbstained`/`goldPassAbstained` shown distinctly, not folded silently into `fn`/`tn`).
   - **UI §9 states:** empty `/runs` (no runs) renders the empty state, not a blank table; a 404 `/runs/:runId` renders the "report not generated" state, not a crash; a case with `traceUrl === ""` renders the row with no link; a case with a present `traceUrl` renders the link (UI §9 — no trace-availability probing in the read-only API).
 
 - [ ] **Step 5: One Playwright happy path**

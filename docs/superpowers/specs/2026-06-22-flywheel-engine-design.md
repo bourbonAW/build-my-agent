@@ -236,11 +236,13 @@ Mechanics that survived because they are correctness, not ceremony:
   cases (a paired design), so the `better`/`worse`/`no_change` call uses an **exact
   two-sided paired sign test (McNemar exact)** on the discordant pairs (fixed vs
   newly-broken). An unpaired difference of two independent intervals would ignore
-  the pairing; a Wilson band on the discordant fraction is reported as the
-  **descriptive** delta CI, but it is *not* the gate — it is anti-conservative on
-  tiny discordant counts (4 fixed / 0 broken would "clear zero" though the exact
-  two-sided p is 0.125), so the decision needs the exact test (≥6 consistent
-  one-sided fixes before `better`). Not significant → `no_change`, not a win.
+  the pairing; a Wilson band on the discordant fraction is reported only as a
+  **descriptive discordance band** (a rough magnitude cue) — explicitly **not a
+  confidence interval** and **not the gate**, since it is anti-conservative on tiny
+  discordant counts (4 fixed / 0 broken would "clear zero" though the exact two-sided
+  p is 0.125). The decision is the exact test (≥6 consistent one-sided fixes before
+  `better`); the band can disagree with it and that's fine — the test wins. Not
+  significant → `no_change`, not a win.
   (Replaces `no_significant_change` as a first-class lifecycle state.)
 - **Repeats**: for nondeterministic cases, sample ≥3× when budget allows.
 
