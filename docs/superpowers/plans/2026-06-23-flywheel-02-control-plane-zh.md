@@ -464,7 +464,7 @@ def validate(cases: list[LabeledCase], *, judge_version: str, model: str,
 - `read_json(path) -> dict`。
 - **锁定决策：** 报告 JSON 使用前端期望的 camelCase 键（UI §7），直接在此处写入，这样只读 API 可以原样服务它们。CI 边界来自 `report.delta_low/delta_high`（真实区间，永远非零宽度）。
 
-- [ ] **Step 1: 失败测试** `tests/test_report.py`
+- [x] **Step 1: 失败测试** `tests/test_report.py`
 
 ```python
 from pathlib import Path
@@ -539,7 +539,7 @@ def test_unsafe_run_id_rejected(tmp_path: Path):
                                 baseline_harness="a@m", candidate_harness="b@m")
 ```
 
-- [ ] **Step 2:** 运行 → 失败。**Step 3: 实现** `flywheel/flywheel/report.py`
+- [x] **Step 2:** 运行 → 失败。**Step 3: 实现** `flywheel/flywheel/report.py`
 
 ```python
 """Serialize reports to JSON consumed by the read API / frontend (UI §7).
@@ -680,7 +680,7 @@ def read_json(path: Path) -> dict[str, object]:
     return result
 ```
 
-- [ ] **Step 4:** 运行 → 通过。**Step 5:** 提交 `feat(flywheel): regression/judge report serialization`。
+- [x] **Step 4:** 运行 → 通过。**Step 5:** 提交 `feat(flywheel): regression/judge report serialization`。
 
 ---
 
