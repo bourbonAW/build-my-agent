@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Callable, cast
 
-from flywheel.identity import Label
 from flywheel.judge import Judge, JudgeConfig, JudgeExample
 
 from scripts.common import (
@@ -149,18 +148,22 @@ def main() -> None:
         )
         if canned_by_key is not None and response is None:
             raise ValueError(f"missing canned response for {sample_id!r} / {item.case_id!r}")
-        judge = Judge(
-            config,
-            complete=(lambda _prompt, value=response: str(value))
-            if response is not None
-            else complete,
-        )
+        complete_fn: Callable[[str], str]
+        if response is not None:
+            canned = response
+            complete_fn = lambda _prompt: str(canned)  # noqa: E731
+        else:
+            # response is None only when canned_by_key is None (guarded above),
+            # which is exactly when `complete` was built as a live callable.
+            assert complete is not None
+            complete_fn = complete
+        judge = Judge(config, complete=complete_fn)
         try:
             label, critique = judge.score_case(item.input, output, item.expected)
         except ValueError as exc:
             if not args.skip_on_protocol_error:
                 raise
-            label, critique = cast(Label, "skip"), f"operational skip: {exc}"
+            label, critique = "skip", f"operational skip: {exc}"
         records.append(
             ScoreRecord(
                 case_id=item.case_id,

@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from flywheel.identity import Harness
+
+if TYPE_CHECKING:
+    from bourbon.agent import Agent
 
 from scripts.common import (
     DEFAULT_ROOT,
@@ -22,7 +26,7 @@ from scripts.common import (
 )
 
 
-def _build_agent(workdir: Path, model: str):
+def _build_agent(workdir: Path, model: str) -> "Agent":
     from bourbon.agent import Agent
     from bourbon.config import ConfigManager
 

@@ -38,3 +38,11 @@ line-length = 100
 [tool.mypy]
 python_version = "3.13"
 strict = true
+
+# bourbon (parent repo) and langfuse (evidence store) are external to this
+# package and intentionally not installed in the flywheel venv; the Task 6 glue
+# imports them lazily inside functions. Treat their missing stubs as untyped
+# rather than letting strict import-not-found mask real type debt in scripts/.
+[[tool.mypy.overrides]]
+module = ["bourbon.*", "langfuse", "langfuse.*"]
+ignore_missing_imports = true

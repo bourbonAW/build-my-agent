@@ -16,7 +16,7 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Literal, get_args
+from typing import Any, Iterable, Literal, cast, get_args
 
 from flywheel.identity import HumanLabel, Label, validate_judge_version
 from flywheel.regression import check_splits_disjoint
@@ -158,7 +158,7 @@ def _human_label(record: dict[str, Any], metadata: dict[str, Any]) -> HumanLabel
         return None
     if value not in get_args(HumanLabel):
         raise ValueError(f"invalid human label {value!r}; expected {get_args(HumanLabel)}")
-    return value
+    return cast(HumanLabel, value)
 
 
 def _record_from_langfuse_item(item: object) -> dict[str, Any]:
@@ -203,12 +203,12 @@ def _item_from_record(record: dict[str, Any]) -> DatasetItem:
 
 def create_langfuse_client() -> object:
     try:
-        from langfuse import get_client  # type: ignore[import-not-found]
+        from langfuse import get_client
 
         return get_client()
     except ImportError:
         try:
-            from langfuse import Langfuse  # type: ignore[import-not-found]
+            from langfuse import Langfuse
 
             return Langfuse()
         except ImportError as exc:
