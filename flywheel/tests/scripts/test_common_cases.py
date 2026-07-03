@@ -7,7 +7,7 @@ from scripts.common import Case, active_cases, append_case, cases_path, labeled_
 
 
 def _case(case_id: str, label: str | None = None, **overrides: object) -> Case:
-    base = dict(
+    base: dict[str, object] = dict(
         case_id=case_id,
         input="input text",
         frozen_output="agent said X",
