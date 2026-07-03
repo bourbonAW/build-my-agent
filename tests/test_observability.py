@@ -277,6 +277,7 @@ class RecordingTracer:
         entrypoint: str = "step",
         eval_case_id: str | None = None,
         eval_run_id: str | None = None,
+        user_input: str | None = None,
     ):
         self.entrypoints.append(entrypoint)
         self.eval_contexts.append((eval_case_id, eval_run_id))
@@ -285,6 +286,9 @@ class RecordingTracer:
             yield object()
         finally:
             self.events.append(f"{entrypoint}:exit")
+
+    def record_agent_output(self, span, output: str) -> None:
+        pass
 
     @contextmanager
     def llm_call(self, model: str, max_tokens: int, provider: str = "anthropic"):
@@ -552,6 +556,9 @@ class ToolRecordingTracer:
         if is_error:
             span.set_attribute("error.type", error_type)
             span.set_attribute("error.message", message)
+
+    def record_tool_io(self, span, tool_input, output: str) -> None:
+        pass
 
     def record_error(self, span, exc: Exception):
         self.recorded_errors.append((span, exc))

@@ -177,6 +177,7 @@ class ToolExecutionQueue:
                     error_type=error_type,
                     message=error_message,
                 )
+            self._tracer.record_tool_io(_tool_span, tool_input, raw_output)
 
         output = str(raw_output)
         tool.result = {

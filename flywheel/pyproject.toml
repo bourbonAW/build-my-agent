@@ -8,6 +8,10 @@ dependencies = ["pydantic>=2.6"]
 [project.optional-dependencies]
 judge = ["httpx>=0.27", "anthropic>=0.40"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
+# Only needed for the pipeline router's sample/promote/label-status endpoints;
+# api.serve's _make_langfuse() already degrades gracefully when this extra
+# isn't installed, so it's kept separate rather than a hard `api` dependency.
+langfuse = ["langfuse>=2.0"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",

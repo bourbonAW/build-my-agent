@@ -7,7 +7,7 @@ import {
   useParams,
 } from 'react-router-dom'
 import { useState, type ReactNode } from 'react'
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   createColumnHelper,
   flexRender,
@@ -20,8 +20,18 @@ import {
   fetchJudge,
   fetchRegressionReport,
   fetchRuns,
+  fetchPipelineState,
+  fetchSamples,
+  fetchLabelStatus,
+  startSample,
+  startPromote,
+  startBaselineRun,
+  startBaselineJudge,
+  startEvalRun,
+  startJudgeCompare,
   type ConfidenceInterval,
   type JudgeReport,
+  type PipelineState,
   type RegressionReport,
   type RegressionResult,
   type RunSummary,
@@ -30,12 +40,7 @@ import {
 
 function makeQueryClient() {
   return new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-        staleTime: 20_000,
-      },
-    },
+    defaultOptions: { queries: { retry: false, staleTime: 10_000 } },
   })
 }
 
@@ -48,7 +53,8 @@ function Shell() {
           <span>Flywheel</span>
         </Link>
         <nav className="nav-links" aria-label="Primary">
-          <NavLink to="/runs">Runs</NavLink>
+          <NavLink to="/">Control</NavLink>
+          <NavLink to="/runs">History</NavLink>
           <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer">
             Langfuse
           </a>
@@ -56,7 +62,7 @@ function Shell() {
       </header>
       <main>
         <Routes>
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<ControlView />} />
           <Route path="/runs" element={<RunsView />} />
           <Route path="/runs/:runId" element={<RunDetailView />} />
           <Route path="/judges/:judgeVersion" element={<JudgeDetailView />} />
@@ -77,34 +83,435 @@ export default function App() {
   )
 }
 
-function Home() {
+// ── Control view ────────────────────────────────────────────────────────────
+
+function ControlView() {
+  const qc = useQueryClient()
+  const stateQuery = useQuery({
+    queryKey: ['pipeline-state'],
+    queryFn: fetchPipelineState,
+    refetchInterval: (query) => {
+      const status = query.state.data?.task.status
+      return status === 'running' ? 1500 : 5000
+    },
+  })
+
+  const state = stateQuery.data
+  const task = state?.task
+  const dataset = state?.dataset
+  const isRunning = task?.status === 'running'
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['pipeline-state'] })
+
   return (
-    <section className="home-grid">
-      <div>
-        <p className="section-label">Lean eval loop</p>
-        <h1>Trace failures, replay cases, compare one change.</h1>
-        <p className="home-copy">
-          Flywheel reads regression and judge reports from local files, then links each run back
-          to Langfuse for traces, datasets, scores, and annotations.
-        </p>
-        <div className="home-actions">
-          <Link className="button primary" to="/runs">
-            View runs
-          </Link>
-          <a className="button secondary" href="https://cloud.langfuse.com" target="_blank" rel="noreferrer">
-            Open Langfuse
-          </a>
-        </div>
+    <div className="control-layout">
+      <DatasetPanel
+        dataset={dataset}
+        task={task}
+        isRunning={isRunning ?? false}
+        onRefresh={invalidate}
+      />
+      <EvalPanel
+        state={state}
+        task={task}
+        isRunning={isRunning ?? false}
+        onRefresh={invalidate}
+      />
+    </div>
+  )
+}
+
+// ── Dataset panel ───────────────────────────────────────────────────────────
+
+type DatasetPanelProps = {
+  dataset: PipelineState['dataset'] | undefined
+  task: PipelineState['task'] | undefined
+  isRunning: boolean
+  onRefresh: () => void
+}
+
+function DatasetPanel({ dataset, task, isRunning, onRefresh }: DatasetPanelProps) {
+  const qc = useQueryClient()
+  const hasDataset = !!dataset?.name
+  const baselineScored = dataset?.baselineScored ?? false
+
+  const sampleMutation = useMutation({
+    mutationFn: () => startSample(30),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline-state'] })
+      qc.invalidateQueries({ queryKey: ['pipeline-samples'] })
+    },
+  })
+
+  const baselineRunMutation = useMutation({
+    mutationFn: startBaselineRun,
+    onSuccess: onRefresh,
+  })
+
+  const baselineJudgeMutation = useMutation({
+    mutationFn: startBaselineJudge,
+    onSuccess: onRefresh,
+  })
+
+  const isSampling = task?.type === 'sample' && task.status === 'running'
+  const isBaselineRunning =
+    (task?.type === 'baseline_harness' || task?.type === 'baseline_judge') &&
+    task.status === 'running'
+
+  return (
+    <section className="panel control-panel">
+      <div className="panel-head">
+        <h2>Dataset</h2>
+        {hasDataset && (
+          <button
+            className="button secondary small"
+            disabled={isRunning}
+            onClick={() => sampleMutation.mutate()}
+          >
+            + Add traces
+          </button>
+        )}
       </div>
-      <div className="home-panel" aria-label="Flywheel loop">
-        <div>Sample traces</div>
-        <div>Promote cases</div>
-        <div>Run harness</div>
-        <div>Judge + compare</div>
-      </div>
+
+      {!hasDataset ? (
+        <DatasetEmpty onSample={() => sampleMutation.mutate()} loading={sampleMutation.isPending || isSampling} />
+      ) : (
+        <>
+          <div className="dataset-stats">
+            <Stat label="Dataset" value={dataset.name} mono />
+            <Stat label="Total cases" value={String(dataset.totalCases)} />
+            <Stat label="judge_test" value={String(dataset.judgeTestCases)} />
+            <Stat label="regression" value={String(dataset.regressionCases)} />
+          </div>
+
+          <div className="dataset-status">
+            <StatusRow
+              label="Cases in Langfuse"
+              done={hasDataset}
+              href="https://cloud.langfuse.com"
+              hrefLabel="Open Langfuse ↗"
+            />
+            <LabelStatusRow />
+            <StatusRow label="Baseline scored" done={baselineScored} />
+          </div>
+
+          {isBaselineRunning && task && (
+            <ProgressBar done={task.done} total={task.total} phase={task.phase} />
+          )}
+
+          {task?.type === 'baseline_harness' && task.status === 'error' && (
+            <ErrorBox message={task.error} />
+          )}
+
+          {!baselineScored && (
+            <div className="panel-actions">
+              <button
+                className="button primary"
+                disabled={isRunning || baselineRunMutation.isPending}
+                onClick={() => baselineRunMutation.mutate()}
+              >
+                Run baseline harness
+              </button>
+              <button
+                className="button secondary"
+                disabled={isRunning || baselineJudgeMutation.isPending}
+                onClick={() => baselineJudgeMutation.mutate()}
+              >
+                Judge baseline
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {isSampling && task && (
+        <ProgressBar done={task.done} total={task.total} phase="Sampling traces from Langfuse" />
+      )}
+
+      <SamplePanel show={!hasDataset || sampleMutation.isSuccess || isSampling} onRefresh={onRefresh} />
     </section>
   )
 }
+
+function DatasetEmpty({ onSample, loading }: { onSample: () => void; loading: boolean }) {
+  return (
+    <div className="empty-state">
+      <p>No dataset yet. Sample recent traces from Langfuse to get started.</p>
+      <button className="button primary" onClick={onSample} disabled={loading}>
+        {loading ? 'Sampling…' : 'Sample traces'}
+      </button>
+    </div>
+  )
+}
+
+function LabelStatusRow() {
+  const q = useQuery({
+    queryKey: ['label-status'],
+    queryFn: fetchLabelStatus,
+    refetchInterval: 10_000,
+  })
+  const data = q.data
+  if (!data) return <StatusRow label="Human labels" done={false} />
+  const pct = data.total > 0 ? Math.round((data.labeled / data.total) * 100) : 0
+  return (
+    <div className="status-row">
+      <span>{data.complete ? '✅' : '○'} Human labels</span>
+      <span className="quiet">
+        {data.labeled}/{data.total} ({pct}%)
+      </span>
+      {!data.complete && (
+        <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer" className="quiet-link">
+          Label in Langfuse ↗
+        </a>
+      )}
+    </div>
+  )
+}
+
+function StatusRow({
+  label,
+  done,
+  href,
+  hrefLabel,
+}: {
+  label: string
+  done: boolean
+  href?: string
+  hrefLabel?: string
+}) {
+  return (
+    <div className="status-row">
+      <span>{done ? '✅' : '○'} {label}</span>
+      {href && !done && (
+        <a href={href} target="_blank" rel="noreferrer" className="quiet-link">
+          {hrefLabel ?? href}
+        </a>
+      )}
+    </div>
+  )
+}
+
+function SamplePanel({ show, onRefresh }: { show: boolean; onRefresh: () => void }) {
+  const qc = useQueryClient()
+  const samplesQuery = useQuery({
+    queryKey: ['pipeline-samples'],
+    queryFn: fetchSamples,
+    enabled: show,
+  })
+
+  const promoteMutation = useMutation({
+    mutationFn: ({ name, ids }: { name: string; ids: string[] }) =>
+      startPromote(name, ids),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pipeline-state'] })
+      qc.invalidateQueries({ queryKey: ['pipeline-samples'] })
+      onRefresh()
+    },
+  })
+
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [datasetName, setDatasetName] = useState('bourbon-evals')
+
+  const traces = samplesQuery.data?.traces ?? []
+
+  if (!show || traces.length === 0) return null
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+
+  const selectAll = () => setSelected(new Set(traces.map((t) => String(t.id))))
+  const clearAll = () => setSelected(new Set())
+
+  return (
+    <div className="sample-panel">
+      <div className="sample-head">
+        <h3>{traces.length} sampled traces</h3>
+        <div className="sample-actions">
+          <button className="button secondary small" onClick={selectAll}>All</button>
+          <button className="button secondary small" onClick={clearAll}>None</button>
+        </div>
+      </div>
+      <ul className="trace-select-list">
+        {traces.map((t) => {
+          const id = String(t.id)
+          return (
+            <li key={id} className={selected.has(id) ? 'selected' : ''} onClick={() => toggle(id)}>
+              <input type="checkbox" readOnly checked={selected.has(id)} />
+              <span className="trace-id">{id.slice(0, 8)}…</span>
+              <span className="trace-name quiet">{t.name ?? ''}</span>
+            </li>
+          )
+        })}
+      </ul>
+      <div className="promote-row">
+        <input
+          className="dataset-name-input"
+          value={datasetName}
+          onChange={(e) => setDatasetName(e.target.value)}
+          placeholder="Dataset name"
+        />
+        <button
+          className="button primary"
+          disabled={selected.size === 0 || promoteMutation.isPending}
+          onClick={() => promoteMutation.mutate({ name: datasetName, ids: [...selected] })}
+        >
+          Promote {selected.size > 0 ? `${selected.size} cases` : 'cases'}
+        </button>
+      </div>
+      {promoteMutation.isSuccess && (
+        <p className="success-msg">
+          ✅ Promoted to Langfuse.{' '}
+          <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer">
+            Open Langfuse to label ↗
+          </a>
+        </p>
+      )}
+      {promoteMutation.isError && (
+        <ErrorBox message={(promoteMutation.error as Error).message} />
+      )}
+    </div>
+  )
+}
+
+// ── Eval panel ──────────────────────────────────────────────────────────────
+
+type EvalPanelProps = {
+  state: PipelineState | undefined
+  task: PipelineState['task'] | undefined
+  isRunning: boolean
+  onRefresh: () => void
+}
+
+function EvalPanel({ state, task, isRunning, onRefresh }: EvalPanelProps) {
+  const qc = useQueryClient()
+  const [runId, setRunId] = useState('')
+  const locked = !(state?.dataset.baselineScored)
+
+  const evalRunMutation = useMutation({
+    mutationFn: () => startEvalRun(runId),
+    onSuccess: onRefresh,
+  })
+
+  const judgeCompareMutation = useMutation({
+    mutationFn: startJudgeCompare,
+    onSuccess: () => {
+      onRefresh()
+      qc.invalidateQueries({ queryKey: ['runs'] })
+    },
+  })
+
+  const isCandidateRunning = task?.type === 'candidate_harness' && task.status === 'running'
+  const isJudgeRunning = task?.type === 'judge_compare' && task.status === 'running'
+  const candidateDone = task?.type === 'candidate_harness' && task.status === 'done'
+  const lastRunId = state?.lastRunId ?? ''
+  const lastResult = state?.lastResult ?? task?.result ?? ''
+
+  return (
+    <section className={`panel control-panel ${locked ? 'locked' : ''}`}>
+      <div className="panel-head">
+        <h2>Evaluate candidate</h2>
+        {locked && <span className="badge warn">Complete baseline first</span>}
+      </div>
+
+      {locked ? (
+        <p className="quiet">Build and score a baseline before evaluating candidates.</p>
+      ) : (
+        <>
+          <div className="eval-run-row">
+            <input
+              className="run-id-input"
+              placeholder="run-id (e.g. candidate-v2)"
+              value={runId}
+              onChange={(e) => setRunId(e.target.value)}
+              disabled={isRunning}
+            />
+            <button
+              className="button primary"
+              disabled={isRunning || !runId || evalRunMutation.isPending}
+              onClick={() => evalRunMutation.mutate()}
+            >
+              Run harness
+            </button>
+          </div>
+
+          {isCandidateRunning && task && (
+            <ProgressBar done={task.done} total={task.total} phase={`Running ${task.runId}`} />
+          )}
+
+          {(candidateDone || lastRunId) && !isCandidateRunning && (
+            <div className="eval-phase">
+              <p className="quiet">
+                Harness done for <code>{lastRunId || task?.runId}</code>.
+              </p>
+              <button
+                className="button primary"
+                disabled={isRunning || judgeCompareMutation.isPending}
+                onClick={() => judgeCompareMutation.mutate()}
+              >
+                Judge + compare
+              </button>
+            </div>
+          )}
+
+          {isJudgeRunning && task && (
+            <ProgressBar done={task.done} total={task.total} phase={task.phase} />
+          )}
+
+          {task?.type === 'judge_compare' && task.status === 'error' && (
+            <ErrorBox message={task.error} />
+          )}
+
+          {lastResult && (
+            <div className="result-row">
+              <ResultBadge result={lastResult as RegressionResult} />
+              {lastRunId && (
+                <Link to={`/runs/${lastRunId}`} className="quiet-link">
+                  View full report →
+                </Link>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+// ── Shared UI atoms ─────────────────────────────────────────────────────────
+
+function ProgressBar({ done, total, phase }: { done: number; total: number; phase: string }) {
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
+  return (
+    <div className="progress-block">
+      {phase && <p className="progress-phase">{phase}</p>}
+      <div className="progress-bar-bg">
+        <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
+      </div>
+      <p className="progress-count">
+        {done}/{total}
+      </p>
+    </div>
+  )
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return <div className="error-box">{message}</div>
+}
+
+function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="stat">
+      <span className="quiet">{label}</span>
+      <strong className={mono ? 'mono' : undefined}>{value}</strong>
+    </div>
+  )
+}
+
+// ── Runs history ────────────────────────────────────────────────────────────
 
 const runColumn = createColumnHelper<RunSummary>()
 
@@ -133,57 +540,43 @@ function RunsView() {
     }),
     runColumn.accessor('langfuseRunUrl', {
       header: 'Trace',
-      cell: (info) => (
-        <a href={info.getValue()} target="_blank" rel="noreferrer">
-          Langfuse
-        </a>
-      ),
+      cell: (info) =>
+        info.getValue() ? (
+          <a href={info.getValue()} target="_blank" rel="noreferrer">
+            Langfuse
+          </a>
+        ) : null,
     }),
   ]
-  const table = useReactTable({
-    data: runsQuery.data ?? [],
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  })
+  const table = useReactTable({ data: runsQuery.data ?? [], columns, getCoreRowModel: getCoreRowModel() })
 
-  if (runsQuery.isLoading) {
-    return <PageState title="Loading runs" />
-  }
-  if (runsQuery.isError) {
-    return <PageState title="Runs unavailable" detail="The read API did not return /api/runs." />
-  }
-  if (!runsQuery.data?.length) {
+  if (runsQuery.isLoading) return <PageState title="Loading runs" />
+  if (runsQuery.isError) return <PageState title="Runs unavailable" detail="The read API did not return /api/runs." />
+  if (!runsQuery.data?.length)
     return (
       <PageState
         title="No regression runs yet"
-        detail="Run sample_traces.py, promote cases in Langfuse, then run_harness.py and run_regression.py."
-        action={
-          <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer">
-            Sample traces in Langfuse
-          </a>
-        }
+        detail="Complete the flywheel loop to generate your first run."
+        action={<Link to="/">Go to Control →</Link>}
       />
     )
-  }
 
   return (
     <section className="page-section">
       <div className="section-head">
         <div>
           <p className="section-label">Regression runs</p>
-          <h1>Runs</h1>
+          <h1>History</h1>
         </div>
         <span className="quiet">{runsQuery.data.length} report-backed runs</span>
       </div>
       <div className="table-wrap">
         <table>
           <thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th key={header.id}>
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                  </th>
+            {table.getHeaderGroups().map((hg) => (
+              <tr key={hg.id}>
+                {hg.headers.map((h) => (
+                  <th key={h.id}>{flexRender(h.column.columnDef.header, h.getContext())}</th>
                 ))}
               </tr>
             ))}
@@ -204,14 +597,13 @@ function RunsView() {
 }
 
 function JudgeStatus({ run }: { run: RunSummary }) {
-  if (run.judgeF1 === null || run.judgeValidated === null) {
+  if (run.judgeF1 === null || run.judgeValidated === null)
     return (
       <div className="stack-tight">
         <span>{run.judgeVersion}</span>
         <span className="badge neutral">not available</span>
       </div>
     )
-  }
   return (
     <div className="stack-tight">
       <span>
@@ -248,25 +640,12 @@ function PassRateCell({ ci }: { ci: ConfidenceInterval }) {
 
 function RunDetailView() {
   const { runId = '' } = useParams()
-  const reportQuery = useQuery({
-    queryKey: ['run', runId],
-    queryFn: () => fetchRegressionReport(runId),
-  })
-  if (reportQuery.isLoading) {
-    return <PageState title="Loading report" />
-  }
-  if (reportQuery.isError) {
-    return (
-      <PageState
-        title="Report not generated"
-        detail="Run regression.py to generate this report, then refresh the read API."
-      />
-    )
-  }
-  if (!reportQuery.data) {
-    return <PageState title="Report not generated" detail="Run regression.py to generate this report." />
-  }
-  return <RegressionReportView report={reportQuery.data} />
+  const q = useQuery({ queryKey: ['run', runId], queryFn: () => fetchRegressionReport(runId) })
+  if (q.isLoading) return <PageState title="Loading report" />
+  if (q.isError)
+    return <PageState title="Report not generated" detail="Run judge-compare to generate this report." />
+  if (!q.data) return <PageState title="Report not generated" />
+  return <RegressionReportView report={q.data} />
 }
 
 function RegressionReportView({ report }: { report: RegressionReport }) {
@@ -304,8 +683,8 @@ function RegressionReportView({ report }: { report: RegressionReport }) {
 }
 
 function ResultBadge({ result }: { result: RegressionResult }) {
-  const className = result === 'better' ? 'good' : result === 'worse' ? 'bad' : 'warn'
-  return <span className={`badge ${className}`}>{result}</span>
+  const cls = result === 'better' ? 'good' : result === 'worse' ? 'bad' : 'warn'
+  return <span className={`badge ${cls}`}>{result}</span>
 }
 
 function DeltaTable({ rows }: { rows: RegressionReport['perLabel'] }) {
@@ -314,18 +693,12 @@ function DeltaTable({ rows }: { rows: RegressionReport['perLabel'] }) {
       <h2>Per-label failures</h2>
       <table>
         <thead>
-          <tr>
-            <th>Label</th>
-            <th>Baseline</th>
-            <th>Candidate</th>
-          </tr>
+          <tr><th>Label</th><th>Baseline</th><th>Candidate</th></tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.label}>
-              <td>{row.label}</td>
-              <td>{row.baseline}</td>
-              <td>{row.candidate}</td>
+              <td>{row.label}</td><td>{row.baseline}</td><td>{row.candidate}</td>
             </tr>
           ))}
         </tbody>
@@ -355,9 +728,7 @@ function TraceList({ title, cases }: { title: string; cases: TraceCase[] }) {
           {cases.map((item) => (
             <li key={`${title}-${item.caseId}`}>
               {item.traceUrl ? (
-                <a href={item.traceUrl} target="_blank" rel="noreferrer">
-                  {item.caseId}
-                </a>
+                <a href={item.traceUrl} target="_blank" rel="noreferrer">{item.caseId}</a>
               ) : (
                 <span>{item.caseId}</span>
               )}
@@ -371,24 +742,15 @@ function TraceList({ title, cases }: { title: string; cases: TraceCase[] }) {
 
 function JudgeDetailView() {
   const { judgeVersion = '' } = useParams()
-  const judgeQuery = useQuery({
-    queryKey: ['judge', judgeVersion],
-    queryFn: () => fetchJudge(judgeVersion),
-  })
-  if (judgeQuery.isLoading) {
-    return <PageState title="Loading judge report" />
-  }
-  if (judgeQuery.isError) {
-    return <PageState title="Judge report not found" detail="Validate the judge to write its report." />
-  }
-  if (!judgeQuery.data) {
-    return <PageState title="Judge report not found" detail="Validate the judge to write its report." />
-  }
-  return <JudgeReportView report={judgeQuery.data} />
+  const q = useQuery({ queryKey: ['judge', judgeVersion], queryFn: () => fetchJudge(judgeVersion) })
+  if (q.isLoading) return <PageState title="Loading judge report" />
+  if (q.isError) return <PageState title="Judge report not found" detail="Validate the judge to write its report." />
+  if (!q.data) return <PageState title="Judge report not found" />
+  return <JudgeReportView report={q.data} />
 }
 
 function JudgeReportView({ report }: { report: JudgeReport }) {
-  const failRow = report.perLabel.find((row) => row.label === 'fail')
+  const failRow = report.perLabel.find((r) => r.label === 'fail')
   return (
     <section className="page-section">
       <div className="section-head">
@@ -404,20 +766,13 @@ function JudgeReportView({ report }: { report: JudgeReport }) {
         <Metric label="Macro-F1" value={formatPercent(report.f1)} note={`threshold ${formatPercent(report.threshold)}`} />
         <Metric label="Gold fail" value={`${report.goldFailCount}/${report.minClassSupport}`} />
         <Metric label="Gold pass" value={`${report.goldPassCount}/${report.minClassSupport}`} />
-        <Metric label="Fail-class F1 gate" value={failRow ? formatPercent(failRow.f1) : 'not available'} />
+        <Metric label="Fail-class F1 gate" value={failRow ? formatPercent(failRow.f1) : 'n/a'} />
       </div>
       <div className="two-column">
         <section className="panel">
           <h2>Per-label precision / recall / F1</h2>
           <table>
-            <thead>
-              <tr>
-                <th>Label</th>
-                <th>Precision</th>
-                <th>Recall</th>
-                <th>F1</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Label</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead>
             <tbody>
               {report.perLabel.map((row) => (
                 <tr key={row.label}>
@@ -469,6 +824,6 @@ function formatPercent(value: number) {
 }
 
 function formatSignedPercent(value: number) {
-  const percent = Math.round(value * 100)
-  return `${percent > 0 ? '+' : ''}${percent}%`
+  const p = Math.round(value * 100)
+  return `${p > 0 ? '+' : ''}${p}%`
 }

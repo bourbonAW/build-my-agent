@@ -26,7 +26,7 @@ from scripts.common import (
 )
 
 
-def _build_agent(workdir: Path, model: str) -> "Agent":
+def _build_agent(workdir: Path, model: str) -> Agent:
     from bourbon.agent import Agent
     from bourbon.config import ConfigManager
 
@@ -118,21 +118,23 @@ def main() -> None:
                     sample_id=sample_id,
                 )
             )
-
-    write_run_outputs(
-        args.root,
-        args.project,
-        run_id,
-        outputs,
-        {
-            "runId": run_id,
-            "harness": harness.id(),
-            "gitSha": git_sha,
-            "model": args.model,
-            "createdAt": utc_timestamp_slug(),
-            "repeat": args.repeat,
-        },
-    )
+            # Write after every case so progress pollers (e.g. the flywheel API's
+            # line-count-based progress bar) observe real, incremental progress
+            # instead of a single jump from 0 to N at the very end of the run.
+            write_run_outputs(
+                args.root,
+                args.project,
+                run_id,
+                outputs,
+                {
+                    "runId": run_id,
+                    "harness": harness.id(),
+                    "gitSha": git_sha,
+                    "model": args.model,
+                    "createdAt": utc_timestamp_slug(),
+                    "repeat": args.repeat,
+                },
+            )
     print(
         json.dumps(
             {

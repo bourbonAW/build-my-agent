@@ -113,7 +113,7 @@ Key components:
 OpenTelemetry tracing, gracefully degraded when `opentelemetry` is not installed.
 
 - **`ObservabilityManager`** — singleton TracerProvider; exports via OTLP (endpoint from env `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` → `OTEL_EXPORTER_OTLP_ENDPOINT` → config). Uses `BatchSpanProcessor`.
-- **`BourbonTracer`** — thin facade with context managers `llm_call()`, `tool_call()`, `agent_step()`. Records token counts, model name, finish reason. **Deliberately omits message bodies** (metadata-only, privacy-conscious). Conforms to OpenTelemetry GenAI semantic conventions.
+- **`BourbonTracer`** — thin facade with context managers `llm_call()`, `tool_call()`, `agent_step()`. Records token counts, model name, finish reason. `agent_step()`/`record_agent_output()` capture the user turn and agent response as `input`/`output` span attributes (truncated to 4000 chars), and `record_tool_io()` does the same for each tool call's input/output — this powers Langfuse trace content (see `flywheel/`). Conforms to OpenTelemetry GenAI semantic conventions.
 
 ### Permissions System (`src/bourbon/permissions/`)
 

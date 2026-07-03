@@ -24,6 +24,10 @@ from bourbon.observability.semconv import (
     tool_span_name,
 )
 
+MAX_IO_ATTR_CHARS = 4000
+"""Cap on input/output span attribute length, to stay under OTel collector /
+Langfuse ingestion attribute-size limits."""
+
 
 class _NoOpSpan:
     def set_attribute(self, key: str, value: Any) -> None:
@@ -95,13 +99,26 @@ class BourbonTracer:
         entrypoint: str = "step",
         eval_case_id: str | None = None,
         eval_run_id: str | None = None,
+        user_input: str | None = None,
     ) -> Generator[Any, None, None]:
-        with self._span(
-            AGENT_SPAN_NAME,
-            kind=AGENT_SPAN_KIND,
-            attributes=agent_span_attributes(workdir, entrypoint, eval_case_id, eval_run_id),
-        ) as span:
+        attrs = agent_span_attributes(workdir, entrypoint, eval_case_id, eval_run_id)
+        if user_input is not None:
+            attrs["input"] = user_input[:MAX_IO_ATTR_CHARS]
+        with self._span(AGENT_SPAN_NAME, kind=AGENT_SPAN_KIND, attributes=attrs) as span:
             yield span
+
+    def record_agent_output(self, span: Any, output: str) -> None:
+        span.set_attribute("output", output[:MAX_IO_ATTR_CHARS])
+
+    def record_tool_io(self, span: Any, tool_input: object, output: str) -> None:
+        import json as _json
+
+        try:
+            input_str = _json.dumps(tool_input, ensure_ascii=False, default=str)
+        except Exception:
+            input_str = str(tool_input)
+        span.set_attribute("input", input_str[:MAX_IO_ATTR_CHARS])
+        span.set_attribute("output", output[:MAX_IO_ATTR_CHARS])
 
     @contextmanager
     def llm_call(

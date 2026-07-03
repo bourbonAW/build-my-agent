@@ -1,39 +1,60 @@
-# Flywheel 实现计划 — 索引
+# Flywheel 实施计划 — 索引（精简修订 2026-06-24）
 
-> **对于智能体工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现每个子计划。步骤使用复选框（`- [ ]`）语法进行跟踪。
+> **面向 Agent 工作者：** 必需子技能：superpowers:test-driven-development
+> 用于 Python 核心；前端使用 Vitest + Testing Library。步骤使用
+> 复选框（`- [ ]`）语法。
 
-**目标：** 构建两份父规格中描述的自托管 Flywheel 控制平面 + 引擎 + UI：一个闭环评估改进系统，将真实运行轨迹转化为数据集、校准后的评判器、失败问题、人工评审的提案、回归决策和发布的测试框架基线。
+> **⚠️ 本索引已为精简 MVP 重写。** 之前的版本要求控制平面（State Store、5 个生命周期枚举、Score Bridge、~45 个端点、
+> 分类注册表、脱敏管线、保留账本）并指向子计划 03–08。**所有这些已被取代。** 参见 `specs/2026-06-22-flywheel-engine-design.md`
+> §0 了解为何削减了约 85%。子计划 **03–08 已被删除** — 其存留内容已合并到计划 01/02 中，其余部分按引擎规格 §8 推迟。
+> 下表记录了每个计划的原始内容（git 历史保留了原件）；请勿重新创建或实现它们。这些文档的中文 `-zh` 变体被故意保留未修改，仍描述旧设计 — 也不要根据它们来实现。
 
-**架构：** 新建 `flywheel/` 仓库，包含 Python 控制平面/引擎（FastAPI + 文件/SQLite 状态存储，同步，匹配 Bourbon 风格）和 React+TypeScript+Vite UI。Langfuse + OTel Collector 是证据存储（不在此构建，仅集成）。浏览器仅与 Flywheel API 通信，从不接收 Langfuse 写凭证。
+**目标：** 让 Bourbon 通过自身的 trace 实现可衡量的改进，使用能闭合循环的最小机制：真实 trace → 查看失败 → 几个可重放的用例 → 评分（judge）→ 改变一件事 → 重新运行，比较，不回退。
 
-**技术栈：** Python 3.13, FastAPI, pydantic v2, httpx, SQLite (stdlib `sqlite3`), pytest; React 18 + TypeScript + Vite, React Router, TanStack Query, TanStack Table, shadcn/ui, lucide-react, Recharts, Vitest + Testing Library + Playwright。
+**架构：** 一个小型 `flywheel/` Python 包（纯逻辑核心 + 轻量只读 API）加上一个真正的 React+Vite 前端。**Langfuse** 是证据存储，拥有 trace、数据集、分数和标注（不在此重建）。
+**OpenTelemetry `gen_ai.*`**（Bourbon 已经在发射）是 trace 约定；唯一的新属性是 `eval.case_id` 和 `eval.run_id`。
+
+**技术栈：** Python 3.13, pydantic v2, FastAPI（只读）, pytest; React +
+TypeScript + Vite, React Router, TanStack Query/Table, Recharts, Vitest +
+Testing Library, 一个 Playwright 端到端主流程测试。
 
 **父规格：**
-- `docs/superpowers/specs/2026-06-22-flywheel-engine-design.md`
-- `docs/superpowers/specs/2026-06-22-flywheel-ui-ux-design.md`
+- `docs/superpowers/specs/2026-06-22-flywheel-engine-design.md`（精简版）
+- `docs/superpowers/specs/2026-06-22-flywheel-ui-ux-design.md`（精简版）
 
 ---
 
 ## 全局约束
 
-这些约束适用于**每个**子计划和任务。值直接从规格复制。
+适用于以下所有任务。
 
-- **OTel 必需。** `trace_id` 对评估运行绝非可选。每个项目必须具备 OTel 能力。不支持 JSONL 回退。
-- **评估轨迹不做头部采样。** 带有 `flywheel.eval_run_id` 或 `flywheel.trace_pool_id` 的轨迹必须完整导出到 Langfuse。
-- **分割必须机械不相交：** `train ∩ dev ∩ locked_test ∩ regression_holdout = ∅`。`locked_test` 验证评判器；`regression_holdout` 验证候选测试框架；它们绝不能共享用例。
-- **脱敏失败时采用安全失败。** L3 分析器/提案生成器绝不能接收原始轨迹载荷。`blocked` 证据对 UI 隐藏并排除在 LLM 分析之外。状态存储记录产生每个证据视图的脱敏策略 + 版本。
-- **同评判器比较。** 基线和候选回归评分必须使用相同的 `judge_version`；否则发布被阻止（`judge_migration_required`）。
-- **权威生命周期状态。** DB、API、引擎和 UI 逐字使用第 12 节的 `ProposalState`、`RegressionStatus`、`RegressionOutcome`、`RunState`、`JudgeState` 枚举。无并行词汇表。`RegressionStatus` 是从 `ProposalState` **派生**的，从不独立持久化。
-- **人工门控。** 提案审批、diff 评审、发布、回滚和发布后回滚需要显式人工动作。无全自动审批或发布。
-- **所有变更的幂等性。** 重复提交返回现有对象。键：
-  - `POST /api/scores`: `eval_run_id + case_id + sample_id + source + judge_version`
-  - `POST /api/annotations`: `annotation_item_id + annotator_id + rubric_version`
-  - 提案审批/拒绝/发布/回滚是比较并设置转换。
-- **浏览器从不接收 Langfuse 写凭证。** 评分写入仅通过 Flywheel API Score Bridge。
-- **每个项目一个当前基线**，具有可查询的血缘（当前/先前生成、产生提案、发布时间、回滚历史）。
-- **开放分类注册表。** 任何地方不得硬编码封闭的 `FailureCategory` 枚举。分类版本发布后不可变；变更创建新版本 + 迁移映射。
-- **授权角色：** 数据集策划者、评判器负责人、测试框架负责人、平台维护者。发布、回滚、发布后回滚、脱敏策略变更和提案审批需要显式角色检查。
-- **所有变更返回** 更新后的对象**以及**一个仅追加的审计事件 ID。
+- **复用标准，不要重新发明。** 执行时 trace 属性 = OTel
+  `gen_ai.*` + `eval.case_id`/`eval.run_id`。数据集、分数、标注、trace
+  浏览 = Langfuse 原生功能。不使用私有 `flywheel.*` 约定，不使用 State Store
+  对 Langfuse 对象进行重新建模。
+- **仅四个身份概念：** `case_id`、`run_id`、`label`（人工标注为
+  `pass`/`fail`；judge 裁定以分类形式持久化，也可以是
+  `uncertain`；`Label` 类型还携带 `skip` — `skip`/`uncertain` 是
+  非成功状态）和 `trace_id`。另加一个最小化的 harness id `git_sha@model` 和一个纯文本
+  `judge_version` 字符串。没有 8 部分指纹，没有生命周期枚举。
+- **存留的正确性门控**（断言，不是状态机）：`compare()` 在以下任何情况下抛出异常 —
+  - *同一 judge：* baseline 和 candidate 必须由同一个 `judge_version` 评分。
+  - *同一总体：* baseline 和 candidate 必须覆盖相同的 case id。
+  - *完整性：* 比较集必须等于完整声明的回归拆分
+    （两次运行都静默丢弃的 case 不得在更简单的子集上通过）。
+  - *互斥性：* 回归拆分不得与 judge 验证拆分重叠（完整的 `judge_train ∪ judge_dev ∪ judge_test`）。
+  - 加上明确拒绝：`compare()` 在回归集为空或 case id 重复时抛出异常；`validate()` 在 **重复** case id 时抛出异常，但将
+    **不足/不均衡** 的验证拆分视为 *未验证*（`passes=false`，
+    而非抛出异常 — 证据不足是非验证，不是使用错误）。
+- **Judge 是唯一经过验证的资产。** macro-F1 ≥ 0.70 **且** fail 类别 F1 ≥ 0.70
+  （高 macro 但对失败视而不见的 judge 不得通过验证）+ 每类别 gold 样本量
+  （通过重新运行 `validate.py` 重新计算），而非 6 状态生命周期。
+- **回归结果是三值的：** `better | no_change | worse`，由
+  **精确双侧配对符号检验**（McNemar 精确检验）对不一致对决定；
+  Wilson delta CI 仅作为描述性噪声带报告（在微小不一致计数上它是反保守的）。提案是 git PR；baseline
+  是 `main`；"发布"是合并。
+- **没有控制平面。** 没有认证/角色，没有审计日志，没有幂等层，没有
+  Score Bridge。只读 API 是只读的；浏览器永远不会收到 Langfuse 写入凭据。
 
 ---
 
@@ -41,138 +62,84 @@
 
 ```
 flywheel/
-├── pyproject.toml          # Python 包 "flywheel"，依赖，ruff/mypy/pytest 配置
-├── sdk/                    # L1 SDK（计划 01）
-├── api/                    # 控制平面：服务器、状态存储、Score Bridge、认证、审计、脱敏（计划 02、03）
-├── engine/                 # L3：采样器、编码器、分类、数据集、读取器、分析器、提案生成器、移交、验证器、写入器（计划 04–07）
-├── infra/                  # Langfuse + OTel Collector 的 docker-compose（参考，非编码计划）
-├── datasets/               # 策划的数据集 YAML/JSON 制品
-├── taxonomy/               # 分类注册表 YAML 制品
-├── ui/                     # React 应用（计划 08）
-└── tests/                  # pytest 树镜像包布局
+├── pyproject.toml          # package "flywheel" + sibling package "api"
+├── flywheel/               # core library (plan 01) + judge/validate/report (plan 02)
+│   ├── identity.py metrics.py regression.py
+│   └── judge.py validate.py report.py
+├── api/                    # thin read-only FastAPI + runs_provider.py (plan 02)
+├── scripts/                # Bourbon/Langfuse glue: sample_traces.py, run_harness.py, run_judge.py, validate_judge.py, run_regression.py (plan 02 Task 6)
+├── ui/                     # React + Vite frontend (plan 02 Task 5)
+├── labels.md               # flat editable failure-label list (plan 01)
+└── tests/                  # pytest tree
 ```
 
-**Python 约定（匹配 Bourbon）：**
-- 同步代码。引擎/状态存储逻辑中无 asyncio。FastAPI 路由处理器可以是 `def`（同步）—— FastAPI 在线程池中运行它们。
-- 引擎领域对象使用 `@dataclass`；API 请求/响应模式使用 pydantic `BaseModel`。
-- 文件优先状态存储：磁盘上的 JSON/JSONL 位于 `~/.flywheel/<project>/`，使用 SQLite 索引进行可查询列表。崩溃安全 = 返回前追加到磁盘。
-- 测试：`pytest`。Lint：`ruff check sdk api engine tests`。类型：`mypy sdk api engine`。
+**约定（与 Bourbon 保持一致）：** 同步代码，不使用 asyncio；领域对象使用 `@dataclass`，仅在验证有帮助时使用 pydantic；纯逻辑核心采用 TDD；报告 JSON 端到端使用 camelCase（UI §7），因此只读 API 原样返回。
 
 **测试命令：**
 ```bash
 cd flywheel
 uv pip install -e ".[dev]"
-pytest                       # 全部
-pytest tests/sdk -v          # 一个子系统
-ruff check sdk api engine tests
-mypy sdk api engine
-# UI:
-cd flywheel/ui && npm install && npm run test && npm run test:e2e
+pytest
+ruff check flywheel api tests
+mypy flywheel api
+cd ui && npm install && npm run test -- --run && npx playwright test
 ```
 
 ---
 
-## 子计划 DAG
-
-按依赖顺序执行。每个子计划以可工作的、可独立测试的软件结束。
+## 子计划依赖图（8 个计划 → 2 个）
 
 ```
-00-index（本文档）
+00-index (this doc)
    │
    ▼
-01-sdk ──────────────► 02-control-plane ──┬──► 03-redaction ──┐
-                                          │                   │
-                                          ├──► 04-data-analysis│
-                                          │         │         │
-                                          │         ▼         ▼
-                                          │      05-judge ◄────┘
-                                          │         │
-                                          │         ▼
-                                          │      06-engine ◄── 03
-                                          │         │
-                                          │         ▼
-                                          │      07-regression
-                                          │         │
-                                          └─────────┴──► 08-ui（消费所有 API）
+01-sdk (core library: identity, metrics, regression)
+   │
+   ▼
+02-control-plane (judge, validate, report, read API, frontend, Bourbon glue)
 ```
 
 | 计划 | 文件 | 产出 | 规格覆盖 |
 |---|---|---|---|
-| 01 | `2026-06-23-flywheel-01-sdk.md` | 仓库脚手架、`flywheel.schema`、`FlywheelContext`、指纹、`ScoreClient`、指标 | 引擎 §6, §7 |
-| 02 | `2026-06-23-flywheel-02-control-plane.md` | FastAPI 服务器、状态存储对象、Score Bridge、认证/角色、审计、幂等性、基线对象 | 引擎 §9, §12（基线）, UI §10, §11 |
-| 03 | `2026-06-23-flywheel-03-redaction.md` | `RedactionService`、`EvidenceReader`、失败关闭流水线、脱敏分析 | 引擎 §10, UI §13 |
-| 04 | `2026-06-23-flywheel-04-data-analysis.md` | 采样器、编码器、分类注册表+迁移、数据集构建+分割强制执行、预算 | 引擎 §5, §13（采样器/编码器/分类/数据集） |
-| 05 | `2026-06-23-flywheel-05-judge.md` | `JudgeVersion` 生命周期、校准协议、锁定测试轮换、候选漂移复检、漂移哨兵 | 引擎 §11 |
-| 06 | `2026-06-23-flywheel-06-engine.md` | 读取器集成、分析器（聚类+根因）、提案生成器、移交 Markdown、FailureIssue/ImprovementProposal | 引擎 §13（分析器/提案生成器/移交） |
-| 07 | `2026-06-23-flywheel-07-regression.md` | 验证器：留出完整性、留出账本、统计/置信区间/噪声带、候选评判器复检、发布/回滚/无显著变化/回退 | 引擎 §12, §14 |
-| 08 | `2026-06-23-flywheel-08-ui.md` | React 应用：所有 MVP 路由 + 阶段 2 路由、决策表单、API 客户端、Playwright 循环测试 | UI 规格（全部） |
+| 01 | `2026-06-23-flywheel-01-sdk.md` | 仓库脚手架、`identity.py`（Harness, Label）、`metrics.py`（P/R/F1, Wilson CI）、`regression.py`（3 值 compare + 门控）、`labels.md` | Engine §4, §5, §7 |
+| 02 | `2026-06-23-flywheel-02-control-plane.md` | `judge.py`、`validate.py`、`report.py`、轻量只读 API、React 前端、Bourbon 集成胶水 | Engine §6, §9; UI spec |
 
----
+> 文件名仍然是 "01-sdk" / "02-control-plane" 以保持 git 连续性，但
+> 其**内容是精简重写版** — 既不是 SDK 也不是控制平面。
 
-## 阶段映射（覆盖 = 完整：MVP + 阶段 2/3）
+### 已删除的子计划（不要重新创建）
 
-根据引擎规格 §15，每个子计划用其满足的阶段标记任务：
+这些文件在精简修订中**已被删除**（可从 git 历史中恢复）。
+每行记录了该计划的内容及其存留范围的去向。
 
-- **第一天硬门控** — OTel 身份（01,02）、脱敏（03）、数据集分割（04）、评判器有效性（05）、同评判器比较（07）、回归留出（07）、基线对象（02,07）、人工门控（02,08）、权威生命周期（02）、回滚路径（02,07）。
-- **阶段 1.5 机制** — 多重比较校正（07）、漂移哨兵（05）、基线变基（07）、评判器迁移（07）、冲突检测（06,07）、脱敏分析（03）、成本治理（04）。MVP 立场 = schema/API 占位符 + 手动；后续自动化按任务注明。
-- **阶段 2** — 编码智能体执行器 + PR/diff 链接（06,08）、自定义标注工作流（08）、候选审计工作流（05,08）、更丰富的脱敏策略 UI（03,08）。
-- **阶段 3** — 定时/阈值触发器、多项目趋势分析、长期分类漂移分析（作为最终任务添加到 04、05、07、08，标记为阶段 3）。
-
----
-
-## API 端点所有权（UI §10）
-
-每个 UI §10 端点恰好分配给一个子计划。计划 02 实现运行和基线端点，并用 501 占位所有其他端点。
-
-| 端点 | 方法 | 所有者计划 |
+| 文件（已删除） | 原内容 | 处置 |
 |---|---|---|
-| `/api/runs` | GET, POST | 02 |
+| `2026-06-23-flywheel-03-redaction.md` | 脱敏管线 | 推迟（Engine §8）；单一受信维护者无需脱敏。 |
+| `2026-06-23-flywheel-04-data-analysis.md` | 采样器/编码器/分类注册表/数据集拆分 | 数据和标注存储在 Langfuse 中；标签是一个扁平的 `labels.md`。 |
+| `2026-06-23-flywheel-05-judge.md` | JudgeVersion 生命周期 + 漂移哨兵 | 被 `validate.py` 取代（macro-F1 ≥ 0.70）。 |
+| `2026-06-23-flywheel-06-engine.md` | 分析器/提案器/交接 | 提案是 git PR（Engine §8 添加触发器）。 |
+| `2026-06-23-flywheel-07-regression.md` | 保留账本、Bonferroni/FDR、发布/回滚状态 | `regression.py` 3 值结果 + Wilson 噪声带。 |
+| `2026-06-23-flywheel-08-ui.md` | 完整 13 路由控制 UI | UI 是计划 02 Task 5（3 个路由）。 |
+
+---
+
+## API 接口（45 → 3，只读）
+
+| 端点 | 方法 | 所属计划 |
+|---|---|---|
+| `/api/runs` | GET | 02 |
 | `/api/runs/{run_id}` | GET | 02 |
-| `/api/runs/{run_id}/scores` | POST | 02（占位） → 04 连接分类验证 |
-| `/api/runs/{run_id}/sync-labels` | POST | 06 |
-| `/api/runs/{run_id}/analysis` | POST | 06 |
-| `/api/baselines` | GET, POST | 02 |
-| `/api/baselines/{generation}` | GET | 02 |
-| `/api/baselines/{generation}/revert` | POST | 02 |
-| `/api/projects` | GET | 04 |
-| `/api/datasets`, `/api/datasets/{id}` | GET | 04 |
-| `/api/datasets/{dataset_id}/cases` | POST | 04 |
-| `/api/taxonomy` | GET | 04（标签+迁移聚合；UI §10） |
-| `/api/taxonomy/labels`, `/api/taxonomy/migrations` | GET, POST | 04 |
-| `/api/taxonomy/propose-update` | POST | 04 |
-| `/api/trace-pools` | GET | 04 |
-| `/api/trace-pools/{pool_id}/sample` | POST | 04 |
-| `/api/open-code-batches/{batch_id}` | GET | 04 |
-| `/api/open-code-batches/{batch_id}/codes` | POST | 04 |
-| `/api/judges`, `/api/judges/{version}` | GET | 05 |
-| `/api/judges` | POST | 05 |
-| `/api/judges/{judge_version}/validate` | POST | 05 |
-| `/api/annotations`, `/api/annotations/{id}` | GET, POST | 05 |
-| `/api/issues`, `/api/issues/{issue_id}` | GET | 06 |
-| `/api/proposals/{proposal_id}` | GET | 06 |
-| `/api/proposals/{proposal_id}/handoff` | POST | 06 |
-| `/api/proposals/{proposal_id}/implementation-link` | POST | 06 |
-| `/api/proposals/{proposal_id}/rebase` | POST | 06 |
-| `/api/proposals/{proposal_id}/approve` | POST | 07 |
-| `/api/proposals/{proposal_id}/reject` | POST | 07 |
-| `/api/proposals/{proposal_id}/defer` | POST | 07 |
-| `/api/regressions` | POST | 07 |
-| `/api/regressions/{regression_id}` | GET | 07 |
-| `/api/regressions/{regression_id}/publish` | POST | 07 |
-| `/api/regressions/{regression_id}/rollback` | POST | 07 |
-| `/api/regressions/{regression_id}/no-significant-change` | POST | 07 |
-| `/api/regressions/{regression_id}/require-judge-recheck` | POST | 07 |
-| `/api/regressions/{regression_id}/resume-after-judge-recheck` | POST | 07 |
-| `/api/regressions/{regression_id}/require-judge-migration` | POST | 07 |
-| `/api/regressions/{regression_id}/resume-after-judge-migration` | POST | 07 |
-| `/api/redaction/reports` | GET | 03 |
-| `/api/evidence/{path}`, `/api/traces/{path}` | GET | 03（受 REDACTION_ENABLED 保护） |
+| `/api/judges/{judge_version}` | GET | 02 |
 
-## 依赖说明
+旧索引中列出的其他所有内容（分数、标注、数据集、分类、
+trace 池、issue、提案、回归、baseline、脱敏）要么是
+Langfuse 原生操作，要么是已删除的概念。
 
-- **计划 05 继承计划 02 的类型定义。** `JudgeState`、`JudgeVersionModel` 和 `JudgeDriftCheckModel` 在计划 02 的 `api/lifecycle.py` 和 `api/schemas.py` 中定义。计划 05 导入并扩展行为但不重新定义这些类型。
-- **脱敏硬门控（引擎 §10, §15）：** 计划 02 证据服务端点（`/api/evidence/*`、`/api/traces/*`）返回 503 直到设置 `REDACTION_ENABLED` 环境变量。此变量仅在计划 03 `RedactionService` 连接到应用后设置。不要将 `REDACTION_ENABLED=1` 作为计划 02 集成测试的一部分设置。
+---
 
-## 执行顺序说明
+## 执行顺序
 
-计划 03 和 04 都仅依赖 02，可以并行运行。05 需要两者。06 需要 03+05。07 需要 05+06。08 需要每个 API 契约，但其基础任务（脚手架、路由器、API 客户端、运行/数据页面）可以在 02 稳定后开始。在每个计划内，任务严格排序。
+计划 01（纯逻辑，TDD）→ 计划 02（judge/validate/report TDD，然后只读 API，
+然后前端，然后 Bourbon 胶水在 Task 6 中）。每个计划内，任务严格有序。将仓库
+与 trace→case 链接起来的关键在 **计划 02 Task 6** 中完成（Bourbon span 属性 + `run_harness.py` + `run_judge.py` +
+`run_regression.py` + `runs_provider`），而非在纯逻辑任务中。

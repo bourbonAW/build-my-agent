@@ -336,8 +336,11 @@ class Agent:
                 entrypoint="step",
                 eval_case_id=getattr(self, "_eval_case_id", None),
                 eval_run_id=getattr(self, "_eval_run_id", None),
-            ):
-                return self._step_impl(user_input)
+                user_input=user_input,
+            ) as span:
+                response = self._step_impl(user_input)
+                tracer.record_agent_output(span, response)
+                return response
         finally:
             self.force_flush_observability()
 
@@ -390,8 +393,11 @@ class Agent:
                 entrypoint="step_stream",
                 eval_case_id=getattr(self, "_eval_case_id", None),
                 eval_run_id=getattr(self, "_eval_run_id", None),
-            ):
-                return self._step_stream_impl(user_input, on_text_chunk)
+                user_input=user_input,
+            ) as span:
+                response = self._step_stream_impl(user_input, on_text_chunk)
+                tracer.record_agent_output(span, response)
+                return response
         finally:
             self.force_flush_observability()
 

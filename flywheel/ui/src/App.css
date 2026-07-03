@@ -366,6 +366,272 @@ code,
   margin-top: 4px;
 }
 
+/* ── Control view ─────────────────────────────────────────────────────── */
+
+.control-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  padding: 28px 0 56px;
+  align-items: start;
+}
+
+.control-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.control-panel.locked {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-head h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.button.small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.dataset-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.stat {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.stat span {
+  font-size: 11px;
+}
+
+.stat strong {
+  color: var(--text-strong);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.dataset-status {
+  display: grid;
+  gap: 6px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.quiet-link {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: none;
+  margin-left: auto;
+}
+
+.quiet-link:hover {
+  color: var(--link);
+}
+
+.panel-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.empty-state {
+  display: grid;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.progress-block {
+  display: grid;
+  gap: 6px;
+}
+
+.progress-phase {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.progress-bar-bg {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--text-strong);
+  transition: width 0.4s ease;
+}
+
+.progress-count {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.error-box {
+  padding: 10px 12px;
+  border: 1px solid var(--red-bg);
+  border-radius: 6px;
+  background: var(--red-bg);
+  color: var(--red-text);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.success-msg {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.sample-panel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.sample-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sample-head h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-strong);
+}
+
+.sample-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.trace-select-list {
+  display: grid;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trace-select-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.trace-select-list li.selected {
+  border-color: var(--text-strong);
+  background: var(--surface);
+}
+
+.trace-id {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.trace-name {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.promote-row {
+  display: flex;
+  gap: 10px;
+}
+
+.dataset-name-input,
+.run-id-input {
+  flex: 1;
+  padding: 0 10px;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.eval-run-row {
+  display: flex;
+  gap: 10px;
+}
+
+.eval-phase {
+  display: grid;
+  gap: 10px;
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+@media (max-width: 860px) {
+  .control-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 860px) {
   .topbar {
     padding: 0 18px;

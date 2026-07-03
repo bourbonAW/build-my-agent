@@ -9,6 +9,11 @@ from typing import Any
 
 from scripts.common import DEFAULT_ROOT, create_langfuse_client, state_root, write_json
 
+LANGFUSE_MAX_FETCH_LIMIT = 100
+"""Langfuse's trace.list API caps `limit` at 100 per page; requests above this
+are rejected outright, so every caller (CLI script, pipeline API) must clamp
+or validate against this single constant rather than each picking its own."""
+
 
 def _as_dict(value: object) -> dict[str, Any]:
     if isinstance(value, dict):
@@ -33,6 +38,7 @@ def _as_dict(value: object) -> dict[str, Any]:
 
 
 def _fetch_recent_traces(client: object, limit: int) -> list[dict[str, Any]]:
+    limit = min(limit, LANGFUSE_MAX_FETCH_LIMIT)
     for method_name in ("fetch_traces", "get_traces"):
         method = getattr(client, method_name, None)
         if callable(method):
@@ -146,7 +152,7 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--dataset", required=True, help="Langfuse dataset/pool name to write")
     parser.add_argument("--limit", type=int, default=30)
-    parser.add_argument("--fetch-limit", type=int, default=200)
+    parser.add_argument("--fetch-limit", type=int, default=LANGFUSE_MAX_FETCH_LIMIT)
     parser.add_argument("--from-json", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
