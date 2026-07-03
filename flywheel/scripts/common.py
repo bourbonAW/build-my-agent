@@ -22,6 +22,8 @@ from flywheel.identity import HumanLabel, Label, validate_judge_version
 from flywheel.regression import check_splits_disjoint
 from flywheel.report import _safe_segment
 
+CaseLabel = Literal["pass", "fail", "skip"]
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -46,6 +48,19 @@ class DatasetItem:
 
     def in_split(self, split: Split) -> bool:
         return split in self.splits
+
+
+@dataclass(frozen=True)
+class Case:
+    case_id: str
+    input: str
+    frozen_output: str
+    trace_url: str
+    expected_output: str
+    label: CaseLabel | None
+    critique: str
+    failure_category: str | None
+    annotated_at: str
 
 
 @dataclass(frozen=True)
@@ -105,6 +120,45 @@ def state_root(root: Path, project: str) -> Path:
     path = Path(root) / _safe_segment(project) / "state"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def cases_path(root: Path, project: str) -> Path:
+    return state_root(root, project) / "cases.jsonl"
+
+
+def append_case(root: Path, project: str, case: Case) -> None:
+    path = cases_path(root, project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(asdict(case), sort_keys=True, ensure_ascii=False) + "\n")
+
+
+def load_cases(path: Path) -> list[Case]:
+    """Read cases.jsonl; the last record per case_id wins; malformed lines are
+    skipped with a warning rather than failing the whole load (a writer can be
+    killed mid-write, leaving a truncated final line)."""
+    if not path.exists():
+        return []
+    latest: dict[str, Case] = {}
+    for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+            latest[row["case_id"]] = Case(**row)
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            print(f"[warn] skipping malformed cases.jsonl line {lineno}: {exc}", file=sys.stderr)
+    return sorted(latest.values(), key=lambda c: c.case_id)
+
+
+def active_cases(cases: list[Case]) -> list[Case]:
+    """Cases eligible to run through the harness: everything not marked skip."""
+    return [c for c in cases if c.label != "skip"]
+
+
+def labeled_cases(cases: list[Case]) -> list[Case]:
+    """Cases with a binary human verdict: judge few-shot source + validation pool."""
+    return [c for c in cases if c.label in ("pass", "fail")]
 
 
 def read_json(path: Path) -> Any:
