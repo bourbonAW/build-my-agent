@@ -16,10 +16,9 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Literal, cast, get_args
+from typing import Any, Literal, get_args
 
-from flywheel.identity import HumanLabel, Label, validate_judge_version
-from flywheel.regression import check_splits_disjoint
+from flywheel.identity import Label, validate_judge_version
 from flywheel.report import _safe_segment
 
 CaseLabel = Literal["pass", "fail", "skip"]
@@ -28,26 +27,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-Split = Literal["judge_train", "judge_dev", "judge_test", "regression"]
-SPLITS: tuple[Split, ...] = ("judge_train", "judge_dev", "judge_test", "regression")
 DEFAULT_ROOT = Path(os.environ.get("FLYWHEEL_ROOT", "~/.flywheel")).expanduser()
 _SLUG_BAD = re.compile(r"[^A-Za-z0-9._@-]")
-
-
-@dataclass(frozen=True)
-class DatasetItem:
-    case_id: str
-    splits: tuple[Split, ...]
-    input: str
-    expected: str
-    metadata: dict[str, Any]
-    failure_label: str | None = None
-    frozen_output: str | None = None
-    human_label: HumanLabel | None = None
-    trace_url: str = ""
-
-    def in_split(self, split: Split) -> bool:
-        return split in self.splits
 
 
 @dataclass(frozen=True)
@@ -176,85 +157,6 @@ def _stringify(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False)
 
 
-def _metadata_from(record: dict[str, Any]) -> dict[str, Any]:
-    raw = record.get("metadata", {})
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise ValueError(f"metadata must be an object for dataset item {record!r}")
-    return dict(raw)
-
-
-def _parse_splits(record: dict[str, Any], metadata: dict[str, Any]) -> tuple[Split, ...]:
-    raw = record.get("splits", record.get("split", metadata.get("splits", metadata.get("split"))))
-    if isinstance(raw, str):
-        values: Iterable[Any] = [raw]
-    elif isinstance(raw, list | tuple):
-        values = raw
-    else:
-        raise ValueError(f"dataset item missing split label: {record!r}")
-
-    out: list[Split] = []
-    for value in values:
-        if value not in SPLITS:
-            raise ValueError(f"invalid split {value!r}; expected one of {SPLITS}")
-        out.append(value)
-    if not out:
-        raise ValueError(f"dataset item has no split label: {record!r}")
-    return tuple(out)
-
-
-def _human_label(record: dict[str, Any], metadata: dict[str, Any]) -> HumanLabel | None:
-    value = record.get(
-        "human_label", record.get("human", metadata.get("human_label", metadata.get("human")))
-    )
-    if value is None:
-        return None
-    if value not in get_args(HumanLabel):
-        raise ValueError(f"invalid human label {value!r}; expected {get_args(HumanLabel)}")
-    return cast(HumanLabel, value)
-
-
-def _record_from_langfuse_item(item: object) -> dict[str, Any]:
-    data: dict[str, Any] = {}
-    for name in ("id", "case_id", "input", "expected", "expected_output", "metadata", "output"):
-        if hasattr(item, name):
-            data[name] = getattr(item, name)
-    return data
-
-
-def _item_from_record(record: dict[str, Any]) -> DatasetItem:
-    metadata = _metadata_from(record)
-    case_id = str(record.get("case_id", record.get("id", metadata.get("case_id", ""))))
-    if not case_id:
-        raise ValueError(f"dataset item missing case id: {record!r}")
-    expected = record.get(
-        "expected",
-        record.get("acceptance", record.get("expected_output", metadata.get("expected", ""))),
-    )
-    if expected == "":
-        raise ValueError(f"dataset item {case_id!r} missing expected/acceptance text")
-    frozen_output = record.get(
-        "frozen_output",
-        record.get("output", metadata.get("frozen_output", metadata.get("output"))),
-    )
-    return DatasetItem(
-        case_id=case_id,
-        splits=_parse_splits(record, metadata),
-        input=_stringify(record.get("input", metadata.get("input", ""))),
-        expected=_stringify(expected),
-        metadata=metadata,
-        failure_label=(
-            None
-            if record.get("failure_label", metadata.get("failure_label")) is None
-            else str(record.get("failure_label", metadata.get("failure_label")))
-        ),
-        frozen_output=None if frozen_output is None else _stringify(frozen_output),
-        human_label=_human_label(record, metadata),
-        trace_url=str(record.get("trace_url", metadata.get("trace_url", ""))),
-    )
-
-
 def create_langfuse_client() -> object:
     try:
         from langfuse import get_client
@@ -272,51 +174,13 @@ def create_langfuse_client() -> object:
             ) from exc
 
 
-def load_dataset_items(dataset_json: Path | None, dataset_name: str | None) -> list[DatasetItem]:
-    if dataset_json is not None:
-        payload = read_json(dataset_json)
-        raw_items = (
-            payload["items"] if isinstance(payload, dict) and "items" in payload else payload
-        )
-        if not isinstance(raw_items, list):
-            raise ValueError("dataset JSON must be a list or an object with an 'items' list")
-        return [_item_from_record(dict(item)) for item in raw_items]
-
-    if not dataset_name:
-        raise ValueError("pass --dataset-json or --dataset")
-
-    client = create_langfuse_client()
-    get_dataset = getattr(client, "get_dataset", None)
-    if not callable(get_dataset):
-        raise RuntimeError("Langfuse client does not expose get_dataset(); use --dataset-json")
-    try:
-        dataset = get_dataset(name=dataset_name)
-    except TypeError:
-        dataset = get_dataset(dataset_name)
-    raw_items = getattr(dataset, "items", dataset)
-    if callable(raw_items):
-        raw_items = raw_items()
-    if not isinstance(raw_items, list):
-        raise RuntimeError("Langfuse dataset items were not returned as a list")
-    return [_item_from_record(_record_from_langfuse_item(item)) for item in raw_items]
-
-
-def split_sets(items: list[DatasetItem]) -> dict[str, set[str]]:
-    return {split: {item.case_id for item in items if item.in_split(split)} for split in SPLITS}
-
-
-def ensure_disjoint_splits(items: list[DatasetItem]) -> None:
-    check_splits_disjoint(split_sets(items))
-
-
-def items_for_split(items: list[DatasetItem], split: Split) -> list[DatasetItem]:
-    return sorted((item for item in items if item.in_split(split)), key=lambda item: item.case_id)
-
-
-def require_failure_labels(items: list[DatasetItem]) -> None:
-    missing = [item.case_id for item in items if not item.failure_label]
-    if missing:
-        raise ValueError(f"regression items missing failure_label metadata: {missing}")
+def load_dataset_items(
+    explicit_path: Path | None, root: Path, project: str
+) -> list[Case]:
+    """Load cases from an explicit JSONL path, or the project's default
+    cases.jsonl if no explicit path is given."""
+    path = explicit_path if explicit_path is not None else cases_path(root, project)
+    return load_cases(path)
 
 
 def run_outputs_path(root: Path, project: str, run_id: str) -> Path:

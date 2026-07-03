@@ -1,9 +1,19 @@
+import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.common import Case, active_cases, append_case, cases_path, labeled_cases, load_cases
+from scripts.common import (
+    Case,
+    active_cases,
+    append_case,
+    cases_path,
+    labeled_cases,
+    load_cases,
+    load_dataset_items,
+)
 
 
 def _case(case_id: str, label: str | None = None, **overrides: object) -> Case:
@@ -67,3 +77,18 @@ def test_labeled_cases_only_pass_or_fail(tmp_path: Path) -> None:
     cases = [_case("a", label="pass"), _case("b", label="fail"), _case("c", label="skip"),
              _case("d", label=None)]
     assert [c.case_id for c in labeled_cases(cases)] == ["a", "b"]
+
+
+def test_load_dataset_items_defaults_to_project_cases_path(tmp_path: Path) -> None:
+    append_case(tmp_path, "bourbon", _case("t1", label="pass"))
+    items = load_dataset_items(None, tmp_path, "bourbon")
+    assert [c.case_id for c in items] == ["t1"]
+
+
+def test_load_dataset_items_explicit_path_overrides_default(tmp_path: Path) -> None:
+    other = tmp_path / "elsewhere.jsonl"
+    other.write_text(
+        json.dumps(asdict(_case("only-here", label="fail"))) + "\n"
+    )
+    items = load_dataset_items(other, tmp_path, "bourbon")
+    assert [c.case_id for c in items] == ["only-here"]
