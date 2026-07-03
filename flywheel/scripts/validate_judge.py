@@ -1,4 +1,5 @@
-"""Validate a judge on judge_dev or the held-out judge_test split."""
+"""Validate a judge against every currently human-labeled case (continuous metric,
+not a pass/fail gate — see docs/superpowers/specs/2026-07-02-flywheel-local-case-store-design.md §2)."""
 
 from __future__ import annotations
 
@@ -6,16 +7,13 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import cast
 
 from flywheel.report import write_judge_report
 from flywheel.validate import LabeledCase, validate
 
 from scripts.common import (
     DEFAULT_ROOT,
-    Split,
-    ensure_disjoint_splits,
-    items_for_split,
+    labeled_cases,
     load_dataset_items,
     load_score_records,
     one_score_per_case,
@@ -26,34 +24,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default="bourbon")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--dataset-json", type=Path, default=None)
-    parser.add_argument("--dataset", default=None)
-    parser.add_argument("--split", default="judge_test", choices=("judge_dev", "judge_test"))
+    parser.add_argument("--cases-path", type=Path, default=None)
     parser.add_argument("--judge-version", default=None)
     parser.add_argument("--threshold", type=float, default=0.70)
     parser.add_argument("--min-class-support", type=int, default=5)
     args = parser.parse_args()
 
-    split = cast(Split, args.split)
-    items = load_dataset_items(args.dataset_json, args.dataset)
-    ensure_disjoint_splits(items)
-    target_items = items_for_split(items, split)
+    items = load_dataset_items(args.cases_path, args.root, args.project)
+    target_items = labeled_cases(items)
     if not target_items:
-        raise SystemExit(f"dataset has no {split} items")
+        raise SystemExit("no labeled cases to validate the judge against")
 
     scores, judge_version = load_score_records(
-        args.root,
-        args.project,
-        split,
-        judge_version=args.judge_version,
+        args.root, args.project, "frozen", judge_version=args.judge_version,
     )
     by_case = one_score_per_case(scores, {item.case_id for item in target_items})
 
-    labeled: list[LabeledCase] = []
-    for item in target_items:
-        if item.human_label is None:
-            raise ValueError(f"{split} item {item.case_id!r} missing human_label")
-        labeled.append(LabeledCase(item.case_id, item.human_label, by_case[item.case_id].label))
+    labeled: list[LabeledCase] = [
+        LabeledCase(item.case_id, item.label, by_case[item.case_id].label)  # type: ignore[arg-type]
+        for item in target_items
+    ]
 
     first = scores[0]
     report = validate(
@@ -64,14 +54,9 @@ def main() -> None:
         threshold=args.threshold,
         min_class_support=args.min_class_support,
     )
-    if split == "judge_test":
-        path = write_judge_report(args.root, args.project, report)
-        payload = asdict(report) | {"passes": report.passes(), "path": str(path)}
-    else:
-        payload = asdict(report) | {"passes": report.passes()}
+    path = write_judge_report(args.root, args.project, report)
+    payload = asdict(report) | {"passes": report.passes(), "path": str(path)}
     print(json.dumps(payload, indent=2))
-    if not report.passes():
-        raise SystemExit(1)
 
 
 if __name__ == "__main__":
