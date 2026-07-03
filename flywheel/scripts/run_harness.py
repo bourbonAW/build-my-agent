@@ -15,11 +15,9 @@ if TYPE_CHECKING:
 from scripts.common import (
     DEFAULT_ROOT,
     RunOutput,
+    active_cases,
     current_git_sha,
-    ensure_disjoint_splits,
-    items_for_split,
     load_dataset_items,
-    require_failure_labels,
     slugify,
     utc_timestamp_slug,
     write_run_outputs,
@@ -49,8 +47,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default="bourbon")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--dataset-json", type=Path, default=None)
-    parser.add_argument("--dataset", default=None)
+    parser.add_argument("--cases-path", type=Path, default=None)
     parser.add_argument("--workdir", type=Path, default=Path.cwd().parent)
     parser.add_argument("--git-sha", default=None)
     parser.add_argument("--model", required=True)
@@ -71,12 +68,10 @@ def main() -> None:
     if args.repeat < 1:
         raise SystemExit("--repeat must be >= 1")
 
-    items = load_dataset_items(args.dataset_json, args.dataset)
-    ensure_disjoint_splits(items)
-    regression_items = items_for_split(items, "regression")
-    require_failure_labels(regression_items)
+    items = load_dataset_items(args.cases_path, args.root, args.project)
+    regression_items = active_cases(items)
     if not regression_items:
-        raise SystemExit("dataset has no regression items")
+        raise SystemExit("no active cases (every case is skipped or the pool is empty)")
 
     git_sha = args.git_sha or current_git_sha(args.workdir)
     harness = Harness(git_sha=git_sha, model=args.model)
