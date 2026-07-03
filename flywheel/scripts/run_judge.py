@@ -5,31 +5,26 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Callable, cast
+from typing import Callable
 
 from flywheel.judge import Judge, JudgeConfig, JudgeExample
 
 from scripts.common import (
     DEFAULT_ROOT,
-    DatasetItem,
+    Case,
     RunOutput,
     ScoreRecord,
-    Split,
-    ensure_disjoint_splits,
-    items_for_split,
+    active_cases,
+    labeled_cases,
     load_dataset_items,
     load_run_outputs,
     write_score_records,
 )
 
 
-def _example(item: DatasetItem) -> JudgeExample:
-    if item.frozen_output is None or item.human_label is None:
-        raise ValueError(
-            f"judge_train item {item.case_id!r} needs frozen_output and binary human_label"
-        )
-    critique = str(item.metadata.get("critique", item.metadata.get("comment", "human gold label")))
-    return JudgeExample(item.input, item.expected, item.frozen_output, item.human_label, critique)
+def _example(item: Case) -> JudgeExample:
+    critique = item.critique or "human gold label"
+    return JudgeExample(item.input, item.expected_output, item.frozen_output, item.label, critique)  # type: ignore[arg-type]
 
 
 def _anthropic_complete(model: str) -> Callable[[str], str]:
@@ -54,21 +49,16 @@ def _anthropic_complete(model: str) -> Callable[[str], str]:
     return complete
 
 
-def _target_outputs_for_frozen(items: list[DatasetItem]) -> list[tuple[DatasetItem, str, str, str]]:
-    out: list[tuple[DatasetItem, str, str, str]] = []
-    for item in items:
-        if item.frozen_output is None:
-            raise ValueError(f"{item.splits} item {item.case_id!r} needs frozen_output")
-        out.append((item, item.frozen_output, item.trace_url, item.case_id))
-    return out
+def _target_outputs_for_frozen(items: list[Case]) -> list[tuple[Case, str, str, str]]:
+    return [(item, item.frozen_output, item.trace_url, item.case_id) for item in items]
 
 
 def _target_outputs_for_run(
-    items: list[DatasetItem],
+    items: list[Case],
     outputs: list[RunOutput],
-) -> list[tuple[DatasetItem, str, str, str]]:
+) -> list[tuple[Case, str, str, str]]:
     by_case = {item.case_id: item for item in items}
-    out: list[tuple[DatasetItem, str, str, str]] = []
+    out: list[tuple[Case, str, str, str]] = []
     for output in outputs:
         item = by_case.get(output.case_id)
         if item is not None:
@@ -80,10 +70,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default="bourbon")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--dataset-json", type=Path, default=None)
-    parser.add_argument("--dataset", default=None)
-    parser.add_argument("--split", required=True, choices=("judge_dev", "judge_test", "regression"))
-    parser.add_argument("--run", default=None, help="Required when --split regression")
+    parser.add_argument("--cases-path", type=Path, default=None)
+    parser.add_argument(
+        "--target", required=True,
+        help="'frozen' to score every labeled case's frozen_output, or a harness run_id "
+             "to score that run's live outputs",
+    )
     parser.add_argument("--judge-version", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--prompt-version", required=True)
@@ -101,13 +93,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    split = cast(Split, args.split)
-    items = load_dataset_items(args.dataset_json, args.dataset)
-    ensure_disjoint_splits(items)
-
-    train_items = items_for_split(items, "judge_train")
+    items = load_dataset_items(args.cases_path, args.root, args.project)
+    train_items = labeled_cases(items)
     if not train_items:
-        raise SystemExit("dataset has no judge_train examples")
+        raise SystemExit("no labeled cases to build judge few-shot examples from")
     examples = tuple(_example(item) for item in train_items)
     canned_by_key = (
         json.loads(args.canned_labels_json.read_text()) if args.canned_labels_json else None
@@ -123,18 +112,15 @@ def main() -> None:
     )
     config = JudgeConfig(args.judge_version, args.model, args.prompt_version, examples)
 
-    if split == "regression":
-        if not args.run:
-            raise SystemExit("--run is required for --split regression")
-        target = args.run
-        target_items = items_for_split(items, "regression")
-        outputs = _target_outputs_for_run(
-            target_items, load_run_outputs(args.root, args.project, args.run)
-        )
-    else:
-        target = split
-        target_items = items_for_split(items, split)
+    target = args.target
+    if target == "frozen":
+        target_items = train_items
         outputs = _target_outputs_for_frozen(target_items)
+    else:
+        target_items = active_cases(items)
+        outputs = _target_outputs_for_run(
+            target_items, load_run_outputs(args.root, args.project, target)
+        )
 
     if not outputs:
         raise SystemExit(f"no outputs to judge for target {target!r}")
@@ -159,7 +145,7 @@ def main() -> None:
             complete_fn = complete
         judge = Judge(config, complete=complete_fn)
         try:
-            label, critique = judge.score_case(item.input, output, item.expected)
+            label, critique = judge.score_case(item.input, output, item.expected_output)
         except ValueError as exc:
             if not args.skip_on_protocol_error:
                 raise
