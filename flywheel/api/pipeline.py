@@ -5,10 +5,10 @@ import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api import pipeline_state as ps
 from api import task_runner as tr
@@ -133,6 +133,61 @@ def get_samples() -> dict[str, Any]:
     data = read_json(path)
     traces = data.get("traces", data) if isinstance(data, dict) else data
     return {"traces": traces}
+
+
+class LabelRequest(BaseModel):
+    expected_output: str = Field(alias="expectedOutput")
+    label: Literal["pass", "fail", "skip"]
+    critique: str = ""
+    failure_category: str | None = Field(default=None, alias="failureCategory")
+
+    model_config = {"populate_by_name": True}
+
+
+def _case_to_json(case: "Any") -> dict[str, Any]:
+    return {
+        "caseId": case.case_id,
+        "input": case.input,
+        "frozenOutput": case.frozen_output,
+        "traceUrl": case.trace_url,
+        "expectedOutput": case.expected_output,
+        "label": case.label,
+        "critique": case.critique,
+        "failureCategory": case.failure_category,
+        "annotatedAt": case.annotated_at,
+    }
+
+
+@router.get("/cases")
+def get_cases() -> dict[str, Any]:
+    from scripts.common import cases_path, load_cases
+
+    cases = load_cases(cases_path(_root, _project))
+    return {"cases": [_case_to_json(c) for c in cases]}
+
+
+@router.post("/cases/{case_id}/label")
+def label_case(case_id: str, body: LabelRequest) -> dict[str, Any]:
+    from scripts.common import Case, append_case, cases_path, load_cases
+
+    existing = {c.case_id: c for c in load_cases(cases_path(_root, _project))}
+    current = existing.get(case_id)
+    if current is None:
+        raise HTTPException(404, f"unknown case_id {case_id!r}; promote it first")
+
+    updated = Case(
+        case_id=case_id,
+        input=current.input,
+        frozen_output=current.frozen_output,
+        trace_url=current.trace_url,
+        expected_output=body.expected_output,
+        label=body.label,
+        critique=body.critique,
+        failure_category=body.failure_category,
+        annotated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    append_case(_root, _project, updated)
+    return _case_to_json(updated)
 
 
 # ── Promote ────────────────────────────────────────────────────────────────

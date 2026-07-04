@@ -77,3 +77,81 @@ def test_promote_without_sample_file_returns_400(tmp_path: Path) -> None:
         json={"dataset_name": "unused", "trace_ids": ["trace-1"]},
     )
     assert response.status_code == 400
+
+
+def test_get_cases_returns_camel_case_shape(tmp_path: Path) -> None:
+    from scripts.common import Case, append_case
+
+    append_case(tmp_path, "bourbon", Case(
+        case_id="t1", input="hi", frozen_output="hello", trace_url="https://x/t1",
+        expected_output="", label=None, critique="", failure_category=None, annotated_at="",
+    ))
+    client = TestClient(_app(tmp_path))
+    response = client.get("/api/pipeline/cases")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cases"] == [{
+        "caseId": "t1", "input": "hi", "frozenOutput": "hello", "traceUrl": "https://x/t1",
+        "expectedOutput": "", "label": None, "critique": "", "failureCategory": None,
+        "annotatedAt": "",
+    }]
+
+
+def test_get_cases_empty_when_no_cases_file(tmp_path: Path) -> None:
+    client = TestClient(_app(tmp_path))
+    response = client.get("/api/pipeline/cases")
+    assert response.json() == {"cases": []}
+
+
+def test_label_case_appends_and_returns_updated_case(tmp_path: Path) -> None:
+    from scripts.common import Case, append_case
+
+    append_case(tmp_path, "bourbon", Case(
+        case_id="t1", input="hi", frozen_output="hello", trace_url="",
+        expected_output="", label=None, critique="", failure_category=None, annotated_at="",
+    ))
+    client = TestClient(_app(tmp_path))
+    response = client.post(
+        "/api/pipeline/cases/t1/label",
+        json={
+            "expectedOutput": "should say hi back",
+            "label": "fail",
+            "critique": "ignored greeting",
+            "failureCategory": "off_topic",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["label"] == "fail"
+    assert body["critique"] == "ignored greeting"
+    assert body["annotatedAt"] != ""
+
+    from scripts.common import cases_path, load_cases
+
+    cases = load_cases(cases_path(tmp_path, "bourbon"))
+    assert len(cases) == 1  # append-only, last-wins -- not duplicated on read
+    assert cases[0].label == "fail"
+
+
+def test_label_unknown_case_returns_404(tmp_path: Path) -> None:
+    client = TestClient(_app(tmp_path))
+    response = client.post(
+        "/api/pipeline/cases/nope/label",
+        json={"expectedOutput": "x", "label": "pass", "critique": "", "failureCategory": None},
+    )
+    assert response.status_code == 404
+
+
+def test_label_rejects_invalid_label_value(tmp_path: Path) -> None:
+    from scripts.common import Case, append_case
+
+    append_case(tmp_path, "bourbon", Case(
+        case_id="t1", input="hi", frozen_output="hello", trace_url="",
+        expected_output="", label=None, critique="", failure_category=None, annotated_at="",
+    ))
+    client = TestClient(_app(tmp_path))
+    response = client.post(
+        "/api/pipeline/cases/t1/label",
+        json={"expectedOutput": "x", "label": "maybe", "critique": "", "failureCategory": None},
+    )
+    assert response.status_code == 422  # pydantic literal validation
