@@ -40,7 +40,6 @@ def _write_regression(
         base,
         cand,
         regression_case_ids={"a", "b"},
-        validation_case_ids=set(),
         baseline_judge_version=judge_version,
         candidate_judge_version=judge_version,
     )

@@ -13,7 +13,6 @@ def test_regression_report_written_with_expected_keys(tmp_path: Path) -> None:
         base,
         cand,
         regression_case_ids={"a", "b"},
-        validation_case_ids=set(),
         baseline_judge_version="jv1",
         candidate_judge_version="jv1",
     )
@@ -50,7 +49,6 @@ def test_regression_markdown_written(tmp_path: Path) -> None:
         base,
         cand,
         regression_case_ids={"a", "b"},
-        validation_case_ids=set(),
         baseline_judge_version="jv1",
         candidate_judge_version="jv1",
     )
@@ -107,7 +105,6 @@ def test_unsafe_run_id_rejected(tmp_path: Path) -> None:
         base,
         base,
         regression_case_ids={"a"},
-        validation_case_ids=set(),
         baseline_judge_version="jv1",
         candidate_judge_version="jv1",
     )

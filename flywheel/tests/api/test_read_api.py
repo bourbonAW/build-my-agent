@@ -51,7 +51,6 @@ def test_get_regression_report(tmp_path: Path) -> None:
         [CaseScore("a", "fail", "tool_misuse")],
         [CaseScore("a", "pass")],
         regression_case_ids={"a"},
-        validation_case_ids=set(),
         baseline_judge_version="jv1",
         candidate_judge_version="jv1",
     )

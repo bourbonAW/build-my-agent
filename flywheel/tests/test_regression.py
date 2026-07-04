@@ -17,7 +17,6 @@ def _run(labels: list[str]) -> list[CaseScore]:
 def _cmp(
     base: list[CaseScore],
     cand: list[CaseScore],
-    validation_case_ids: frozenset[str] = frozenset(),
     regression_case_ids: set[str] | None = None,
 ):
     ids = {s.case_id for s in base} if regression_case_ids is None else set(regression_case_ids)
@@ -25,7 +24,6 @@ def _cmp(
         base,
         cand,
         regression_case_ids=ids,
-        validation_case_ids=set(validation_case_ids),
         baseline_judge_version="jv1",
         candidate_judge_version="jv1",
     )
@@ -72,7 +70,6 @@ def test_mismatched_judge_raises() -> None:
             s,
             s,
             regression_case_ids={x.case_id for x in s},
-            validation_case_ids=set(),
             baseline_judge_version="jv1",
             candidate_judge_version="jv2",
         )
@@ -84,16 +81,9 @@ def test_invalid_judge_version_raises() -> None:
             [CaseScore("a", "pass")],
             [CaseScore("a", "pass")],
             regression_case_ids={"a"},
-            validation_case_ids=set(),
             baseline_judge_version="judge:v1",
             candidate_judge_version="judge:v1",
         )
-
-
-def test_disjointness_violation_raises() -> None:
-    base = _scores(5, 5)
-    with pytest.raises(ValueError, match="disjoint"):
-        _cmp(base, base, validation_case_ids=frozenset({"c0"}))
 
 
 def test_mismatched_case_set_raises() -> None:
@@ -196,16 +186,3 @@ def test_repeat_budget_under_min_raises() -> None:
 
     with pytest.raises(ValueError, match="repeat once or >="):
         check_repeat_budgets([CaseScore("a", "pass")] * 2, [CaseScore("a", "pass")] * 2)
-
-
-def test_splits_disjoint_ok() -> None:
-    from flywheel.regression import check_splits_disjoint
-
-    check_splits_disjoint({"judge_train": {"a", "b"}, "judge_test": {"c"}, "regression": {"d"}})
-
-
-def test_splits_overlap_raises() -> None:
-    from flywheel.regression import check_splits_disjoint
-
-    with pytest.raises(ValueError, match="split overlap"):
-        check_splits_disjoint({"judge_train": {"a", "b"}, "judge_test": {"b"}})

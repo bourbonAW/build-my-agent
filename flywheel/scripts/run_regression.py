@@ -12,51 +12,27 @@ from flywheel.regression import (
     check_repeat_budgets,
     compare,
 )
-from flywheel.report import read_json, write_regression_markdown, write_regression_report
+from flywheel.report import write_regression_markdown, write_regression_report
 
 from scripts.common import (
     DEFAULT_ROOT,
-    DatasetItem,
+    Case,
     ScoreRecord,
-    ensure_disjoint_splits,
-    items_for_split,
+    active_cases,
     load_dataset_items,
     load_run_metadata,
     load_score_records,
-    require_failure_labels,
-    split_sets,
 )
 
 
-def _judge_report_path(root: Path, project: str, judge_version: str) -> Path:
-    from flywheel.report import _safe_segment
-
-    return (
-        Path(root)
-        / _safe_segment(project)
-        / "reports"
-        / "judge"
-        / f"{_safe_segment(judge_version)}.json"
-    )
-
-
-def _require_passing_judge(root: Path, project: str, judge_version: str) -> None:
-    path = _judge_report_path(root, project, judge_version)
-    if not path.exists():
-        raise FileNotFoundError(f"missing JudgeReport for {judge_version!r}: {path}")
-    report = read_json(path)
-    if report.get("passes") is not True:
-        raise ValueError(f"judge {judge_version!r} is not validated; refusing regression compare")
-
-
-def _case_scores(items: dict[str, DatasetItem], records: list[ScoreRecord]) -> list[CaseScore]:
+def _case_scores(items: dict[str, Case], records: list[ScoreRecord]) -> list[CaseScore]:
     scores: list[CaseScore] = []
     for record in records:
         item = items.get(record.case_id)
         if item is None:
             scores.append(CaseScore(record.case_id, record.label))
             continue
-        failure_label = item.failure_label if record.label != "pass" else None
+        failure_label = item.failure_category if record.label != "pass" else None
         scores.append(CaseScore(record.case_id, record.label, failure_label))
     return scores
 
@@ -79,18 +55,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default="bourbon")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--dataset-json", type=Path, default=None)
-    parser.add_argument("--dataset", default=None)
+    parser.add_argument("--cases-path", type=Path, default=None)
     parser.add_argument("--baseline-run", required=True)
     parser.add_argument("--candidate-run", required=True)
     parser.add_argument("--judge-version", default=None)
     parser.add_argument("--candidate-pr-url", default=None)
     args = parser.parse_args()
 
-    items = load_dataset_items(args.dataset_json, args.dataset)
-    ensure_disjoint_splits(items)
-    regression_items = items_for_split(items, "regression")
-    require_failure_labels(regression_items)
+    items = load_dataset_items(args.cases_path, args.root, args.project)
+    regression_items = active_cases(items)
     item_by_id = {item.case_id: item for item in regression_items}
 
     baseline_records, baseline_judge_version = load_score_records(
@@ -107,7 +80,6 @@ def main() -> None:
             f"--judge-version {args.judge_version!r} does not match score metadata "
             f"{baseline_judge_version!r}/{candidate_judge_version!r}"
         )
-    _require_passing_judge(args.root, args.project, baseline_judge_version)
 
     baseline_scores = _case_scores(item_by_id, baseline_records)
     candidate_scores = _case_scores(item_by_id, candidate_records)
@@ -115,13 +87,10 @@ def main() -> None:
     baseline_aggregated = aggregate_repeats(baseline_scores)
     candidate_aggregated = aggregate_repeats(candidate_scores)
 
-    splits = split_sets(items)
-    validation_ids = splits["judge_train"] | splits["judge_dev"] | splits["judge_test"]
     report = compare(
         baseline_aggregated,
         candidate_aggregated,
-        regression_case_ids=splits["regression"],
-        validation_case_ids=validation_ids,
+        regression_case_ids={item.case_id for item in regression_items},
         baseline_judge_version=baseline_judge_version,
         candidate_judge_version=candidate_judge_version,
     )

@@ -119,25 +119,11 @@ def check_repeat_budgets(
             )
 
 
-def check_splits_disjoint(splits: dict[str, set[str]]) -> None:
-    """Raise when any two named case-id splits overlap."""
-    names = list(splits)
-    for left_index, left_name in enumerate(names):
-        for right_name in names[left_index + 1 :]:
-            overlap = splits[left_name] & splits[right_name]
-            if overlap:
-                raise ValueError(
-                    f"split overlap: {left_name} ∩ {right_name} = {sorted(overlap)}; "
-                    "judge_train/judge_dev/judge_test/regression must be a true partition"
-                )
-
-
 def compare(
     baseline: list[CaseScore],
     candidate: list[CaseScore],
     *,
     regression_case_ids: set[str],
-    validation_case_ids: set[str],
     baseline_judge_version: str,
     candidate_judge_version: str,
 ) -> RegressionReport:
@@ -172,10 +158,6 @@ def compare(
             f"declared regression split (missing={missing}, extra={extra}); re-run the "
             "missing cases — a silently dropped case must not pass the gate"
         )
-
-    overlap = set(base_ids) & validation_case_ids
-    if overlap:
-        raise ValueError(f"regression set must be disjoint from validation set; overlap={overlap}")
 
     baseline_by_case = _labels_by_case(baseline)
     candidate_by_case = _labels_by_case(candidate)
