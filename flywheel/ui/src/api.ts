@@ -96,8 +96,6 @@ export type PipelineTask = {
 export type DatasetInfo = {
   name: string
   totalCases: number
-  judgeTestCases: number
-  regressionCases: number
   baselineScored: boolean
   lastUpdated: string
 }

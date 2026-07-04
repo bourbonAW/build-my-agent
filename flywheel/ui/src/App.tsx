@@ -22,13 +22,14 @@ import {
   fetchRuns,
   fetchPipelineState,
   fetchSamples,
-  fetchLabelStatus,
   startSample,
   startPromote,
   startBaselineRun,
   startBaselineJudge,
   startEvalRun,
   startJudgeCompare,
+  fetchCases,
+  submitLabel,
   type ConfidenceInterval,
   type JudgeReport,
   type PipelineState,
@@ -36,6 +37,8 @@ import {
   type RegressionResult,
   type RunSummary,
   type TraceCase,
+  type Case,
+  type CaseLabel,
 } from './api'
 
 function makeQueryClient() {
@@ -54,6 +57,7 @@ function Shell() {
         </Link>
         <nav className="nav-links" aria-label="Primary">
           <NavLink to="/">Control</NavLink>
+          <NavLink to="/label">Label</NavLink>
           <NavLink to="/runs">History</NavLink>
           <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer">
             Langfuse
@@ -63,6 +67,7 @@ function Shell() {
       <main>
         <Routes>
           <Route path="/" element={<ControlView />} />
+          <Route path="/label" element={<LabelView />} />
           <Route path="/runs" element={<RunsView />} />
           <Route path="/runs/:runId" element={<RunDetailView />} />
           <Route path="/judges/:judgeVersion" element={<JudgeDetailView />} />
@@ -180,8 +185,6 @@ function DatasetPanel({ dataset, task, isRunning, onRefresh }: DatasetPanelProps
           <div className="dataset-stats">
             <Stat label="Dataset" value={dataset.name} mono />
             <Stat label="Total cases" value={String(dataset.totalCases)} />
-            <Stat label="judge_test" value={String(dataset.judgeTestCases)} />
-            <Stat label="regression" value={String(dataset.regressionCases)} />
           </div>
 
           <div className="dataset-status">
@@ -247,22 +250,23 @@ function DatasetEmpty({ onSample, loading }: { onSample: () => void; loading: bo
 function LabelStatusRow() {
   const q = useQuery({
     queryKey: ['label-status'],
-    queryFn: fetchLabelStatus,
+    queryFn: fetchCases,
     refetchInterval: 10_000,
   })
-  const data = q.data
-  if (!data) return <StatusRow label="Human labels" done={false} />
-  const pct = data.total > 0 ? Math.round((data.labeled / data.total) * 100) : 0
+  const cases = q.data?.cases ?? []
+  const total = cases.length
+  const labeled = cases.filter((c) => c.label !== null).length
+  const complete = labeled >= total && total > 0
   return (
     <div className="status-row">
-      <span>{data.complete ? '✅' : '○'} Human labels</span>
+      <span>{complete ? '✅' : '○'} Human labels</span>
       <span className="quiet">
-        {data.labeled}/{data.total} ({pct}%)
+        {labeled}/{total}
       </span>
-      {!data.complete && (
-        <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer" className="quiet-link">
-          Label in Langfuse ↗
-        </a>
+      {!complete && (
+        <Link to="/label" className="quiet-link">
+          Label cases →
+        </Link>
       )}
     </div>
   )
@@ -508,6 +512,142 @@ function Stat({ label, value, mono }: { label: string; value: string; mono?: boo
       <span className="quiet">{label}</span>
       <strong className={mono ? 'mono' : undefined}>{value}</strong>
     </div>
+  )
+}
+
+// ── Label view ──────────────────────────────────────────────────────────────
+
+function LabelView() {
+  const qc = useQueryClient()
+  const casesQuery = useQuery({ queryKey: ['cases'], queryFn: fetchCases })
+  const cases = casesQuery.data?.cases ?? []
+
+  const firstUnlabeledIndex = cases.findIndex((c) => c.label === null)
+  const [index, setIndex] = useState(0)
+  const [expectedOutput, setExpectedOutput] = useState('')
+  const [critique, setCritique] = useState('')
+  const [failureCategory, setFailureCategory] = useState('')
+
+  const current: Case | undefined = cases[index]
+
+  const labelMutation = useMutation({
+    mutationFn: (label: CaseLabel) => {
+      if (!current) throw new Error('no case selected')
+      return submitLabel(current.caseId, {
+        expectedOutput,
+        label,
+        critique,
+        failureCategory: failureCategory || null,
+      })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cases'] })
+      qc.invalidateQueries({ queryKey: ['label-status'] })
+      const next = cases.findIndex((c, i) => i > index && c.label === null)
+      if (next >= 0) selectCase(next)
+    },
+  })
+
+  function selectCase(i: number) {
+    setIndex(i)
+    const c = cases[i]
+    setExpectedOutput(c?.expectedOutput ?? '')
+    setCritique(c?.critique ?? '')
+    setFailureCategory(c?.failureCategory ?? '')
+  }
+
+  function navigate(delta: number) {
+    const next = index + delta
+    if (next < 0 || next >= cases.length) return
+    selectCase(next)
+  }
+
+  if (casesQuery.isLoading) return <PageState title="Loading cases" />
+  if (!cases.length)
+    return (
+      <PageState
+        title="No cases yet"
+        detail="Sample and promote traces from Control before labeling."
+        action={<Link to="/">Go to Control →</Link>}
+      />
+    )
+
+  const startIndex = firstUnlabeledIndex >= 0 ? firstUnlabeledIndex : 0
+  if (index === 0 && startIndex !== 0 && expectedOutput === '' && critique === '') {
+    // Land on the first unlabeled case on initial load only.
+    selectCase(startIndex)
+  }
+
+  return (
+    <section className="page-section label-layout">
+      <div className="label-strip">
+        {cases.map((c, i) => (
+          <button
+            key={c.caseId}
+            className={`label-strip-item ${i === index ? 'active' : ''}`}
+            onClick={() => selectCase(i)}
+          >
+            {c.label ? '✓' : '○'} {c.caseId.slice(0, 8)}…
+          </button>
+        ))}
+      </div>
+      {current && (
+        <div className="label-detail">
+          <h3>Input</h3>
+          <pre className="label-text">{current.input}</pre>
+          <h3>Actual output (frozen)</h3>
+          <pre className="label-text">{current.frozenOutput}</pre>
+          <a href={current.traceUrl} target="_blank" rel="noreferrer">
+            View original trace ↗
+          </a>
+          <h3>Expected output</h3>
+          <textarea
+            value={expectedOutput}
+            onChange={(e) => setExpectedOutput(e.target.value)}
+            rows={4}
+          />
+          <div className="label-buttons">
+            <button
+              className="button primary"
+              disabled={labelMutation.isPending}
+              onClick={() => labelMutation.mutate('pass')}
+            >
+              Pass
+            </button>
+            <button
+              className="button secondary"
+              disabled={labelMutation.isPending}
+              onClick={() => labelMutation.mutate('fail')}
+            >
+              Fail
+            </button>
+            <button
+              className="button secondary"
+              disabled={labelMutation.isPending}
+              onClick={() => labelMutation.mutate('skip')}
+            >
+              Skip
+            </button>
+          </div>
+          <label>
+            Critique (optional)
+            <textarea value={critique} onChange={(e) => setCritique(e.target.value)} rows={2} />
+          </label>
+          <label>
+            Failure category (optional)
+            <input value={failureCategory} onChange={(e) => setFailureCategory(e.target.value)} />
+          </label>
+          <div className="label-nav">
+            <button onClick={() => navigate(-1)} disabled={index === 0}>
+              ← prev
+            </button>
+            <button onClick={() => navigate(1)} disabled={index === cases.length - 1}>
+              next →
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
   )
 }
 
