@@ -14,8 +14,6 @@ _lock = threading.Lock()
 class DatasetInfo:
     name: str = ""
     total_cases: int = 0
-    judge_test_cases: int = 0
-    regression_cases: int = 0
     baseline_scored: bool = False
     last_updated: str = ""
 

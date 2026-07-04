@@ -1,10 +1,13 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api import pipeline
+from api import pipeline_state as ps
+from api import task_runner
 
 
 def _app(tmp_path: Path) -> FastAPI:
@@ -155,3 +158,34 @@ def test_label_rejects_invalid_label_value(tmp_path: Path) -> None:
         json={"expectedOutput": "x", "label": "maybe", "critique": "", "failureCategory": None},
     )
     assert response.status_code == 422  # pydantic literal validation
+
+
+def test_baseline_judge_invokes_frozen_target_not_split(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run_script(python: str, scripts_dir: Path, script: str, *args: str) -> None:
+        calls.append([script, *args])
+
+    monkeypatch.setattr(task_runner, "run_script", fake_run_script)
+
+    state = ps.load(tmp_path, "bourbon")
+    state.dataset.name = "bourbon-evals"
+    ps.save(tmp_path, "bourbon", state)
+
+    client = TestClient(_app(tmp_path))
+    response = client.post("/api/pipeline/baseline/judge")
+    assert response.status_code == 200
+
+    import time
+    for _ in range(50):
+        if ps.load(tmp_path, "bourbon").task.status in ("done", "error"):
+            break
+        time.sleep(0.05)
+
+    final_state = ps.load(tmp_path, "bourbon")
+    assert final_state.task.status == "done", final_state.task.error
+
+    run_judge_calls = [c for c in calls if c[0] == "run_judge.py"]
+    assert any("--target" in c and "frozen" in c for c in run_judge_calls)
+    assert not any("--split" in c for c in calls)
+    assert not any("--dataset" in c for c in calls)

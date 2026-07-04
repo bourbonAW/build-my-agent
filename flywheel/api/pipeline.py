@@ -67,8 +67,6 @@ def get_state() -> dict[str, Any]:
         "dataset": {
             "name": state.dataset.name,
             "totalCases": state.dataset.total_cases,
-            "judgeTestCases": state.dataset.judge_test_cases,
-            "regressionCases": state.dataset.regression_cases,
             "baselineScored": state.dataset.baseline_scored,
             "lastUpdated": state.dataset.last_updated,
         },
@@ -276,18 +274,8 @@ def label_status() -> dict[str, Any]:
                 labeled += 1
 
         # Also update dataset case counts in state
-        judge_test = sum(
-            1 for item in items
-            if _item_has_split(item, "judge_test")
-        )
-        regression = sum(
-            1 for item in items
-            if _item_has_split(item, "regression")
-        )
         def _apply(s: ps.PipelineState) -> None:
             s.dataset.total_cases = total
-            s.dataset.judge_test_cases = judge_test
-            s.dataset.regression_cases = regression
 
         ps.mutate(_root, _project, _apply)
 
@@ -300,14 +288,6 @@ def label_status() -> dict[str, Any]:
         return {"total": state.dataset.total_cases, "labeled": 0, "complete": False, "error": str(exc)}
 
 
-def _item_has_split(item: Any, split: str) -> bool:
-    meta = getattr(item, "metadata", {}) or {}
-    splits = meta.get("splits", meta.get("split", ""))
-    if isinstance(splits, list):
-        return bool(split in splits)
-    return bool(split == splits)
-
-
 # ── Baseline harness ───────────────────────────────────────────────────────
 
 @router.post("/baseline/run")
@@ -318,7 +298,7 @@ def run_baseline() -> dict[str, Any]:
     if tr.is_busy(_root, _project):
         raise HTTPException(409, "A task is already running.")
 
-    total = state.dataset.regression_cases or state.dataset.total_cases
+    total = state.dataset.total_cases
     output_jsonl = _root / _project / "state" / "runs" / "baseline.jsonl"
     stop_event = threading.Event()
 
@@ -338,7 +318,6 @@ def run_baseline() -> dict[str, Any]:
                 _python, _scripts_dir, "run_harness.py",
                 "--project", _project,
                 "--root", str(_root),
-                "--dataset", state.dataset.name,
                 "--model", _harness_model(),
                 "--run-id", "baseline",
             )
@@ -368,39 +347,34 @@ def judge_baseline() -> dict[str, Any]:
 
     def do_judge() -> None:
         jv = _judge_version()
-        # Score judge_test split (for validation)
-        ps.update_task(_root, _project, phase="Judging judge_test split", done=0, total=2)
+        # Score every labeled case's frozen_output (continuous judge-quality signal)
+        ps.update_task(_root, _project, phase="Judging labeled cases", done=0, total=2)
         tr.run_script(
             _python, _scripts_dir, "run_judge.py",
             "--project", _project,
             "--root", str(_root),
-            "--dataset", state.dataset.name,
-            "--split", "judge_test",
+            "--target", "frozen",
             "--judge-version", jv,
             "--model", _judge_model(),
             "--prompt-version", _judge_prompt_version(),
         )
-        # Score baseline regression split
-        ps.update_task(_root, _project, phase="Judging baseline regression", done=1, total=2)
+        # Score baseline harness run's live outputs
+        ps.update_task(_root, _project, phase="Judging baseline run", done=1, total=2)
         tr.run_script(
             _python, _scripts_dir, "run_judge.py",
             "--project", _project,
             "--root", str(_root),
-            "--dataset", state.dataset.name,
-            "--split", "regression",
-            "--run", "baseline",
+            "--target", "baseline",
             "--judge-version", jv,
             "--model", _judge_model(),
             "--prompt-version", _judge_prompt_version(),
         )
-        # Validate judge
+        # Validate judge (informational report, not a gate — see run task below)
         ps.update_task(_root, _project, phase="Validating judge", done=2, total=2)
         tr.run_script(
             _python, _scripts_dir, "validate_judge.py",
             "--project", _project,
             "--root", str(_root),
-            "--dataset", state.dataset.name,
-            "--split", "judge_test",
             "--judge-version", jv,
         )
         # Mark baseline as scored
@@ -433,7 +407,7 @@ def run_candidate(body: EvalRunRequest) -> dict[str, Any]:
     if not body.run_id:
         raise HTTPException(400, "run_id is required.")
 
-    total = state.dataset.regression_cases or state.dataset.total_cases
+    total = state.dataset.total_cases
     output_jsonl = _root / _project / "state" / "runs" / f"{body.run_id}.jsonl"
     stop_event = threading.Event()
 
@@ -452,7 +426,6 @@ def run_candidate(body: EvalRunRequest) -> dict[str, Any]:
                 _python, _scripts_dir, "run_harness.py",
                 "--project", _project,
                 "--root", str(_root),
-                "--dataset", state.dataset.name,
                 "--model", _harness_model(),
                 "--run-id", body.run_id,
             )
@@ -490,36 +463,23 @@ def judge_and_compare() -> dict[str, Any]:
 
     def do_compare() -> None:
         jv = _judge_version()
-        # Judge candidate regression outputs
-        ps.update_task(_root, _project, phase="Judging candidate", done=0, total=3)
+        # Judge candidate run's live outputs
+        ps.update_task(_root, _project, phase="Judging candidate", done=0, total=2)
         tr.run_script(
             _python, _scripts_dir, "run_judge.py",
             "--project", _project,
             "--root", str(_root),
-            "--dataset", state.dataset.name,
-            "--split", "regression",
-            "--run", run_id,
+            "--target", run_id,
             "--judge-version", jv,
             "--model", _judge_model(),
             "--prompt-version", _judge_prompt_version(),
         )
-        # Validate judge (re-validate to ensure it still passes)
-        ps.update_task(_root, _project, phase="Validating judge", done=1, total=3)
-        tr.run_script(
-            _python, _scripts_dir, "validate_judge.py",
-            "--project", _project,
-            "--root", str(_root),
-            "--dataset", state.dataset.name,
-            "--split", "judge_test",
-            "--judge-version", jv,
-        )
-        # Run regression comparison
-        ps.update_task(_root, _project, phase="Comparing baseline vs candidate", done=2, total=3)
+        # Run regression comparison (no judge-passing gate -- see spec §2)
+        ps.update_task(_root, _project, phase="Comparing baseline vs candidate", done=1, total=2)
         tr.run_script(
             _python, _scripts_dir, "run_regression.py",
             "--project", _project,
             "--root", str(_root),
-            "--dataset", state.dataset.name,
             "--baseline-run", "baseline",
             "--candidate-run", run_id,
             "--judge-version", jv,
@@ -533,14 +493,14 @@ def judge_and_compare() -> dict[str, Any]:
         def _apply(s: ps.PipelineState) -> None:
             s.last_result = result
             s.task.status = "done"
-            s.task.done = 3
-            s.task.total = 3
+            s.task.done = 2
+            s.task.total = 2
             s.task.phase = ""
             s.task.result = result
 
         ps.mutate(_root, _project, _apply)
 
-    tr.start(do_compare, _root, _project, "judge_compare", run_id=run_id, total=3)
+    tr.start(do_compare, _root, _project, "judge_compare", run_id=run_id, total=2)
     return {"started": True}
 
 
