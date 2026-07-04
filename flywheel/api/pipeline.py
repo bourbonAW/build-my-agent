@@ -53,6 +53,11 @@ def _harness_model() -> str:
     return os.environ.get("FLYWHEEL_HARNESS_MODEL", _judge_model())
 
 
+def _trace_url(trace_id: str) -> str:
+    host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    return f"{host.rstrip('/')}/trace/{trace_id}"
+
+
 # ── State ──────────────────────────────────────────────────────────────────
 
 @router.get("/state")
@@ -139,15 +144,11 @@ class PromoteRequest(BaseModel):
 
 @router.post("/promote")
 def promote_cases(body: PromoteRequest) -> dict[str, Any]:
-    if _langfuse is None:
-        raise HTTPException(503, "Langfuse client not configured.")
     if not body.trace_ids:
         raise HTTPException(400, "trace_ids must not be empty.")
 
-    from scripts.sample_traces import _write_langfuse_dataset
-    from scripts.common import state_root, read_json
+    from scripts.common import Case, append_case, cases_path, load_cases, state_root, read_json
 
-    # Load sampled traces and filter to selected IDs
     path = state_root(_root, _project) / "sample_traces.json"
     if not path.exists():
         raise HTTPException(400, "No sampled traces. Run /sample first.")
@@ -158,33 +159,38 @@ def promote_cases(body: PromoteRequest) -> dict[str, Any]:
     if not selected:
         raise HTTPException(400, "None of the given trace_ids were found in sample_traces.json.")
 
-    # Create Langfuse dataset
-    try:
-        create_dataset = getattr(_langfuse, "create_dataset", None)
-        if callable(create_dataset):
-            create_dataset(name=body.dataset_name, description="Flywheel eval dataset")
-    except Exception:
-        pass  # dataset may already exist
+    existing_ids = {c.case_id for c in load_cases(cases_path(_root, _project))}
+    promoted = 0
+    skipped = 0
+    for trace in selected:
+        case_id = str(trace.get("id", ""))
+        if case_id in existing_ids:
+            skipped += 1
+            continue
+        append_case(
+            _root, _project,
+            Case(
+                case_id=case_id,
+                input=str(trace.get("input", "")),
+                frozen_output=str(trace.get("output", "")),
+                trace_url=_trace_url(case_id),
+                expected_output="",
+                label=None,
+                critique="",
+                failure_category=None,
+                annotated_at="",
+            ),
+        )
+        promoted += 1
 
-    _write_langfuse_dataset(_langfuse, body.dataset_name, selected)
-
-    # Update pipeline state. Adding cases to the dataset invalidates any prior
-    # baseline score, since the baseline never ran against the newly promoted
-    # cases — force a re-score before the next candidate evaluation.
     def _apply(state: ps.PipelineState) -> None:
-        state.dataset.name = body.dataset_name
-        state.dataset.total_cases = len(selected)
+        state.dataset.total_cases = len(existing_ids) + promoted
         state.dataset.last_updated = datetime.now(timezone.utc).isoformat()
         state.dataset.baseline_scored = False
 
     ps.mutate(_root, _project, _apply)
 
-    langfuse_url = f"https://cloud.langfuse.com/datasets/{body.dataset_name}"
-    return {
-        "promoted": len(selected),
-        "datasetName": body.dataset_name,
-        "langfuseUrl": langfuse_url,
-    }
+    return {"promoted": promoted, "skipped": skipped}
 
 
 # ── Label status ───────────────────────────────────────────────────────────
