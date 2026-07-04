@@ -130,6 +130,31 @@ export type LabelStatus = {
   error?: string
 }
 
+export type CaseLabel = 'pass' | 'fail' | 'skip'
+
+export type Case = {
+  caseId: string
+  input: string
+  frozenOutput: string
+  traceUrl: string
+  expectedOutput: string
+  label: CaseLabel | null
+  critique: string
+  failureCategory: string | null
+  annotatedAt: string
+}
+
+export type CasesResult = {
+  cases: Case[]
+}
+
+export type LabelSubmission = {
+  expectedOutput: string
+  label: CaseLabel
+  critique: string
+  failureCategory: string | null
+}
+
 // ── Fetch helpers ──────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -179,10 +204,15 @@ export const startSample = (limit = 30) =>
   postJson('/api/pipeline/sample', { limit, fetch_limit: 100 })
 
 export const startPromote = (dataset_name: string, trace_ids: string[]) =>
-  postJson<{ promoted: number; datasetName: string; langfuseUrl: string }>(
+  postJson<{ promoted: number; skipped: number }>(
     '/api/pipeline/promote',
     { dataset_name, trace_ids },
   )
+
+export const fetchCases = () => fetchJson<CasesResult>('/api/pipeline/cases')
+
+export const submitLabel = (caseId: string, body: LabelSubmission) =>
+  postJson<Case>(`/api/pipeline/cases/${caseId}/label`, body)
 
 export const startBaselineRun = () => postJson('/api/pipeline/baseline/run')
 export const startBaselineJudge = () => postJson('/api/pipeline/baseline/judge')
