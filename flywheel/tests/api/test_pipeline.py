@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,7 +14,7 @@ def _app(tmp_path: Path) -> FastAPI:
     return app
 
 
-def _write_sample_traces(tmp_path: Path, traces: list[dict]) -> None:
+def _write_sample_traces(tmp_path: Path, traces: list[dict[str, Any]]) -> None:
     from scripts.common import state_root, write_json
 
     path = state_root(tmp_path, "bourbon") / "sample_traces.json"
