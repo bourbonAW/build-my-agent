@@ -348,7 +348,7 @@ def judge_baseline() -> dict[str, Any]:
     def do_judge() -> None:
         jv = _judge_version()
         # Score every labeled case's frozen_output (continuous judge-quality signal)
-        ps.update_task(_root, _project, phase="Judging labeled cases", done=0, total=2)
+        ps.update_task(_root, _project, phase="Judging labeled cases", done=0, total=3)
         tr.run_script(
             _python, _scripts_dir, "run_judge.py",
             "--project", _project,
@@ -359,7 +359,7 @@ def judge_baseline() -> dict[str, Any]:
             "--prompt-version", _judge_prompt_version(),
         )
         # Score baseline harness run's live outputs
-        ps.update_task(_root, _project, phase="Judging baseline run", done=1, total=2)
+        ps.update_task(_root, _project, phase="Judging baseline run", done=1, total=3)
         tr.run_script(
             _python, _scripts_dir, "run_judge.py",
             "--project", _project,
@@ -370,7 +370,7 @@ def judge_baseline() -> dict[str, Any]:
             "--prompt-version", _judge_prompt_version(),
         )
         # Validate judge (informational report, not a gate — see run task below)
-        ps.update_task(_root, _project, phase="Validating judge", done=2, total=2)
+        ps.update_task(_root, _project, phase="Validating judge", done=2, total=3)
         tr.run_script(
             _python, _scripts_dir, "validate_judge.py",
             "--project", _project,
@@ -381,13 +381,13 @@ def judge_baseline() -> dict[str, Any]:
         def _apply(s: ps.PipelineState) -> None:
             s.dataset.baseline_scored = True
             s.task.status = "done"
-            s.task.done = 2
-            s.task.total = 2
+            s.task.done = 3
+            s.task.total = 3
             s.task.phase = ""
 
         ps.mutate(_root, _project, _apply)
 
-    tr.start(do_judge, _root, _project, "baseline_judge", total=2)
+    tr.start(do_judge, _root, _project, "baseline_judge", total=3)
     return {"started": True}
 
 
