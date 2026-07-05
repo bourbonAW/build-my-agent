@@ -2,11 +2,12 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, Literal
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _case(case_id: str) -> dict:
+def _case(case_id: str) -> dict[str, Any]:
     return {
         "case_id": case_id, "input": "i", "frozen_output": "o", "trace_url": "",
         "expected_output": "e", "label": None, "critique": "", "failure_category": None,
@@ -22,7 +23,7 @@ def _write_cases(root: Path, project: str, ids: list[str]) -> None:
     path.write_text("\n".join(json.dumps(_case(i)) for i in ids) + "\n")
 
 
-def _write_scores(root: Path, project: str, run_id: str, labels: dict[str, str]) -> None:
+def _write_scores(root: Path, project: str, run_id: str, labels: dict[str, Literal['pass', 'fail', 'skip', 'uncertain']]) -> None:
     from scripts.common import ScoreRecord, write_score_records
 
     write_score_records(

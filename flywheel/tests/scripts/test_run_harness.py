@@ -2,11 +2,12 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _write_cases(root: Path, project: str, cases: list[dict]) -> None:
+def _write_cases(root: Path, project: str, cases: list[dict[str, Any]]) -> None:
     from scripts.common import cases_path
 
     path = cases_path(root, project)
@@ -14,7 +15,7 @@ def _write_cases(root: Path, project: str, cases: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(c) for c in cases) + "\n")
 
 
-def _case(case_id: str, label: str | None) -> dict:
+def _case(case_id: str, label: str | None) -> dict[str, Any]:
     return {
         "case_id": case_id,
         "input": f"hello from {case_id}",
