@@ -170,13 +170,18 @@ function DatasetPanel({ dataset, task, isRunning, onRefresh }: DatasetPanelProps
         {hasDataset && (
           <button
             className="button secondary small"
-            disabled={isRunning}
+            disabled={isRunning || sampleMutation.isPending}
+            aria-busy={sampleMutation.isPending}
             onClick={() => sampleMutation.mutate()}
           >
-            + Add traces
+            {sampleMutation.isPending ? 'Adding…' : '+ Add traces'}
           </button>
         )}
       </div>
+
+      {sampleMutation.isError && (
+        <ErrorBox message={(sampleMutation.error as Error).message} />
+      )}
 
       {!hasDataset ? (
         <DatasetEmpty onSample={() => sampleMutation.mutate()} loading={sampleMutation.isPending || isSampling} />
@@ -211,18 +216,27 @@ function DatasetPanel({ dataset, task, isRunning, onRefresh }: DatasetPanelProps
               <button
                 className="button primary"
                 disabled={isRunning || baselineRunMutation.isPending}
+                aria-busy={baselineRunMutation.isPending}
                 onClick={() => baselineRunMutation.mutate()}
               >
-                Run baseline harness
+                {baselineRunMutation.isPending ? 'Starting…' : 'Run baseline harness'}
               </button>
               <button
                 className="button secondary"
                 disabled={isRunning || baselineJudgeMutation.isPending}
+                aria-busy={baselineJudgeMutation.isPending}
                 onClick={() => baselineJudgeMutation.mutate()}
               >
-                Judge baseline
+                {baselineJudgeMutation.isPending ? 'Starting…' : 'Judge baseline'}
               </button>
             </div>
+          )}
+
+          {baselineRunMutation.isError && (
+            <ErrorBox message={(baselineRunMutation.error as Error).message} />
+          )}
+          {baselineJudgeMutation.isError && (
+            <ErrorBox message={(baselineJudgeMutation.error as Error).message} />
           )}
         </>
       )}
@@ -240,7 +254,7 @@ function DatasetEmpty({ onSample, loading }: { onSample: () => void; loading: bo
   return (
     <div className="empty-state">
       <p>No dataset yet. Sample recent traces from Langfuse to get started.</p>
-      <button className="button primary" onClick={onSample} disabled={loading}>
+      <button className="button primary" onClick={onSample} disabled={loading} aria-busy={loading}>
         {loading ? 'Sampling…' : 'Sample traces'}
       </button>
     </div>
@@ -361,17 +375,19 @@ function SamplePanel({ show, onRefresh }: { show: boolean; onRefresh: () => void
         <button
           className="button primary"
           disabled={selected.size === 0 || promoteMutation.isPending}
+          aria-busy={promoteMutation.isPending}
           onClick={() => promoteMutation.mutate({ name: datasetName, ids: [...selected] })}
         >
-          Promote {selected.size > 0 ? `${selected.size} cases` : 'cases'}
+          {promoteMutation.isPending
+            ? 'Promoting…'
+            : `Promote ${selected.size > 0 ? `${selected.size} cases` : 'cases'}`}
         </button>
       </div>
       {promoteMutation.isSuccess && (
         <p className="success-msg">
-          ✅ Promoted to Langfuse.{' '}
-          <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer">
-            Open Langfuse to label ↗
-          </a>
+          ✅ Promoted {promoteMutation.data?.promoted ?? ''} case
+          {promoteMutation.data?.promoted === 1 ? '' : 's'} to the local case store.{' '}
+          <Link to="/label">Label them →</Link>
         </p>
       )}
       {promoteMutation.isError && (
@@ -436,11 +452,16 @@ function EvalPanel({ state, task, isRunning, onRefresh }: EvalPanelProps) {
             <button
               className="button primary"
               disabled={isRunning || !runId || evalRunMutation.isPending}
+              aria-busy={evalRunMutation.isPending}
               onClick={() => evalRunMutation.mutate()}
             >
-              Run harness
+              {evalRunMutation.isPending ? 'Starting…' : 'Run harness'}
             </button>
           </div>
+
+          {evalRunMutation.isError && (
+            <ErrorBox message={(evalRunMutation.error as Error).message} />
+          )}
 
           {isCandidateRunning && task && (
             <ProgressBar done={task.done} total={task.total} phase={`Running ${task.runId}`} />
@@ -454,11 +475,16 @@ function EvalPanel({ state, task, isRunning, onRefresh }: EvalPanelProps) {
               <button
                 className="button primary"
                 disabled={isRunning || judgeCompareMutation.isPending}
+                aria-busy={judgeCompareMutation.isPending}
                 onClick={() => judgeCompareMutation.mutate()}
               >
-                Judge + compare
+                {judgeCompareMutation.isPending ? 'Starting…' : 'Judge + compare'}
               </button>
             </div>
+          )}
+
+          {judgeCompareMutation.isError && (
+            <ErrorBox message={(judgeCompareMutation.error as Error).message} />
           )}
 
           {isJudgeRunning && task && (
@@ -608,27 +634,33 @@ function LabelView() {
           />
           <div className="label-buttons">
             <button
-              className="button primary"
+              className="button success"
               disabled={labelMutation.isPending}
+              aria-busy={labelMutation.isPending && labelMutation.variables === 'pass'}
               onClick={() => labelMutation.mutate('pass')}
             >
-              Pass
+              {labelMutation.isPending && labelMutation.variables === 'pass' ? 'Saving…' : 'Pass'}
             </button>
             <button
-              className="button secondary"
+              className="button danger"
               disabled={labelMutation.isPending}
+              aria-busy={labelMutation.isPending && labelMutation.variables === 'fail'}
               onClick={() => labelMutation.mutate('fail')}
             >
-              Fail
+              {labelMutation.isPending && labelMutation.variables === 'fail' ? 'Saving…' : 'Fail'}
             </button>
             <button
               className="button secondary"
               disabled={labelMutation.isPending}
+              aria-busy={labelMutation.isPending && labelMutation.variables === 'skip'}
               onClick={() => labelMutation.mutate('skip')}
             >
-              Skip
+              {labelMutation.isPending && labelMutation.variables === 'skip' ? 'Saving…' : 'Skip'}
             </button>
           </div>
+          {labelMutation.isError && (
+            <ErrorBox message={(labelMutation.error as Error).message} />
+          )}
           <label>
             Critique (optional)
             <textarea value={critique} onChange={(e) => setCritique(e.target.value)} rows={2} />
@@ -638,10 +670,14 @@ function LabelView() {
             <input value={failureCategory} onChange={(e) => setFailureCategory(e.target.value)} />
           </label>
           <div className="label-nav">
-            <button onClick={() => navigate(-1)} disabled={index === 0}>
+            <button className="button secondary small" onClick={() => navigate(-1)} disabled={index === 0}>
               ← prev
             </button>
-            <button onClick={() => navigate(1)} disabled={index === cases.length - 1}>
+            <button
+              className="button secondary small"
+              onClick={() => navigate(1)}
+              disabled={index === cases.length - 1}
+            >
               next →
             </button>
           </div>
