@@ -1,0 +1,34 @@
+{
+  "name": "bourbon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "bourbon-ts": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.300.0",
+    "@opentelemetry/resources": "^3.0.0",
+    "@opentelemetry/sdk-trace-base": "^2.12.0",
+    "@opentelemetry/sdk-trace-node": "^2.12.0",
+    "mammoth": "^1.13.0",
+    "openai": "^7.43.0",
+    "pdf-parse": "^2.4.5",
+    "picocolors": "^1.1.1",
+    "smol-toml": "^1.9.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}

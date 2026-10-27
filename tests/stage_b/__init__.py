@@ -1,1 +1,0 @@
-"""Stage B integration tests."""

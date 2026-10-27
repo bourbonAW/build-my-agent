@@ -4,607 +4,178 @@ Development guide for AI agents working on Bourbon.
 
 ## Project Vision
 
-**Bourbon is a general-purpose agent platform** with a code-first evolution:
-- **Stage A (Completed)**: Perfect code capabilities - search, refactoring, analysis
-- **Stage B (Current)**: General-purpose knowledge work - documents, web, data, domain skills, sandbox isolation, subagents, persistent tasks, observability
-- **Stage C**: Autonomous workflows across all domains
+Bourbon is a general-purpose agent platform with a code-first evolution:
+- **Stage A (Completed)**: Code search, refactoring, analysis.
+- **Stage B (Current)**: General knowledge work, skills, sandboxing, subagents, persistent tasks, observability.
+- **Stage C**: Autonomous workflows across domains.
 
-## Current Focus
+The primary implementation is TypeScript in `ts/`, running on Bun. The legacy Python implementation was removed; `flywheel/` and `evals/` remain separate Python tooling that still needs migration.
 
-Bourbon has evolved from a code specialist to a multi-agent platform with:
-- **Software Engineering**: Code search, refactoring, analysis (Stage A capabilities)
-- **Domain Expertise via Skills**: Investment analysis, note management, data analysis, and more
-- **External Integrations**: MCP Client for databases, APIs, and external tools
-- **Knowledge Work**: Documents, web, data analysis
-- **Multi-Agent**: Subagent system with parallel execution, tool filtering, and cancellation
-- **Persistent Tasks**: File-backed workflow tasks with ownership and dependencies (Task V2)
-- **Session Management**: Structured session layer with MessageChain, ContextManager, and transcript storage
-- **Memory (Minimal Model + Local Semantic Index)**: File-first immutable memory with `target + content + created_at + cues`. Markdown records remain source of truth; `search_index.sqlite` is a rebuildable local FastEmbed/SQLite search index for semantic recall.
-- **Security**: Multi-layer sandbox isolation, permissions, access control, credential management, audit logging
-- **Observability**: OpenTelemetry tracing integration
-- **Context Management**: Long session support with compression and streaming markdown rendering
-
-### Key Capabilities
-
-1. **Core Tools**: File operations, code search, bash execution, todo/task management
-2. **Subagent System**: Parallel task execution, code exploration, focused work via specialized sub-agents
-3. **Skill System**: Agent Skills compatible - progressive disclosure, multi-scope discovery
-4. **MCP Integration**: External tool servers for extended capabilities
-5. **Sandbox Isolation**: Bubblewrap, Docker, seatbelt providers for safe tool execution
-6. **Memory System**: File-first immutable memory records (`target + content + cues`) with simple write/search/delete lifecycle, cue-based retrieval, and a rebuildable local semantic index
-7. **Eval Framework**: Promptfoo-based evaluation + community benchmarks
-
-## Product & Interface Design Principles
-
-Internalize Dieter Rams's design philosophy: **Less, but better**. This does not mean making interfaces empty; it means removing anything that does not improve usefulness, clarity, durability, or user control.
-
-Apply these principles when designing product behavior, UI, CLI flows, docs, prompts, tools, and agent-facing workflows:
-
-1. **Innovative**: Use new capabilities only when they create real user value; technology is not an end in itself.
-2. **Useful**: Prioritize the user's task, functional clarity, and reliable outcomes over decoration or novelty.
-3. **Aesthetic**: Treat visual and interaction quality as part of usefulness; polish should reduce friction, not add spectacle.
-4. **Understandable**: Make structure, state, affordances, and next actions self-evident.
-5. **Unobtrusive**: Keep interfaces restrained and tool-like; leave room for the user's work and judgment.
-6. **Honest**: Do not overstate capability, certainty, progress, safety, or performance.
-7. **Long-lasting**: Prefer durable patterns, stable language, and maintainable abstractions over fashionable UI or architecture.
-8. **Thorough**: Details must be intentional. Empty states, errors, loading, permissions, edge cases, and accessibility matter.
-9. **Environmentally aware**: Avoid waste in tokens, compute, dependencies, storage, screen space, and user attention.
-10. **As little design as possible**: Remove non-essential steps, controls, copy, configuration, and visual weight until only the essential remains.
-
-Practical bar: before adding a feature, prompt section, UI element, dependency, or workflow step, ask whether it makes the system more useful, understandable, honest, and durable. If not, leave it out.
-
-## Project Structure
-
-```
-.
-├── src/bourbon/              # Core agent implementation
-│   ├── cli.py               # Entry point
-│   ├── agent.py             # Core agent loop
-│   ├── repl.py              # REPL interface with Rich streaming markdown
-│   ├── config.py            # Configuration management (~/.bourbon/)
-│   ├── llm.py               # Multi-provider LLM client
-│   ├── skills.py            # Agent Skills compatible skill system
-│   ├── compression.py       # Context compression
-│   ├── todos.py             # In-memory todo management (V1)
-│   ├── debug.py             # Debug logging
-│   ├── prompt/              # Prompt management system
-│   │   ├── builder.py       # PromptBuilder with ordered sections
-│   │   ├── context.py       # PromptContext for section rendering
-│   │   ├── dynamic.py       # Dynamic prompt sections
-│   │   ├── sections.py      # Static prompt section definitions
-│   │   └── types.py         # PromptSection types
-│   ├── session/             # Session management layer
-│   │   ├── chain.py         # MessageChain (in-memory message list)
-│   │   ├── context.py       # ContextManager (token tracking, compact)
-│   │   ├── manager.py       # SessionManager orchestration
-│   │   ├── storage.py       # TranscriptStore (append-only JSONL)
-│   │   └── types.py         # Session types (metadata, summaries, triggers)
-│   ├── subagent/            # Subagent runtime system
-│   │   ├── manager.py       # SubagentManager (lifecycle orchestration)
-│   │   ├── types.py         # AgentDefinition, SubagentRun, RunStatus
-│   │   ├── cancel.py        # AbortController hierarchy
-│   │   ├── registry.py      # RunRegistry (in-memory runtime-job storage)
-│   │   ├── executor.py      # AsyncExecutor (ThreadPoolExecutor)
-│   │   ├── tools.py         # Tool filtering by agent type
-│   │   ├── errors.py        # SubagentErrorCode, RunError
-│   │   ├── result.py        # Result finalization
-│   │   ├── partial_result.py # Partial result extraction
-│   │   ├── cleanup.py       # Resource cleanup
-│   │   └── session_adapter.py # Subagent session isolation
-│   ├── tasks/               # Persistent workflow tasks (V2)
-│   │   ├── types.py         # TaskRecord (id, subject, status, owner, blocks)
-│   │   ├── store.py         # JSON file persistence + highwatermark
-│   │   ├── service.py       # Business rules (dependencies, owner, cleanup)
-│   │   ├── list_id.py       # Task list scope resolution
-│   │   ├── locking.py       # POSIX file locking
-│   │   └── constants.py     # Task constants
-│   ├── tools/               # Built-in tools
-│   │   ├── base.py          # File ops, bash, todos
-│   │   ├── search.py        # Code search (ripgrep)
-│   │   ├── skill_tool.py    # Skill activation tool
-│   │   ├── agent_tool.py    # Subagent spawn tool
-│   │   ├── task_tools.py    # TaskCreate/TaskUpdate/TaskList/TaskGet
-│   │   ├── todo_tool.py     # TodoWrite tool
-│   │   ├── tool_search.py   # Tool discovery
-│   │   ├── execution_queue.py # Tool execution queue
-│   │   ├── web.py           # Web fetch (Stage B)
-│   │   ├── data.py          # CSV/JSON analysis (Stage B)
-│   │   └── documents.py     # PDF/DOCX extraction (Stage B)
-│   ├── sandbox/             # Sandbox isolation
-│   │   ├── runtime.py       # Runtime manager
-│   │   ├── policy.py        # Sandbox policies
-│   │   ├── credential.py    # Credential isolation
-│   │   ├── credential_proxy.py
-│   │   └── providers/       # bubblewrap, docker, seatbelt, local
-│   ├── permissions/         # Permission system
-│   │   ├── matching.py      # Permission matching logic
-│   │   ├── runtime.py       # Permission runtime enforcement
-│   │   └── presentation.py  # Permission UI presentation
-│   ├── access_control/      # Capability-based access control
-│   │   ├── capabilities.py
-│   │   └── policy.py
-│   ├── observability/       # OpenTelemetry integration
-│   │   ├── manager.py       # Observability manager
-│   │   └── tracer.py        # Tracer wrapper
-│   ├── memory/              # Memory system (minimal model)
-│   │   ├── manager.py       # MemoryManager orchestration (write/search/delete/status)
-│   │   ├── store.py         # MemoryStore file persistence + MEMORY.md index rebuild
-│   │   ├── models.py        # MemoryRecord (id, target, content, created_at, cues)
-│   │   ├── cues.py          # Cue extraction/normalization from textual hints
-│   │   ├── embeddings.py    # Local FastEmbed provider boundary
-│   │   ├── search_index.py  # Rebuildable SQLite FTS + vector index
-│   │   ├── retriever.py     # Hybrid exact/cue/semantic retrieval
-│   │   ├── files.py         # Prompt anchor reading + USER.md merge
-│   │   └── policy.py        # Write/delete permissions
-│   ├── audit/               # Security event logging
-│   │   └── events.py
-│   └── mcp_client/          # MCP Client implementation
-│       ├── config.py        # MCP server configuration
-│       ├── connector.py     # Server connection management
-│       ├── manager.py       # MCPManager orchestration
-│       ├── runtime.py       # MCP runtime
-│       └── utils.py         # MCP utilities
-├── .kimi/skills/             # Project-level skills
-│   ├── investment-skill/    # Investment analysis
-│   ├── note-vault/          # Note management
-│   ├── data-analysis-skill/ # Data analysis
-│   ├── document-parse-skill/# Document parsing
-│   ├── report-gen-skill/    # Report generation
-│   └── web-fetch-skill/     # Web fetching
-├── evals/                    # Evaluation framework (promptfoo)
-│   ├── promptfoo_provider.py       # Agent provider for promptfoo
-│   ├── promptfoo_artifact_provider.py  # Calibration artifact provider
-│   ├── cases/               # Test case YAML files
-│   ├── benchmarks/          # Community benchmarks (BigBench, GAIA, GSM8K, HumanEval, MT-Bench)
-│   ├── loaders/             # Benchmark dataset loaders (HuggingFace, etc.)
-│   ├── fixtures/            # Pre-built test fixtures
-│   └── results/             # Eval run results
-├── tests/                    # Unit tests (organized by module)
-│   ├── session/             # Session layer tests
-│   ├── test_subagent/       # Subagent system tests
-│   ├── tools/               # Tool-specific tests
-│   ├── evals/               # Eval framework tests
-│   └── stage_b/             # Stage B tool tests
-├── docs/                     # Design docs, specs, plans
-│   ├── specs/               # Core design specs
-│   └── superpowers/         # Feature design & implementation
-│       ├── specs/           # Feature design documents
-│       ├── plans/           # Implementation plans
-│       └── guides/          # Usage guides
-├── promptfooconfig.yaml      # Promptfoo configuration (eval entrypoint)
-└── pyproject.toml            # Project metadata & dependencies
-```
-
-## Development Commands
+## Commands
 
 ```bash
-# Install dependencies
-uv pip install -e ".[dev]"
-
-# Install Stage B dependencies
-uv pip install -e ".[stage-b]"
-
-# Install local semantic memory dependencies
-uv pip install -e ".[semantic]"
-
-# Install observability dependencies
-uv pip install -e ".[observability]"
-
-# Run linting
-ruff check src tests
-ruff format src tests
-
-# Type check
-mypy src
-
-# Run tests
-pytest
-
-# Run evaluations
-npx promptfoo@latest eval
-npx promptfoo@latest eval --filter-pattern "Skills"
-npx promptfoo@latest view
-
-# Run agent
-python -m bourbon
+cd ts
+bun install
+bun run start                       # interactive REPL
+bun run start -- -w /path/to/work   # explicit workspace
+bun run src/index.ts -p "prompt" -w /path/to/work
+bun run src/index.ts --init         # create ~/.bourbon/config.toml
+bun run src/index.ts --resume-last
+bun run typecheck
+bun test
 ```
 
-## Key Design Decisions
+Use Bun 1.4+. Node/npm are not required at runtime.
 
-1. **Path safety**: All file operations sandboxed to workspace
-2. **Multi-layer security**: Sandbox providers (bubblewrap/docker/seatbelt) + permissions + capability-based access control + audit logging
-3. **Command safety**: Dangerous bash commands blacklisted, interactive confirmation for high-risk operations
-4. **Token management**: Auto-compact when context grows; session layer tracks token status
-5. **Configuration**: Global config in ~/.bourbon/
-6. **Error handling**: Risk-based policy (see below)
-7. **Streaming markdown**: Rich library with newline-split buffering for incremental rendering
-8. **Eval via promptfoo**: Standardized evaluation with caching, dashboards, multi-dimensional scoring, and community benchmarks
-9. **Subagent isolation**: Each subagent gets its own session, tool set, and abort controller
-10. **Task/Todo split**: In-memory todos (V1) for quick checklists; persistent file-backed tasks (V2) for workflow management
-11. **Memory (Minimal Model)**: Immutable Markdown records with minimal YAML frontmatter (`id`, `target`, `created_at`, `cues`). Only `user`/`project` targets. No promote/archive/status lifecycle. Cues are write-time extracted from textual hints. Search combines exact content/cue matching with a rebuildable local semantic index. Prompt anchors (AGENTS.md, MEMORY.md, USER.md) remain.
-
-## Session Management
-
-The session layer (`src/bourbon/session/`) provides structured conversation management:
-
-- **MessageChain**: In-memory ordered message list with role tracking
-- **TranscriptStore**: Append-only JSONL persistence for full conversation history
-- **ContextManager**: Token estimation, microcompact, auto/manual compact triggers
-- **SessionManager**: Orchestrates chain + store + context; supports session resume
-
-## Subagent System
-
-The subagent system (`src/bourbon/subagent/`) enables parallel task execution:
-
-### Architecture
+## Structure
 
 ```
-SubagentManager
-  ├── RunRegistry (runtime-job state)
-  ├── AsyncExecutor (ThreadPoolExecutor)
-  ├── AbortController (cancellation hierarchy)
-  ├── ToolFilter (agent-type-based tool access)
-  └── ResourceManager (cleanup)
+ts/
+├── src/
+│   ├── index.ts                 # CLI entry (--init/--print/--session-id/--resume-last)
+│   ├── cli.ts                   # REPL, slash commands, permissions, history
+│   ├── markdown.ts              # ANSI Markdown renderer + live-redraw stream
+│   ├── status.ts                # fixed bottom status footer (context/model/activity)
+│   ├── render.ts                # spinner, tool lines, usage/context lines
+│   ├── config.ts                # ~/.bourbon/config.toml loader + defaults
+│   ├── llm.ts                   # Anthropic + OpenAI-compatible streaming clients
+│   ├── agent/agent.ts           # conversation loop, tool execution, permissions, subagents
+│   ├── session/                 # chain, JSONL transcript, context/compact, resume
+│   ├── prompt/                  # ordered sections, env injection, skills/MCP catalogs
+│   ├── tools/                   # tool registry and built-in tools
+│   ├── skills.ts                # Agent Skills discovery/activation
+│   ├── tasks/                   # persistent task store/service/locking
+│   ├── todos.ts                 # in-memory todo list
+│   ├── memory/                  # immutable records, cues, SQLite FTS + optional vectors
+│   ├── permissions/             # matching, runtime requests, presentation
+│   ├── access_control/          # capability inference + policy engine
+│   ├── sandbox/                 # manager, credentials, local/seatbelt/bwrap/docker
+│   ├── audit/                   # JSONL audit events
+│   ├── mcp/                     # stdio + streamable HTTP MCP client
+│   ├── subagent/                # foreground/background/teammate runtime
+│   └── observability/           # OpenTelemetry tracer/manager
+└── tests/                       # bun:test unit + end-to-end tests
 ```
 
-### Agent Types
+## Configuration
 
-| Type | Tool Access | Use Case |
-|------|-------------|----------|
-| `default` | All tools | General-purpose tasks |
-| `coder` | All tools | Code writing and modification |
-| `explore` | Read-only (no write/shell) | Codebase exploration and analysis |
-| `plan` | Read-only (no write/shell) | Planning and design only |
-| `quick_task` | All tools, time-limited | Short-lived focused operations |
-| `teammate` | All tools, in-process | Parallel execution alongside main agent |
+Config lives at `~/.bourbon/config.toml`, outside the repo. Keys:
+`[llm]`, `[llm.anthropic]`, `[llm.openai]`, `[tools.*]`, `[ui]`, `[tasks]`, `[memory]`, `[observability]`, `[mcp]`, `[access_control]`, `[sandbox]`, `[audit]`.
+`default_provider` accepts `anthropic`, `openai`, or `kimi` (kimi uses the OpenAI-compatible section).
 
-Tool filtering is enforced at the manager level via `AGENT_TYPE_CONFIGS` in `subagent/tools.py`. `explore` and `plan` types are restricted to `READ_ONLY_TOOLS` — no file writes or shell execution.
+## Agent Loop
 
-### Execution Modes (`SubagentMode`)
+- `Agent.run(userInput)` enriches input with a `<system-reminder>` environment block, persists it, microcompacts, auto-compacts if needed, then loops.
+- Each round streams the LLM response, persists assistant content, and executes tool calls.
+- Consecutive concurrency-safe tools run in parallel with `Promise.all`; serial tools run in order.
+- Tool results are appended as one user message; results are capped at 50k chars.
+- A tool failing 3 consecutive times is temporarily blocked.
+- After `ui.max_tool_rounds`, one final text-only LLM call produces a summary.
+- Pending tasks trigger a `<task_reminder>` after 10 rounds without Task V2 tools.
+- Permission requests suspend the current tool round and resume via `Agent.resumePermission(choice)`.
 
-- **`NORMAL`**: Blocking execution; caller waits for result.
-- **`ASYNC`**: Background execution via `ThreadPoolExecutor`; caller polls or awaits.
-- **`TEAMMATE`**: In-process parallel execution; used for collaborative work alongside the main agent session.
+## Terminal Rendering
 
-## Task & Todo System
+Assistant text is rendered as Markdown while streaming. `markdown.ts` handles headings, emphasis, inline code, lists/task boxes, tables, blockquotes, links, horizontal rules, and fenced code with lightweight syntax highlighting, wrapping everything to the terminal width. The live stream redraws only the unfinished tail so completed blocks stay committed and long answers do not flicker.
 
-Bourbon has two layers of work tracking:
+The REPL reserves the bottom two rows for a fixed status footer (`status.ts`): cwd and git branch with the current activity on the first line, cumulative input/output tokens and context usage on the left of the second line, and the model name on the right. Context turns yellow at 50% and red at 80% of `ui.token_threshold`. A terminal scroll region keeps the transcript scrolling above while the footer stays put; footer updates use saved-cursor redraws, and are restored after readline refreshes. While a non-empty line is being edited, a terminal resize detaches the footer and reattaches it at the next prompt, since readline owns that line.
 
-| Layer | Storage | Scope | Tools |
-|-------|---------|-------|-------|
-| **Todo V1** | In-memory | Single session | `TodoWrite` |
-| **Task V2** | JSON files (`~/.bourbon/tasks/`) | Persistent, cross-session | `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` |
+`BOURBON_PLAIN=1` restores raw streaming and disables the footer; non-TTY output and piped `--print` stay plain.
 
-Task V2 supports ownership, dependencies (`blocks`/`blockedBy`), and status lifecycle.
+## Tools
 
-## Prompt Management
+Every tool implements `Tool` in `ts/src/tools/types.ts`: name, description, JSON schema, risk level, optional aliases/deferred loading/capabilities, and `run(input, ctx)`.
 
-The prompt system (`src/bourbon/prompt/`) uses ordered sections:
+Built-in tools: Bash, Read, Write, Edit, Grep, Glob, AstGrep, WebFetch, CsvAnalyze, JsonQuery, PdfRead, DocxRead, TodoWrite, TaskCreate/TaskUpdate/TaskList/TaskGet, Skill, SkillResource, memory_search/write/delete/status, ToolSearch, Agent/AgentWait.
 
-| Order | Section | Content |
-|-------|---------|---------|
-| 10 | identity | Agent identity and capabilities |
-| 15 | memory_anchors | AGENTS.md, MEMORY.md, USER.md, and promoted managed blocks |
-| 20 | task_guidelines | Task execution guidelines |
-| 25 | subagent_guidelines | Subagent behavior rules |
-| 30 | error_handling | Error handling policy |
-| 40 | task_adaptability | Adaptive task behavior |
-| 60 | skills | Skill catalog (progressive disclosure) |
-| 70 | mcp_tools | MCP tool catalog |
+To add a tool:
+1. Implement it in the appropriate `ts/src/tools/*.ts` module.
+2. Give it metadata (`riskLevel`, `requiredCapabilities`, `isReadOnly`, `isConcurrencySafe`, `alwaysLoad`/`shouldDefer`).
+3. Register it in `createToolRegistry()` in `ts/src/tools/index.ts`.
+4. Add a test under `ts/tests/`.
 
-Sections can be static strings or async callables receiving `PromptContext`.
+## Sessions and Compaction
 
-## Memory System
+- Transcripts are append-only JSONL under `~/.bourbon/sessions/{project}/{session}.jsonl`.
+- Metadata: `{session}.meta.json`; compact overrides: `{session}.compact.json`.
+- `MessageChain` rebuilds the active chain from `parent_uuid` only.
+- `ContextManager` tracks actual provider input tokens, microcompacts old tool results, and triggers full compact over `ui.token_threshold`.
+- Resume with `--session-id` or `--resume-last`.
 
-Bourbon uses a minimal, immutable memory model: each record is a Markdown file with minimal YAML frontmatter. Records are never modified after creation; updates are new writes. There is no promote/archive/stale/rejected lifecycle, no compact-time extraction, and no LLM-based cue generation.
+## Prompt and Anchors
 
-### Model
+Ordered sections: identity, memory anchors, task guidelines, subagent guidelines, error handling, tool-result trust, task adaptability, skills catalog, MCP catalog.
 
-```python
-@dataclass(frozen=True)
-class MemoryRecord:
-    id: str
-    target: Literal["user", "project"]
-    content: str
-    created_at: datetime
-    cues: tuple[str, ...] = ()
-```
+Anchors are only injected when memory is enabled:
+- `AGENTS.md` from the workdir (8000-token cap)
+- merged global `~/.bourbon/USER.md` + project `USER.md` (600-token cap)
+- `MEMORY.md` from the project memory directory (1200-token cap)
 
-- **`target`**: `user` for durable user preferences; `project` for repository decisions, files, workflows, references
-- **`cues`**: Write-time extracted textual hints from backticks, quotes, and file paths in the content
+## Memory
 
-### Cues
+Immutable Markdown records with YAML frontmatter: `id`, `target` (`user`|`project`), `created_at`, `cues`.
 
-Cues are lightweight retrieval hints, not structured metadata:
-
-- **Extraction source**: `` `term` ``, `"term"`, and file paths like `src/foo.py`
-- **Normalization**: deduplicated, casefolded, max 12 cues, max 80 chars each
-- **No LLM involvement**: deterministic regex extraction only
-- **Query expansion**: `expand_query_terms()` normalizes the query plus extracts explicit terms from it
+- `MEMORY.md` is a rebuildable index (max 200 lines).
+- `search_index.sqlite` is a rebuildable derived index: SQLite FTS5 plus dense vectors.
+- Semantic embeddings are optional and require `@huggingface/transformers` (or another provider implementing `EmbeddingProvider`). Without it, search falls back to content/cue/FTS matching.
+- Subagents may only write `project` memories and cannot delete.
+- Writes require an audit logger.
 
-### Tools
+## Skills
 
-| Tool | Purpose | Risk |
-|------|---------|------|
-| `memory_write` | Write an immutable memory record | MEDIUM |
-| `memory_search` | Search by keyword/cue with optional local semantic recall and `debug_terms` | LOW |
-| `memory_delete` | Delete a record by id | MEDIUM |
-| `memory_status` | Show recent writes, file count, index capacity | LOW |
+Agent Skills compatible. Discovery order (project overrides user): `.agents/skills`, `.bourbon/skills`, `.kimi/skills`, `.claude/skills`, then user-level equivalents.
+Catalog is injected into the prompt; `Skill` loads full instructions; `SkillResource` reads bundled files. `/skill/name` activates in the REPL.
 
-### Search
+## Tasks and Todos
 
-Hybrid local retrieval:
+- Todo V1 is in-memory (`TodoWrite`).
+- Task V2 is file-backed under `~/.bourbon/tasks/{list}/{id}.json` with a high-watermark id and file lock.
+- Supports owner, `blocks`/`blockedBy`, active-blocker filtering, and peer cleanup on delete.
+- Subagent tool visibility: async runs hide Task V2 tools; teammates may use them.
 
-1. Expand query into normalized terms (`expand_query_terms`).
-2. Collect exact matches from Markdown records over content and cues.
-3. Query `search_index.sqlite` for FTS lexical candidates and FastEmbed dense vector candidates.
-4. Apply `target` as a hard filter and fuse candidates.
-5. Annotate `why_matched` as "matched content", "matched cue: X", "matched fts", or "matched semantic: score".
+## Security
 
-If FastEmbed, the model, or SQLite index is unavailable, search falls back to content/cue matching.
+Execution flow for each tool call: subagent filter → capability inference → policy engine → permission decision → sandbox (destructive Bash only) → tool handler → audit.
 
-### Architecture
+- File policy: allow/deny/mandatory-deny globs; workdir-scoped.
+- Command policy: deny substrings/globs and approval patterns.
+- Approvals: allow once, allow for session, reject.
+- Sandbox providers: `local`, `seatbelt` (macOS), `bubblewrap` (Linux), `docker`, or `auto`. Destructive Bash runs through the sandbox when enabled.
+- Credentials: sensitive env vars are stripped; an allowlisted HTTP credential proxy exists for Docker.
+- Audit: JSONL under `~/.bourbon/audit/`.
 
-```
-MemoryManager
-  ├─ MemoryStore          # Atomic file writes, YAML frontmatter, MEMORY.md rebuild
-  │   ├─ write_record()   # Persist .md file, rebuild index
-  │   ├─ delete_record()  # Remove file, rebuild index
-  │   ├─ search()         # Content + cue substring matching
-  │   └─ rebuild_index()  # Generate MEMORY.md from latest 200 records
-  ├─ MemorySearchIndex    # Derived SQLite FTS + dense vector index; stale/corrupt detection (provider/model/dimensions mismatch triggers rebuild)
-  ├─ MemoryRetriever      # Hybrid RRF candidate fusion (FTS + cosine vector channels)
-  └─ cues.py              # generate_cues(), expand_query_terms(), normalize_cues()
-
-Memory Files
-  └─ ~/.bourbon/projects/{project}/memory/
-       ├─ MEMORY.md        # Auto-rebuilt index (≤200 records)
-       ├─ search_index.sqlite # Rebuildable derived search index
-       └─ {id}.md          # Individual immutable memory records
-```
+## MCP
 
-### Prompt Anchors
+Configure `[[mcp.servers]]` with `transport = "stdio" | "http"`. Tools are registered as `{server}-{tool}` at MEDIUM risk. stdio `npx` packages must already be installed; the client never auto-downloads. Connection failures are reported but do not stop the REPL.
 
-- **AGENTS.md**: Project-level behavior rules (always injected)
-- **USER.md**: Global + project-level user preferences, merged with project headings taking priority
-- **MEMORY.md**: Auto-generated index of recent memory records (injected up to token limit)
-
-### Permissions
-
-- Subagents can only write `target="project"`; cannot delete
-- Main agent and user can write both `user` and `project`
-- All writes require audit logging
+## Subagents
 
-### Design Principles
-
-- Immutable records: write once, never edit
-- Minimal surface: no status, no scope, no kind, no promote, no archive
-- Deterministic cues: no LLM for cue generation or query interpretation
-- Local first: Markdown files + local SQLite/FastEmbed index, no external vector service
-- Rebuildable indexes: MEMORY.md and search_index.sqlite are derivatives, not source of truth
-- Less, but better: every field and lifecycle stage must earn its place
-
-**Design spec:**
-- Minimal Model Cleanup: `docs/superpowers/plans/2026-05-06-bourbon-memory-minimal-model-cleanup.md`
-- Local Semantic Index: `docs/superpowers/specs/2026-05-07-bourbon-memory-local-semantic-index-design.md`
-
-## Skill System (Agent Skills Compatible)
-
-Bourbon implements the [Agent Skills](https://agentskills.io/) open specification for skill management.
-
-### Directory Structure
-
-```
-~/.bourbon/skills/
-├── python-refactoring/
-│   ├── SKILL.md          # Required: metadata + instructions
-│   ├── scripts/          # Optional: executable code
-│   ├── references/       # Optional: documentation
-│   └── assets/           # Optional: templates, resources
-└── superpowers/
-    └── SKILL.md
-```
-
-### SKILL.md Format
-
-```yaml
----
-name: skill-name
-description: What this skill does and when to use it
-license: MIT
-compatibility: Requires Python 3.8+
-metadata:
-  author: example-org
-  version: "1.0"
----
-
-# Skill Title
-
-Instructions for the agent...
-```
-
-### Progressive Disclosure
-
-| Tier | Content | When | Tokens |
-|------|---------|------|--------|
-| 1 | Catalog (name + description) | Session start | ~50-100 per skill |
-| 2 | Full SKILL.md body | On activation | < 5000 recommended |
-| 3 | Resources (scripts/references) | On demand | Varies |
-
-### Discovery Scopes
-
-Bourbon scans for skills in (priority order):
-1. `{workdir}/.kimi/skills/*/` (project-level)
-2. `{workdir}/.agents/skills/*/` (project-level, cross-client)
-3. `{workdir}/.bourbon/skills/*/` (project-level, client-specific)
-4. `~/.agents/skills/*/` (user-level, cross-client)
-5. `~/.bourbon/skills/*/` (user-level, client-specific)
-
-Project-level skills override user-level skills with the same name.
-
-## Error Handling Strategy
-
-### Risk-Based Policy
-
-| Risk Level | Operations | Failure Strategy |
-|------------|-----------|------------------|
-| **HIGH** | Software install/uninstall, version changes, system commands, destructive ops | MUST STOP and ask user confirmation |
-| **MEDIUM** | File modifications (write, edit) | Report error, ask before alternatives |
-| **LOW** | Read file, search, exploration | May intelligently recover and retry |
-
-### Critical Rules
-
-1. **NEVER automatically switch versions** - If `pip install package==9.9.9` fails, don't auto-install latest
-2. **NEVER change parameters without approval** - If a command fails, report and ask
-3. **ALWAYS report what you did** - For low-risk recoveries, tell user the action taken
-
-## Sandbox System
-
-Bourbon uses a multi-provider sandbox for isolating tool execution:
-
-### Providers
-
-| Provider | Platform | Isolation Level |
-|----------|----------|-----------------|
-| **Bubblewrap** | Linux | Namespace-based (filesystem, network, PID) |
-| **Docker** | Cross-platform | Container isolation |
-| **Seatbelt** | macOS | App Sandbox profiles |
-| **Local** | Any | No isolation (development only) |
-
-### Architecture
-
-```
-Policy Engine (sandbox/policy.py)
-       ↓
-Runtime Manager (sandbox/runtime.py) → selects provider
-       ↓
-Provider (bubblewrap / docker / seatbelt / local)
-       ↓
-Isolated tool execution
-```
-
-### Credential Management
-
-- `credential.py` - Credential isolation from sandboxed processes
-- `credential_proxy.py` - Proxied access to credentials without direct exposure
-
-## Permissions System
-
-The permissions layer (`src/bourbon/permissions/`) provides runtime permission enforcement:
-
-- **matching.py** - Pattern-based permission matching
-- **runtime.py** - Runtime permission checks and enforcement
-- **presentation.py** - User-facing permission request UI
+Profiles: `default`, `coder`, `explore`, `plan`, `quick_task`, `teammate`.
+- `explore`/`plan` are restricted to Read/Glob/Grep/AstGrep/WebFetch.
+- `Agent` blocks by default; `run_in_background=true` returns a run id and `AgentWait` joins it.
+- Each subagent gets an isolated session under `{project}/subagents/`.
+- `teammate` may use Task V2 tools and shares the parent task list.
 
 ## Observability
 
-OpenTelemetry integration (`src/bourbon/observability/`) for tracing agent operations:
+Set `[observability] enabled = true` and `otlp_endpoint` (or `OTEL_EXPORTER_OTLP_ENDPOINT`). Spans: `invoke_agent bourbon`, `chat {model}`, `execute_tool {name}`. Debug JSONL is enabled with `BOURBON_DEBUG=1` or `BOURBON_DEBUG_LOG=/path`; full prompts require `BOURBON_DEBUG_PROMPTS=1`.
 
-- **manager.py** - Observability lifecycle management
-- **tracer.py** - Span creation and context propagation
+## Error Handling Policy
 
-Install: `uv pip install -e ".[observability]"`
+- **HIGH risk** (installs, version changes, destructive/system commands): stop and ask; never auto-switch versions or parameters.
+- **MEDIUM risk** (file writes/edits): report the failure and ask before alternatives.
+- **LOW risk** (reads, search, exploration): may retry one genuinely different approach, then report.
 
-## MCP Client Integration
-
-Connect to external tool servers via [Model Context Protocol](https://modelcontextprotocol.io/):
-
-### Configuration
-
-```toml
-# ~/.bourbon/config.toml
-[mcp]
-enabled = true
-default_timeout = 30
-
-[[mcp.servers]]
-name = "fetch"
-transport = "stdio"
-command = "uvx"
-args = ["mcp-server-fetch"]
-
-[[mcp.servers]]
-name = "github"
-transport = "stdio"
-command = "npx"
-args = ["-y", "@github/mcp-server"]
-env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
-```
-
-### Tool Naming
-
-MCP tools are registered as `{server_name}:{tool_name}` (e.g. `fetch:fetch_url`). All MCP tools default to `RiskLevel.MEDIUM`.
-
-## Evaluation Framework
-
-Evaluations run through [promptfoo](https://www.promptfoo.dev/).
-
-### Running Evaluations
+## Testing
 
 ```bash
-# Run all evaluations
-npx promptfoo@latest eval
-
-# Filter by category
-npx promptfoo@latest eval --filter-pattern "Skills"
-
-# Multiple iterations for variance analysis
-npx promptfoo@latest eval --repeat 5
-
-# Open dashboard
-npx promptfoo@latest view
+cd ts
+bun run typecheck
+bun test
 ```
 
-### Architecture
+Tests cover session/resume/compaction, prompt anchors, tools, memory (including a fake embedding provider), permissions/resume, sandbox providers, MCP stdio + HTTP, subagents, observability OTLP export, OpenAI-compatible streaming, Markdown rendering/live redraw, the status footer and scroll region, CLI print/init/slash commands, and real-model E2E against the configured endpoint.
 
-- **Provider**: `evals/promptfoo_provider.py` wraps `Agent.step()` and returns JSON `{text, workdir, duration}`
-- **Artifact Provider**: `evals/promptfoo_artifact_provider.py` serves pre-built calibration artifacts
-- **Memory Retrieval Provider**: `evals/memory_retrieval_provider.py` runs deterministic retrieval evals with hybrid semantic variant (bypasses LLM)
-- **Cases**: YAML files in `evals/cases/` organized by category
-- **Benchmarks**: Community benchmarks in `evals/benchmarks/` (BigBench Hard, GAIA, GSM8K, HumanEval, MT-Bench)
-- **Loaders**: Dataset loaders in `evals/loaders/` for HuggingFace and other sources
-- **Fixtures**: Pre-built artifacts and project templates in `evals/fixtures/`
-- **Assertions**: Promptfoo `javascript` assertions for file checks, `llm-rubric` for subjective evaluation, `contains`/`not-contains` for text matching
+## Product Principles
 
-### Test Categories
-
-| Category | Description |
-|----------|-------------|
-| `calibration.yaml` | Multi-dimensional scoring with pre-built artifacts |
-| `calibration-gen-eval.yaml` | Generated calibration cases |
-| `safety.yaml` | Safety red team tests |
-| `security.yaml` | Security behavior validation |
-| `sandbox.yaml` | Sandbox isolation tests |
-| `skills.yaml` | Skill functionality tests |
-| `code-search.yaml` | Code search accuracy |
-| `file-operations.yaml` | File operation correctness |
-| `general.yaml` | General agent behavior |
-| `validator-smoke.yaml` | Validator smoke tests |
-
-## Stage B Tools
-
-| Domain | Tool | Description |
-|--------|------|-------------|
-| **Web** | `fetch_url` | Fetch content from URLs with safety limits |
-| **Data** | `csv_analyze`, `json_query` | Analyze CSV/JSON with statistics |
-| **Documents** | `pdf_to_text`, `docx_to_markdown` | Extract text from PDF/Word |
-
-Install Stage B dependencies: `uv pip install -e ".[stage-b]"`
-
----
-
-## Adding New Tools
-
-1. Define tool schema in `tools/__init__.py`
-2. Implement handler in appropriate module
-3. Register in tool registry with `@register_tool()`
-4. Add tests
-
-## Adding MCP Servers
-
-MCP servers provide external tools without code changes:
-
-1. Install the MCP server (e.g., `npm install -g @github/mcp-server`)
-2. Add configuration to `~/.bourbon/config.toml`
-3. Restart Bourbon
-4. Use tools with `server:tool` syntax
+Follow Dieter Rams: less, but better. Prefer useful, understandable, honest, durable behavior over novelty. Every tool, prompt section, UI element, and dependency must earn its place. Empty states, errors, permissions, and edge cases matter.
