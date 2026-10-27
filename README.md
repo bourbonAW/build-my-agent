@@ -1,272 +1,105 @@
-# Bourbon - General-Purpose AI Agent Platform
+# Bourbon
 
-[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+Bourbon is a general-purpose AI agent platform for software engineering and knowledge work. It runs as a streaming terminal agent with tools, skills, persistent tasks, memory, subagents, MCP, and sandboxed execution.
+
+[![Bun](https://img.shields.io/badge/Bun-1.4+-black?logo=bun)](https://bun.sh)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Bourbon is a general-purpose AI agent platform with a code-first evolution, designed for software engineering, data analysis, and domain-specific tasks through an extensible skill system.
+> **Status: TypeScript migration.** `ts/` is the active implementation. The original Python implementation is legacy and has been retired from the main tree; `flywheel/` and `evals/` are the remaining Python tooling pending migration.
 
-## Overview
+## Highlights
 
-**Current Stage (B)**: General-purpose agent for knowledge work
-- **Software Engineering**: Code search, refactoring, analysis
-- **Domain Expertise**: Investment analysis, note management, and more via skills
-- **External Tools**: MCP Client for databases, APIs
-- **Security**: Multi-layer sandbox isolation (bubblewrap/docker/seatbelt), access control, audit logging
-- **Memory**: File-first immutable memory with `target + content + created_at + cues`, deterministic cue extraction, and a rebuildable local semantic search index
-- **Safe Operations**: Sandboxed file operations, risk-based error handling
+- **Terminal agent** — REPL and one-shot `--print` mode, streaming Markdown with live redraw, and a fixed footer for context, tokens, model, and activity.
+- **Providers** — Anthropic and OpenAI-compatible endpoints (`anthropic`, `openai`, `kimi`).
+- **Tools** — files, search, Bash, web, CSV/JSON, PDF/DOCX, todos, persistent tasks, memory, and tool discovery.
+- **Extensible** — Agent Skills, MCP servers (stdio/HTTP), and foreground/background/teammate subagents.
+- **Sessions** — append-only JSONL transcripts, resume, microcompaction, and automatic full compaction.
+- **Memory** — file-first immutable records with cues, a rebuildable `MEMORY.md`, and SQLite FTS with optional embeddings.
+- **Security** — capability inference, permission prompts, sandbox providers, and JSONL audit.
+- **Observability** — OpenTelemetry spans for agent steps, chats, and tool calls.
 
-**Architecture**:
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Skills    │     │   Agent     │     │    MCP      │
-│  (Domain)   │◀───▶│   Core      │◀───▶│  (External) │
-└─────────────┘     └─────────────┘     └─────────────┘
-        │                    │                    │
-        ▼                    ▼                    ▼
-┌─────────────────────────────────────────────────────┐
-│                 Built-in Tools                      │
-│  File Ops │ Search │ Bash │ LLM │ Todos │ Config   │
-└─────────────────────────────────────────────────────┘
-        │                    │
-        ▼                    ▼
-┌─────────────┐     ┌─────────────────────────────────┐
-│  Sandbox    │     │  Access Control + Audit          │
-│  Isolation  │     │  Capabilities │ Policy │ Events  │
-└─────────────┘     └─────────────────────────────────┘
-```
+## Quick start
 
-## Quick Start
+Requires Bun 1.4+.
 
 ```bash
-# Clone and setup
-git clone <repo-url>
-cd bourbon
-
-# Install with uv (recommended)
-uv pip install -e ".[dev]"
-
-# Or with pip
-pip install -e ".[dev]"
-
-# Run the agent
-python -m bourbon
-
-# Or use the CLI
-bourbon
+cd ts
+bun install
+bun run src/index.ts --init    # create ~/.bourbon/config.toml
+bun run start                  # interactive REPL
 ```
 
-## Project Structure
-
-```
-.
-├── src/bourbon/              # Core agent implementation
-│   ├── cli.py               # Entry point
-│   ├── agent.py             # Core agent loop
-│   ├── repl.py              # REPL with Rich streaming markdown
-│   ├── skills.py            # Skill system (Agent Skills compatible)
-│   ├── llm.py               # Multi-provider LLM client (Anthropic + OpenAI-compatible)
-│   ├── compression.py       # Context compressor (microcompact + full compact)
-│   ├── prompt/              # Prompt management (ordered sections, dynamic injection)
-│   ├── session/             # Session layer (MessageChain, JSONL transcript, compact)
-│   ├── subagent/            # Subagent runtime (6 types, tool filtering, cancellation)
-│   ├── tasks/               # Persistent workflow tasks (file-backed, V2)
-│   ├── observability/       # OpenTelemetry tracing (metadata-only, graceful degradation)
-│   ├── permissions/         # Runtime permission enforcement
-│   ├── memory/              # Memory system (minimal model + local semantic index)
-│   │   ├── manager.py       # MemoryManager orchestration
-│   │   ├── store.py         # File persistence and MEMORY.md index
-│   │   ├── models.py        # MemoryRecord (id, target, content, created_at, cues)
-│   │   ├── cues.py          # Deterministic cue extraction and query expansion
-│   │   ├── embeddings.py    # Local FastEmbed provider boundary
-│   │   ├── search_index.py  # Rebuildable SQLite FTS + vector index
-│   │   ├── retriever.py     # Hybrid exact/cue/semantic retrieval (RRF fusion)
-│   │   ├── files.py         # Prompt anchors (AGENTS.md, USER.md, MEMORY.md)
-│   │   └── policy.py        # Write/delete permissions
-│   ├── tools/               # Built-in tools
-│   │   ├── base.py          # File ops, bash, todos
-│   │   ├── agent_tool.py    # Subagent spawn tool
-│   │   ├── task_tools.py    # TaskCreate/Update/List/Get
-│   │   ├── memory.py        # MemoryWrite/Search/Delete/Status
-│   │   ├── tool_search.py   # Tool discovery
-│   │   ├── web.py           # Web fetch (Stage B)
-│   │   ├── data.py          # CSV/JSON analysis (Stage B)
-│   │   └── documents.py     # PDF/DOCX extraction (Stage B)
-│   ├── mcp_client/          # MCP Client implementation
-│   ├── sandbox/             # Sandbox isolation (bubblewrap/docker/seatbelt)
-│   ├── access_control/      # Capability-based access control
-│   └── audit/               # Security event logging
-├── .kimi/skills/             # Project-level skills
-│   ├── investment-skill/    # Investment analysis
-│   ├── note-vault/          # Note management
-│   ├── data-analysis-skill/ # Data analysis
-│   ├── document-parse-skill/# Document parsing
-│   ├── report-gen-skill/    # Report generation
-│   └── web-fetch-skill/     # Web fetching
-├── evals/                    # Evaluation framework (promptfoo)
-│   ├── cases/               # Test case YAML files
-│   └── fixtures/            # Pre-built test fixtures
-├── promptfooconfig.yaml      # Promptfoo configuration
-└── tests/                    # Unit tests
-```
-
-## Core Capabilities
-
-### Built-in Tools
-
-| Tool | Purpose | Safety |
-|------|---------|--------|
-| `read_file` | Read text/media files (supports `offset`/`limit`) | Sandboxed to workdir |
-| `write_file` | Create/modify files | Backup before changes |
-| `shell` | Execute bash commands | Blacklist dangerous commands |
-| `search` | Code search (ripgrep) | Read-only |
-| `todo` / `task` | In-session todos (V1) and persistent workflow tasks (V2) | - |
-| `agent` | Spawn a subagent (6 types: default/coder/explore/plan/quick_task/teammate) | Isolated session |
-| `memory_write` | Write an immutable memory record | Sandboxed to workdir |
-| `memory_search` | Search by keyword/cue with optional local semantic recall | Read-only |
-| `memory_delete` | Delete a memory record by id | File write |
-| `memory_status` | Show recent writes, file count, index capacity | Read-only |
-
-### Stage B: General Knowledge Tools
-
-| Tool | Purpose | Domain |
-|------|---------|--------|
-| `fetch_url` | Fetch web content | Web |
-| `csv_analyze` | CSV statistics | Data |
-| `json_query` | JSON path queries | Data |
-| `pdf_to_text` | PDF text extraction | Documents |
-| `docx_to_markdown` | Word conversion | Documents |
+One-shot and resume:
 
 ```bash
-# Install Stage B dependencies
-uv pip install -e ".[stage-b]"
-
-# Install local semantic memory dependencies
-uv pip install -e ".[semantic]"
+bun run src/index.ts -p "Explain this repo" -w /path/to/work
+bun run src/index.ts --resume-last
+bun run src/index.ts --session-id <id>
 ```
 
-### Skill System (Agent Skills Compatible)
-
-Bourbon implements the [Agent Skills](https://agentskills.io/) open specification:
-
-**Skill Discovery Scopes** (priority order):
-1. `{workdir}/.kimi/skills/*/` - Project-level
-2. `{workdir}/.agents/skills/*/` - Project-level, cross-client
-3. `{workdir}/.bourbon/skills/*/` - Project-level, client-specific
-4. `~/.agents/skills/*/` - User-level, cross-client
-5. `~/.bourbon/skills/*/` - User-level, client-specific
-
-### MCP Integration
-
-Connect to external tool servers via Model Context Protocol:
-
-```toml
-# ~/.bourbon/config.toml
-[mcp]
-enabled = true
-
-[[mcp.servers]]
-name = "fetch"
-transport = "stdio"
-command = "uvx"
-args = ["mcp-server-fetch"]
-```
-
-## Security
-
-### Sandbox Isolation
-
-Multi-provider sandbox for isolating tool execution:
-
-| Provider | Platform | Isolation |
-|----------|----------|-----------|
-| Bubblewrap | Linux | Namespace-based (filesystem, network, PID) |
-| Docker | Cross-platform | Container isolation |
-| Seatbelt | macOS | App Sandbox profiles |
-| Local | Any | No isolation (development) |
-
-### Access Control & Audit
-
-- **Capability-based access control**: Fine-grained permissions for tool operations
-- **Audit logging**: Security-relevant events tracked for review
-- **Credential isolation**: Credentials proxied without direct exposure to sandboxed processes
-
-### Risk-Based Error Handling
-
-| Risk Level | Operations | Strategy |
-|------------|------------|----------|
-| **HIGH** | Install/uninstall, system commands | MUST STOP and ask user |
-| **MEDIUM** | File modifications | Report error, ask before alternatives |
-| **LOW** | Read, search | May intelligently recover |
-
-## Evaluation Framework
-
-Evaluations run through [promptfoo](https://www.promptfoo.dev/):
-
-```bash
-# Run all evaluations
-npx promptfoo@latest eval
-
-# Run specific category
-npx promptfoo@latest eval --filter-pattern "Skills"
-
-# Multiple iterations for variance analysis
-npx promptfoo@latest eval --repeat 5
-
-# Open promptfoo dashboard
-npx promptfoo@latest view
-```
-
-**Test Categories**: calibration, safety, security, sandbox, skills, code-search, file-operations, general, validator-smoke
-
-## Development
-
-```bash
-# Run linting
-ruff check src tests
-ruff format src tests
-
-# Type check
-mypy src
-
-# Run tests
-pytest
-
-# Run specific test
-pytest tests/test_skills_new.py -v
-```
-
-## Configuration
-
-Global configuration in `~/.bourbon/config.toml`:
+Configure a provider in `~/.bourbon/config.toml` (no `.env` loading):
 
 ```toml
 [llm]
 default_provider = "anthropic"
 
 [llm.anthropic]
-api_key = "your-api-key"
+api_key = "..."
 model = "claude-sonnet-4-6"
-
-[agent]
-workdir = "/path/to/workspace"
-
-[mcp]
-enabled = true
-default_timeout = 30
 ```
+
+Other sections: `[llm.openai]`, `[ui]`, `[tools.*]`, `[tasks]`, `[memory]`, `[mcp]`, `[access_control]`, `[sandbox]`, `[audit]`, `[observability]`. `kimi` uses the OpenAI-compatible section. See `AGENTS.md` for the full reference.
+
+## How it works
+
+```
+ts/src/
+├── index.ts / cli.ts   CLI, REPL, permissions, history
+├── agent/              conversation loop, tool execution, subagents
+├── llm.ts              Anthropic + OpenAI-compatible streaming
+├── session/            JSONL transcript, message chain, compaction, resume
+├── prompt/             ordered sections, environment/git injection, anchors
+├── tools/              registry and built-in tools
+├── skills.ts           Agent Skills discovery/activation
+├── tasks/ + todos.ts   persistent tasks and in-memory todos
+├── memory/             records, cues, FTS index, prompt anchors
+├── permissions/        policy, matching, suspend/resume
+├── access_control/     capability inference and policy engine
+├── sandbox/            local, seatbelt, bubblewrap, and Docker providers
+├── mcp/                stdio and streamable HTTP clients
+├── subagent/           profiles, isolated sessions, background runs
+├── observability/      OpenTelemetry tracer
+├── markdown.ts         ANSI Markdown renderer and live-redraw stream
+└── status.ts           fixed bottom status footer
+```
+
+- Sessions live under `~/.bourbon/sessions/{project}/`; configuration lives in `~/.bourbon/config.toml`.
+- Every tool call passes through capability inference, policy, permissions, sandboxing (destructive Bash), and audit.
+- Skills are discovered from `.agents/skills`, `.bourbon/skills`, `.kimi/skills`, and `.claude/skills` (project overrides user). MCP servers are configured with `[[mcp.servers]]` and `transport = "stdio" | "http"`.
+- Prompt anchors: `AGENTS.md`, merged `~/.bourbon/USER.md` + project `USER.md`, and `MEMORY.md`.
+- `BOURBON_PLAIN=1` disables the Markdown renderer and footer for plain streaming.
+
+## Development
+
+```bash
+cd ts
+bun run typecheck
+bun test
+```
+
+Tests cover sessions and compaction, prompt anchors, tools, memory, permissions, sandbox providers, MCP, subagents, observability, Markdown/status rendering, and the CLI, plus real-model E2E against the configured endpoint.
+
+Legacy Python:
+
+- `flywheel/` and `evals/` still import the retired `bourbon` package and are the next migration target.
+- `AGENTS.md` is the current development guide.
 
 ## Documentation
 
-- `AGENTS.md` - Detailed development guide
-- `EVAL_GUIDE.md` - Evaluation framework documentation
-- `docs/` - Design specs and implementation plans
+- `AGENTS.md` — architecture, commands, module map, security, and testing.
+- `docs/` — design notes and implementation plans.
 
 ## License
 
-MIT License
-
-## Acknowledgments
-
-- [Agent Skills](https://agentskills.io/) - Skill system specification
-- [Model Context Protocol](https://modelcontextprotocol.io/) - External tool integration
-- [promptfoo](https://www.promptfoo.dev/) - Evaluation framework
+MIT
