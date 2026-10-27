@@ -10,7 +10,7 @@ const SYNC_BEGIN = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
 const SAVE_CURSOR = "\x1b7";
 const RESTORE_CURSOR = "\x1b8";
-const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const FRAMES = ["[=    ]", "[==   ]", "[===  ]", "[==== ]", "[=====]", "[=====]"];
 
 export interface StatusSnapshot {
   model: string;
@@ -126,12 +126,11 @@ export function renderStatusFooter(
   const activityString = activity ? activityText(activity, now) : "";
   let pathLine: string;
   if (activityString) {
-    const pathBudget = Math.max(6, columns - displayWidth(activityString) - 2);
-    const visiblePath = truncateMiddle(pathText, pathBudget);
-    const activityBudget = Math.max(0, columns - displayWidth(visiblePath) - 2);
-    const visibleActivity = truncateToWidth(activityString, activityBudget);
-    const gap = Math.max(2, columns - displayWidth(visiblePath) - displayWidth(visibleActivity));
-    pathLine = `${style(visiblePath, "2", color)}${" ".repeat(gap)}${style(visibleActivity, "36", color)}`;
+    const visibleActivity = truncateToWidth(activityString, Math.max(1, columns - 8));
+    const activityWidth = displayWidth(visibleActivity);
+    const visiblePath = truncateMiddle(pathText, Math.max(0, columns - activityWidth - 2));
+    const gap = Math.max(2, columns - activityWidth - displayWidth(visiblePath));
+    pathLine = `${style(visibleActivity, "36", color)}${" ".repeat(gap)}${style(visiblePath, "2", color)}`;
   } else {
     pathLine = style(truncateMiddle(pathText, columns), "2", color);
   }

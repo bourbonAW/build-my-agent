@@ -65,9 +65,29 @@ describe("status formatting", () => {
       120,
       { color: false, now },
     );
+    expect(pathLine).toStartWith("[");
     expect(pathLine).toContain("Running Bash 1m 05s");
-    expect(pathLine).toContain("⠸");
     expect(pathLine).toContain("github_project/build-my-agent");
+    expect(pathLine.indexOf("Running Bash")).toBeLessThan(pathLine.indexOf("github_project"));
+  });
+
+  test("animates a font-safe spinner frame", () => {
+    const now = Date.now();
+    const first = renderStatusFooter(
+      snapshot,
+      { label: "thinking", startedAt: now, frame: 0 },
+      80,
+      { color: false, now },
+    )[0];
+    const later = renderStatusFooter(
+      snapshot,
+      { label: "thinking", startedAt: now, frame: 3 },
+      80,
+      { color: false, now },
+    )[0];
+    expect(first).toStartWith("[=");
+    expect(later).toStartWith("[====");
+    expect(first).not.toBe(later);
   });
 
   test("colors context usage as it approaches the limit", () => {
